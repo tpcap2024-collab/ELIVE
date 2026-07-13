@@ -1,0 +1,6 @@
+{
+  "name": "ELIVE - Real-Time Truck Status Monitoring",
+  "description": "ระบบควบคุมและติดตามสถานะรถบรรทุกแบบเรียลไทม์ (Logistics Control Tower) เชื่อมต่อข้อมูลผ่าน Google Sheet และ GPS API",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
