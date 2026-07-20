@@ -1,0 +1,33 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+body {
+  @apply bg-slate-50 text-slate-900 antialiased;
+}
+
+@keyframes blink-bg {
+  0%, 100% { background-color: rgba(254, 226, 226, 0.3); border-color: rgba(239, 68, 68, 0.1); }
+  50% { background-color: rgba(254, 202, 202, 0.7); border-color: rgba(239, 68, 68, 0.3); }
+}
+
+.row-delay {
+  animation: blink-bg 2s infinite;
+}
+
+.row-warning {
+  background-color: #fef08a !important; /* yellow-200 */
+}
+.row-warning:hover {
+  background-color: #fde047 !important; /* yellow-300 */
+}
+
+.row-complete {
+  background-color: #bbf7d0 !important; /* green-200 */
+}
+.row-complete:hover {
+  background-color: #86efac !important; /* green-300 */
+}
