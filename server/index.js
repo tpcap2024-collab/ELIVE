@@ -101,18 +101,32 @@ app.get('/api/trucks', async (req, res) => {
 
     let data;
 
-    try {
-      data = JSON.parse(responseText);
-    } catch {
-      console.error(
-        'Invalid JSON from Google Apps Script:',
-        responseText
-      );
+try {
+  data = JSON.parse(responseText);
+} catch {
+  const contentType =
+    googleResponse.headers.get('content-type') || '';
 
-      return res.status(502).json({
-        error: 'Google Apps Script returned invalid JSON.',
-      });
-    }
+  const responsePreview = responseText
+    .slice(0, 1000)
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  console.error('Apps Script returned invalid JSON:', {
+    status: googleResponse.status,
+    finalUrl: googleResponse.url,
+    contentType,
+    responsePreview,
+  });
+
+  return res.status(502).json({
+    error: 'Google Apps Script returned invalid JSON.',
+    upstreamStatus: googleResponse.status,
+    finalUrl: googleResponse.url,
+    contentType,
+    responsePreview,
+  });
+}
 
     if (data.error) {
       return res.status(502).json({
