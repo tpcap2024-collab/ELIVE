@@ -185,6 +185,71 @@ export function PlatformDiagram({
     );
   };
 
+
+      /*
+ * ตรวจว่ารถเลย Plan ETA แล้ว แต่ยังไม่เข้าช่อง
+     */
+    const isOverdueAndNotDocked = (truck: Truck): boolean => {
+  /*
+   * หากมี Stamp ETA แล้ว ถือว่าเข้าพื้นที่/เข้าช่องแล้ว
+   */
+      if (truck.stampEta || truck.actualEta) {
+        return false;
+      }
+
+  /*
+   * สถานะเหล่านี้ถือว่าเข้าสู่กระบวนการลงงานแล้ว
+   */
+      const dockedStatuses = [
+        'DOCK_IN',
+        'UNLOADING',
+        'UNLOADING_AT_TPCAP',
+        'COMPLETED',
+        'TRUCK_OUT',
+      ];
+
+      if (dockedStatuses.includes(truck.status)) {
+        return false;
+      }
+
+      if (!truck.planDate || !truck.planEta) {
+        return false;
+      }
+
+  /*
+   * planDate มีรูปแบบ YYYY-MM-DD
+   * planEta มีรูปแบบ HH:mm
+   */
+      const planDate = String(truck.planDate)
+        .trim()
+        .slice(0, 10);
+
+      const planTime = String(truck.planEta)
+        .trim()
+        .slice(0, 5);
+
+      if (
+        !/^\d{4}-\d{2}-\d{2}$/.test(planDate) ||
+        !/^\d{2}:\d{2}$/.test(planTime)
+      ) {
+        return false;
+      }
+
+  /*
+   * สร้างเวลา Plan ETA ตามเขตเวลาประเทศไทย
+   */
+      const plannedEta = new Date(
+        `${planDate}T${planTime}:00+07:00`
+      );
+
+      if (Number.isNaN(plannedEta.getTime())) {
+        return false;
+      }
+
+      return Date.now() > plannedEta.getTime();
+    };
+
+  
   /*
    * กำหนดสีของ Truck
    */
@@ -924,65 +989,4 @@ export function PlatformDiagram({
     </div>
   );
 }
-/*
- * ตรวจว่ารถเลย Plan ETA แล้ว แต่ยังไม่เข้าช่อง
- */
-const isOverdueAndNotDocked = (truck: Truck): boolean => {
-  /*
-   * หากมี Stamp ETA แล้ว ถือว่าเข้าพื้นที่/เข้าช่องแล้ว
-   */
-  if (truck.stampEta || truck.actualEta) {
-    return false;
-  }
 
-  /*
-   * สถานะเหล่านี้ถือว่าเข้าสู่กระบวนการลงงานแล้ว
-   */
-  const dockedStatuses = [
-    'DOCK_IN',
-    'UNLOADING',
-    'UNLOADING_AT_TPCAP',
-    'COMPLETED',
-    'TRUCK_OUT',
-  ];
-
-  if (dockedStatuses.includes(truck.status)) {
-    return false;
-  }
-
-  if (!truck.planDate || !truck.planEta) {
-    return false;
-  }
-
-  /*
-   * planDate มีรูปแบบ YYYY-MM-DD
-   * planEta มีรูปแบบ HH:mm
-   */
-  const planDate = String(truck.planDate)
-    .trim()
-    .slice(0, 10);
-
-  const planTime = String(truck.planEta)
-    .trim()
-    .slice(0, 5);
-
-  if (
-    !/^\d{4}-\d{2}-\d{2}$/.test(planDate) ||
-    !/^\d{2}:\d{2}$/.test(planTime)
-  ) {
-    return false;
-  }
-
-  /*
-   * สร้างเวลา Plan ETA ตามเขตเวลาประเทศไทย
-   */
-  const plannedEta = new Date(
-    `${planDate}T${planTime}:00+07:00`
-  );
-
-  if (Number.isNaN(plannedEta.getTime())) {
-    return false;
-  }
-
-  return Date.now() > plannedEta.getTime();
-};
