@@ -615,13 +615,13 @@ export default function App() {
           </main>
         )}
 
-        {currentView === 'diagram' && (2
+        {currentView === 'diagram' && (
           <main className="flex-1 min-w-0 overflow-auto bg-white">
-              <div className="w-full min-w-[1800px]">
-                <PlatformDiagram trucks={filteredTrucks}>
-              </div>
-          </main>
-        )}
+            <div className="w-full min-w-[1800px]">
+              <PlatformDiagram trucks={filteredTrucks} />
+                </div>
+              </main>
+            )}
 
         {currentView === 'incident' && (
           <main className="flex-1 overflow-hidden">
