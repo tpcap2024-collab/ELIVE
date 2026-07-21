@@ -250,64 +250,81 @@ export function PlatformDiagram({
     };
 
   
-  /*
-   * กำหนดสีของ Truck
-   */
-  const getTruckColor = (
-    truck: Truck
-  ): string => {
-    /*
-     * Complete + On Plan = เขียว
-     * Complete + Delay = แดง
-     * Complete + Early = น้ำเงิน
-     */
-    if (
-      truck.status === 'COMPLETED' ||
-      truck.status === 'TRUCK_OUT'
-    ) {
-      if (
-        truck.performanceStatus === 'DELAY'
-      ) {
-        return 'bg-red-500 border-red-700 text-white';
-      }
+      /*
+       * กำหนดสีของ Truck
+       */
+      const getTruckColor = (truck: Truck): string => {
+        /*
+         * เลย Plan ETA แต่ยังไม่มี Stamp ETA
+         * และยังไม่เข้าสู่ขั้นตอนลงงาน
+         * ให้แสดงสีแดงกระพริบ
+         */
+        if (isOverdueAndNotDocked(truck)) {
+          return [
+            'bg-red-600',
+            'border-red-800',
+            'text-white',
+            'animate-pulse',
+            'shadow-lg',
+            'shadow-red-500/50',
+          ].join(' ');
+        }
 
-      if (
-        truck.performanceStatus === 'EARLY'
-      ) {
-        return 'bg-blue-500 border-blue-700 text-white';
-      }
+        /*
+         * Complete + On Plan = สีเขียว
+         * Complete + Delay = สีแดง
+         * Complete + Early = สีน้ำเงิน
+         */
+        if (
+          truck.status === 'COMPLETED' ||
+          truck.status === 'TRUCK_OUT'
+        ) {
+          if (truck.performanceStatus === 'DELAY') {
+            return 'bg-red-500 border-red-700 text-white';
+          }
 
-      return 'bg-green-500 border-green-700 text-white';
-    }
+          if (truck.performanceStatus === 'EARLY') {
+            return 'bg-blue-500 border-blue-700 text-white';
+          }
 
-    /*
-     * Unloading = เหลือง
-     * Unloading + Delay = ส้ม
-     */
-    if (
-      truck.status === 'DOCK_IN' ||
-      truck.status === 'UNLOADING' ||
-      truck.status ===
-        'UNLOADING_AT_TPCAP'
-    ) {
-      if (
-        truck.performanceStatus === 'DELAY'
-      ) {
-        return 'bg-orange-500 border-orange-700 text-white';
-      }
+          return 'bg-green-500 border-green-700 text-white';
+        }
 
-      return 'bg-yellow-400 border-yellow-600 text-slate-900';
-    }
+        /*
+         * เข้าช่องหรือกำลังลงงานแล้ว
+         * Delay = สีส้ม
+         * ปกติ = สีเหลือง
+         */
+        if (
+          truck.status === 'DOCK_IN' ||
+          truck.status === 'UNLOADING' ||
+          truck.status === 'UNLOADING_AT_TPCAP'
+        ) {
+          if (truck.performanceStatus === 'DELAY') {
+            return 'bg-orange-500 border-orange-700 text-white';
+          }
 
-    if (
-      truck.performanceStatus === 'DELAY'
-    ) {
-      return 'bg-red-500 border-red-700 text-white';
-    }
+          return 'bg-yellow-400 border-yellow-600 text-slate-900';
+        }
 
-    return 'bg-slate-300 border-slate-500 text-slate-800';
-  };
+        /*
+         * มีสถานะ Delay จากข้อมูลในชีท
+         * แต่ยังไม่เข้าเงื่อนไขด้านบน
+         */
+        if (truck.performanceStatus === 'DELAY') {
+          return [
+            'bg-red-500',
+            'border-red-700',
+            'text-white',
+            'animate-pulse',
+          ].join(' ');
+        }
 
+        /*
+         * ยังไม่ถึง Plan ETA และยังไม่เข้าสู่กระบวนการ
+         */
+        return 'bg-slate-300 border-slate-500 text-slate-800';
+      };
   /*
    * Normalize จุดลงงานเพื่อให้เทียบข้อความได้ง่าย
    */
