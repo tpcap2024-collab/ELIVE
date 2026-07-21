@@ -7,42 +7,39 @@ import {
 import { calculatePerformanceStatus } from '../utils';
 
 /*
- * Google Apps Script Web App URL
+ * Render Backend API URL
  *
- * ลำดับการเลือก URL:
- * 1. URL ที่บันทึกอยู่ใน Local Storage
- * 2. Environment Variable: VITE_APPS_SCRIPT_URL
- * 3. URL เริ่มต้นด้านล่าง
+ * ระบบจะอ่าน URL ตามลำดับ:
+ * 1. Environment Variable: VITE_API_URL
+ * 2. URL เริ่มต้นด้านล่าง
  */
-const DEFAULT_APPS_SCRIPT_URL =
-  'https://script.google.com/macros/s/AKfycbxr9w7IGGlLVbCif7eB7-P4BlabBdll5uyO0nGBvo3Dt89pyAzB0iJpdK3bg6ZH244vMw/exec';
+const DEFAULT_API_URL =
+  'https://elive-api.onrender.com';
 
-/**
- * อ่าน Apps Script URL ที่เว็บไซต์จะใช้งาน
+/*
+ * คงชื่อ getAppsScriptUrl ไว้
+ * เพื่อไม่ให้ App.tsx ที่เรียกฟังก์ชันเดิมเกิด Build Error
+ *
+ * แต่ค่าที่คืนกลับตอนนี้คือ Render Backend API URL
+ * ไม่ใช่ Google Apps Script URL
  */
 export const getAppsScriptUrl = (): string => {
   const env = (import.meta as any).env;
 
-  const savedUrl = localStorage.getItem('apps_script_url');
-  const environmentUrl = env?.VITE_APPS_SCRIPT_URL;
+  const apiUrl =
+    env?.VITE_API_URL ||
+    DEFAULT_API_URL;
 
-  const selectedUrl =
-    savedUrl ||
-    environmentUrl ||
-    DEFAULT_APPS_SCRIPT_URL;
-
-  /*
-   * ลบช่องว่างและเครื่องหมาย / ท้าย URL
-   * เพื่อป้องกัน URL กลายเป็น //?action=getTrucks
-   */
-  return selectedUrl.trim().replace(/\/+$/, '');
+  return String(apiUrl)
+    .trim()
+    .replace(/\/+$/, '');
 };
 
 /**
  * แปลงเวลาที่ได้รับจาก Google Sheets
  *
- * Google Sheets อาจส่งเวลาเป็นวันที่ 1899-12-30
- * เช่น 1899-12-30T07:56:00.000Z
+ * Google Sheets อาจส่งเวลาในรูปแบบ:
+ * 1899-12-30T07:56:00.000Z
  */
 function parseGoogleSheetsTime(
   timeValue: unknown
@@ -111,9 +108,9 @@ function parseGoogleSheetsDate(
 }
 
 /**
- * อ่านข้อความ Error จาก Apps Script
+ * อ่านข้อความ Error จาก Backend API
  */
-function getAppsScriptError(
+function getApiError(
   data: unknown
 ): string | null {
   if (
@@ -121,7 +118,9 @@ function getAppsScriptError(
     data !== null &&
     'error' in data
   ) {
-    const errorValue = (data as { error?: unknown }).error;
+    const errorValue = (
+      data as { error?: unknown }
+    ).error;
 
     if (errorValue) {
       return String(errorValue);
@@ -132,43 +131,57 @@ function getAppsScriptError(
 }
 
 /**
- * ดึงข้อมูลรถจาก Google Sheets
+ * ดึงข้อมูลรถผ่าน Render Backend API
  */
 export async function fetchTrucksFromSheets(): Promise<Truck[]> {
-  const appsScriptUrl = getAppsScriptUrl();
+  const apiUrl = getAppsScriptUrl();
 
-  if (!appsScriptUrl) {
+  if (!apiUrl) {
     throw new Error(
-      'Please set Google Apps Script URL in Settings.'
+      'Render Backend API URL is not configured.'
     );
   }
 
   const requestUrl =
-    `${appsScriptUrl}?action=getTrucks`;
+    `${apiUrl}/api/trucks`;
 
   let response: Response;
 
   try {
     response = await fetch(requestUrl, {
       method: 'GET',
-      redirect: 'follow',
+      headers: {
+        Accept: 'application/json',
+      },
       cache: 'no-store',
     });
   } catch (error) {
     console.error(
-      'Unable to connect to Google Apps Script:',
+      'Unable to connect to ELIVE Backend API:',
       error
     );
 
     throw new Error(
-      'Unable to connect to Google Sheets. Please check the Apps Script URL, deployment permission, or CORS configuration.'
+      'Unable to connect to the ELIVE Backend API.'
     );
   }
 
   if (!response.ok) {
-    throw new Error(
-      `Failed to fetch from Apps Script (${response.status} ${response.statusText})`
-    );
+    let errorMessage =
+      `Failed to fetch truck data (${response.status} ${response.statusText})`;
+
+    try {
+      const errorData = await response.json();
+      const apiError = getApiError(errorData);
+
+      if (apiError) {
+        errorMessage = apiError;
+      }
+    } catch {
+      // ใช้ข้อความ Error เริ่มต้น
+    }
+
+    throw new Error(errorMessage);
   }
 
   let data: any;
@@ -177,34 +190,36 @@ export async function fetchTrucksFromSheets(): Promise<Truck[]> {
     data = await response.json();
   } catch (error) {
     console.error(
-      'Apps Script returned invalid JSON:',
+      'Backend API returned invalid JSON:',
       error
     );
 
     throw new Error(
-      'Apps Script returned an invalid response.'
+      'The ELIVE Backend API returned an invalid response.'
     );
   }
 
-  const appsScriptError = getAppsScriptError(data);
+  const apiError = getApiError(data);
 
-  if (appsScriptError) {
-    throw new Error(appsScriptError);
+  if (apiError) {
+    throw new Error(apiError);
   }
 
   if (data.status !== 'success') {
     throw new Error(
-      'Apps Script did not return a success status.'
+      'The ELIVE Backend API did not return a success status.'
     );
   }
 
-  const planData: any[][] = Array.isArray(data.plan)
-    ? data.plan
-    : [];
+  const planData: any[][] =
+    Array.isArray(data.plan)
+      ? data.plan
+      : [];
 
-  const actualData: any[][] = Array.isArray(data.actual)
-    ? data.actual
-    : [];
+  const actualData: any[][] =
+    Array.isArray(data.actual)
+      ? data.actual
+      : [];
 
   /*
    * ข้ามแถวแรก เพราะเป็น Header
@@ -216,14 +231,16 @@ export async function fetchTrucksFromSheets(): Promise<Truck[]> {
    * สร้าง Map ของ Actual data
    * โดยใช้ Code run ในคอลัมน์แรกเป็น Key
    */
-  const actualMap = new Map<string, any[]>();
+  const actualMap =
+    new Map<string, any[]>();
 
   for (const row of actualRows) {
     if (!Array.isArray(row)) {
       continue;
     }
 
-    const codeRun = String(row[0] || '').trim();
+    const codeRun =
+      String(row[0] || '').trim();
 
     if (codeRun) {
       actualMap.set(codeRun, row);
@@ -237,7 +254,8 @@ export async function fetchTrucksFromSheets(): Promise<Truck[]> {
       continue;
     }
 
-    const codeRun = String(row[0] || '').trim();
+    const codeRun =
+      String(row[0] || '').trim();
 
     /*
      * ข้ามแถวที่ไม่มี Code run
@@ -246,19 +264,17 @@ export async function fetchTrucksFromSheets(): Promise<Truck[]> {
       continue;
     }
 
-    const actualRow = actualMap.get(codeRun);
+    const actualRow =
+      actualMap.get(codeRun);
 
-    const planDate = parseGoogleSheetsDate(
-      row[1]
-    );
+    const planDate =
+      parseGoogleSheetsDate(row[1]);
 
-    const planEta = parseGoogleSheetsTime(
-      row[10]
-    );
+    const planEta =
+      parseGoogleSheetsTime(row[10]);
 
-    const planEtd = parseGoogleSheetsTime(
-      row[11]
-    );
+    const planEtd =
+      parseGoogleSheetsTime(row[11]);
 
     /*
      * ค่าเริ่มต้นกรณียังไม่มี Actual data
@@ -307,14 +323,15 @@ export async function fetchTrucksFromSheets(): Promise<Truck[]> {
     }
 
     /*
-     * แปลง Current Status จากข้อความในชีท
-     * เป็น TruckStatus ที่ระบบใช้งาน
+     * แปลง Current Status เป็น TruckStatus
      */
-    const normalizedStatus = currentStatus
-      .trim()
-      .toLowerCase();
+    const normalizedStatus =
+      currentStatus
+        .trim()
+        .toLowerCase();
 
-    let mappedStatus: TruckStatus = 'TRAVELING';
+    let mappedStatus: TruckStatus =
+      'TRAVELING';
 
     if (
       normalizedStatus.includes('complete') ||
@@ -323,21 +340,22 @@ export async function fetchTrucksFromSheets(): Promise<Truck[]> {
     ) {
       mappedStatus = 'COMPLETED';
     } else if (
-      normalizedStatus.includes('unloading at tpcap') ||
+      normalizedStatus.includes(
+        'unloading at tpcap'
+      ) ||
       normalizedStatus.includes('arrive') ||
       normalizedStatus.includes('arrived') ||
       normalizedStatus.includes('ถึง')
     ) {
-      /*
-       * ต้องตรวจเงื่อนไขนี้ก่อนคำว่า unloading
-       * เพราะ "unloading at tpcap" มีคำว่า unloading อยู่ด้วย
-       */
-      mappedStatus = 'UNLOADING_AT_TPCAP';
+      mappedStatus =
+        'UNLOADING_AT_TPCAP';
     } else if (
       normalizedStatus.includes('กำลังลงงาน') ||
       normalizedStatus.includes('dock') ||
       normalizedStatus.includes('unloading') ||
-      normalizedStatus.includes('unload at tpcap')
+      normalizedStatus.includes(
+        'unload at tpcap'
+      )
     ) {
       mappedStatus = 'UNLOADING';
     } else if (
@@ -361,8 +379,8 @@ export async function fetchTrucksFromSheets(): Promise<Truck[]> {
         .trim()
         .toLowerCase();
 
-    let performanceStatus: PerformanceStatus =
-      'ON_PLAN';
+    let performanceStatus:
+      PerformanceStatus = 'ON_PLAN';
 
     if (
       normalizedPerformance.includes('delay') ||
@@ -384,8 +402,8 @@ export async function fetchTrucksFromSheets(): Promise<Truck[]> {
     }
 
     /*
-     * ถ้าในชีทยังเป็น ON_PLAN และมี Actual ETA
-     * ให้ระบบคำนวณ Performance ใหม่
+     * ถ้าในชีทยังเป็น ON_PLAN
+     * และมี Actual ETA ให้คำนวณใหม่
      */
     if (
       performanceStatus === 'ON_PLAN' &&
@@ -423,16 +441,17 @@ export async function fetchTrucksFromSheets(): Promise<Truck[]> {
       actionResponsible,
       actionStatus,
 
-      lastUpdated: new Date().toLocaleTimeString(
-        'en-GB',
-        {
-          timeZone: 'Asia/Bangkok',
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit',
-          hour12: false,
-        }
-      ),
+      lastUpdated:
+        new Date().toLocaleTimeString(
+          'en-GB',
+          {
+            timeZone: 'Asia/Bangkok',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false,
+          }
+        ),
     });
   }
 
@@ -440,18 +459,18 @@ export async function fetchTrucksFromSheets(): Promise<Truck[]> {
 }
 
 /**
- * อัปเดตข้อมูลรถลงในชีท Actual data
+ * อัปเดตข้อมูลรถผ่าน Render Backend API
  */
 export async function updateTruckInSheets(
   truckId: string,
   updates: Partial<Truck>,
   currentTruck: Truck
 ): Promise<void> {
-  const appsScriptUrl = getAppsScriptUrl();
+  const apiUrl = getAppsScriptUrl();
 
-  if (!appsScriptUrl) {
+  if (!apiUrl) {
     throw new Error(
-      'Please set Google Apps Script URL in Settings.'
+      'Render Backend API URL is not configured.'
     );
   }
 
@@ -462,10 +481,13 @@ export async function updateTruckInSheets(
   }
 
   const datetimeUpdate =
-    new Date().toLocaleString('en-GB', {
-      timeZone: 'Asia/Bangkok',
-      hour12: false,
-    });
+    new Date().toLocaleString(
+      'en-GB',
+      {
+        timeZone: 'Asia/Bangkok',
+        hour12: false,
+      }
+    );
 
   const currentStatus =
     updates.status !== undefined
@@ -534,41 +556,51 @@ export async function updateTruckInSheets(
   let response: Response;
 
   try {
-    response = await fetch(appsScriptUrl, {
-      method: 'POST',
-
-      /*
-       * ใช้ text/plain เพื่อหลีกเลี่ยง CORS preflight
-       * ห้ามเปลี่ยนเป็น application/json
-       */
-      headers: {
-        'Content-Type':
-          'text/plain;charset=utf-8',
-      },
-
-      redirect: 'follow',
-
-      body: JSON.stringify({
-        action: 'updateTruck',
-        truckId,
-        newRow,
-      }),
-    });
+    response = await fetch(
+      `${apiUrl}/api/trucks/update`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type':
+            'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          truckId,
+          newRow,
+        }),
+      }
+    );
   } catch (error) {
     console.error(
-      'Unable to update Google Sheets:',
+      'Unable to update Google Sheets through ELIVE API:',
       error
     );
 
     throw new Error(
-      'Unable to connect to Google Sheets while updating data.'
+      'Unable to connect to the ELIVE Backend API while updating data.'
     );
   }
 
   if (!response.ok) {
-    throw new Error(
-      `Failed to update Google Sheet (${response.status} ${response.statusText})`
-    );
+    let errorMessage =
+      `Failed to update Google Sheet (${response.status} ${response.statusText})`;
+
+    try {
+      const errorData =
+        await response.json();
+
+      const apiError =
+        getApiError(errorData);
+
+      if (apiError) {
+        errorMessage = apiError;
+      }
+    } catch {
+      // ใช้ข้อความ Error เริ่มต้น
+    }
+
+    throw new Error(errorMessage);
   }
 
   let result: any;
@@ -577,25 +609,25 @@ export async function updateTruckInSheets(
     result = await response.json();
   } catch (error) {
     console.error(
-      'Apps Script returned invalid update response:',
+      'ELIVE API returned invalid update response:',
       error
     );
 
     throw new Error(
-      'Apps Script returned an invalid update response.'
+      'The ELIVE Backend API returned an invalid update response.'
     );
   }
 
-  const appsScriptError =
-    getAppsScriptError(result);
+  const apiError =
+    getApiError(result);
 
-  if (appsScriptError) {
-    throw new Error(appsScriptError);
+  if (apiError) {
+    throw new Error(apiError);
   }
 
   if (result.success !== true) {
     throw new Error(
-      'Apps Script did not confirm the update.'
+      'The server did not confirm the update.'
     );
   }
 }
