@@ -1,0 +1,6 @@
+{
+  "name": "ELIVE - Truck Status Monitoring",
+  "description": "Real-Time Truck Status Monitoring System from Supplier to Warehouse",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
