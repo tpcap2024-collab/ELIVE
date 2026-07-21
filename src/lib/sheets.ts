@@ -4,7 +4,7 @@ import { calculatePerformanceStatus } from '../utils';
 // Read URL from LocalStorage or Env
 export const getAppsScriptUrl = () => {
   const env = (import.meta as any).env;
-  return localStorage.getItem('apps_script_url') || (env && env.VITE_APPS_SCRIPT_URL) || 'https://script.google.com/macros/s/AKfycbwV9sfFxE-9lN4A08EKGq55_RlBjlVcvK6Bdeddj8GT0-6huxxnz8oyT7zunl69PK3qJA/exec';
+  return localStorage.getItem('apps_script_url') || (env && env.VITE_APPS_SCRIPT_URL) || 'https://script.google.com/macros/s/AKfycbxr9w7IGGlLVbCif7eB7-P4BlabBdll5uyO0nGBvo3Dt89pyAzB0iJpdK3bg6ZH244vMw/exec';
 };
 
 function parseGoogleSheetsTime(timeStr: string): string {
