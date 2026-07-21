@@ -617,7 +617,7 @@ export default function App() {
 
         {currentView === 'diagram' && (
           <main className="flex-1 min-w-0 overflow-auto bg-white">
-            <div className="w-full min-w-[3000px]">
+            <div className="w-full min-w-[5000px]">
               <PlatformDiagram trucks={filteredTrucks} />
                 </div>
               </main>
