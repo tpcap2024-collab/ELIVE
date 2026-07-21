@@ -134,25 +134,61 @@ export function PlatformDiagram({ trucks }: PlatformDiagramProps) {
   }, [trucks]);
 
   return (
-    <div className="h-full flex flex-col bg-slate-100 overflow-hidden text-xs relative">
-      <div className="p-4 grid grid-cols-2 md:grid-cols-4 gap-4 shrink-0 bg-white border-b border-slate-200">
-        <div className="bg-slate-50 p-2 rounded-lg border border-slate-200 flex flex-col">
-          <p className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-1.5"><TruckIcon className="w-3.5 h-3.5"/> Total</p>
-          <h3 className="text-xl font-bold text-slate-800">{stats.total}</h3>
-        </div>
-        <div className="bg-slate-50 p-2 rounded-lg border border-slate-200 flex flex-col">
-          <p className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-1.5"><Package className="w-3.5 h-3.5 text-yellow-500"/> Unloading</p>
-          <h3 className="text-xl font-bold text-slate-800">{stats.unloading}</h3>
-        </div>
-        <div className="bg-slate-50 p-2 rounded-lg border border-slate-200 flex flex-col">
-          <p className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5 text-green-500"/> Complete</p>
-          <h3 className="text-xl font-bold text-slate-800">{stats.complete}</h3>
-        </div>
-        <div className="bg-slate-50 p-2 rounded-lg border border-slate-200 flex flex-col">
-          <p className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-1.5"><Clock className="w-3.5 h-3.5 text-blue-500"/> Remain</p>
-          <h3 className="text-xl font-bold text-slate-800">{stats.remain}</h3>
+    <div className="h-full min-h-0 min-w-0 flex flex-col bg-slate-100 overflow-hidden text-xs relative">
+
+            {/* Summary Cards - Fixed width and always visible */}
+      <div className="w-full shrink-0 bg-white border-b border-slate-200 p-4">
+        <div className="grid w-full grid-cols-2 gap-4 md:grid-cols-4">
+          {/* Total */}
+          <div className="min-w-0 h-14 bg-slate-50 px-3 py-2 rounded-lg border border-slate-200 flex flex-col justify-center">
+            <p className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-1.5 whitespace-nowrap">
+              <TruckIcon className="w-3.5 h-3.5 shrink-0" />
+              Total
+            </p>
+
+            <h3 className="text-xl leading-none mt-1 font-bold text-slate-800">
+              {stats.total}
+            </h3>
+          </div>
+
+          {/* Unloading */}
+          <div className="min-w-0 h-14 bg-slate-50 px-3 py-2 rounded-lg border border-slate-200 flex flex-col justify-center">
+            <p className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-1.5 whitespace-nowrap">
+              <Package className="w-3.5 h-3.5 shrink-0 text-yellow-500" />
+              Unloading
+            </p>
+
+            <h3 className="text-xl leading-none mt-1 font-bold text-slate-800">
+              {stats.unloading}
+            </h3>
+          </div>
+  
+          {/* Complete */}
+          <div className="min-w-0 h-14 bg-slate-50 px-3 py-2 rounded-lg border border-slate-200 flex flex-col justify-center">
+            <p className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-1.5 whitespace-nowrap">
+              <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-green-500" />
+              Complete
+            </p>
+
+            <h3 className="text-xl leading-none mt-1 font-bold text-slate-800">
+              {stats.complete}
+            </h3>
+          </div>
+
+          {/* Remain */}
+          <div className="min-w-0 h-14 bg-slate-50 px-3 py-2 rounded-lg border border-slate-200 flex flex-col justify-center">
+            <p className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-1.5 whitespace-nowrap">
+              <Clock className="w-3.5 h-3.5 shrink-0 text-blue-500" />
+              Remain
+            </p>
+
+            <h3 className="text-xl leading-none mt-1 font-bold text-slate-800">
+              {stats.remain}
+            </h3>
+          </div>
         </div>
       </div>
+      
 
       {/* Top Header Labels */}
       <div className="bg-slate-800 py-2 flex justify-center gap-2 border-b-2 border-slate-900 shrink-0">
