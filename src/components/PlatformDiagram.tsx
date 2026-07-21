@@ -393,19 +393,20 @@ export function PlatformDiagram({
 
       {/* Diagram Scrollable Area */}
       <div
-        className="relative min-*-0 min-w-0 flex-1 overflow-y-auto *verflow-x-scroll bg-slate-50"
-        st*le={{
+        className="relative min-h-0 min-w-0 flex-1 overflow-x-scroll overflow-y-auto bg-slate-50"
+        style={{
           width: '100%',
-          maxWi*th: '100%',
+          maxWidth: '100%',
+          scrollbarGutter: 'stable',
         }}
       >
         <div
-          clas*Name="flex shrink-0 flex-col bg-sl*te-50"
+          className="flex shrink-0 flex-col bg-slate-50"
           style={{
-            width: '*000px',
+            width: '6000px',
             minWidth: '6000px',
             maxWidth: 'none',
-            flex:*'0 0 6000px',
+            flex: '0 0 6000px',
           }}
         >
           
