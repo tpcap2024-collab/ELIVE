@@ -80,23 +80,61 @@ export default function App() {
     }
   };
 
+/*
+ * selectedDate จาก input type="date"
+ * มีรูปแบบ YYYY-MM-DD อยู่แล้ว เช่น 2026-07-21
+ *
+ * truck.planDate จาก sheets.ts
+ * ก็มีรูปแบบ YYYY-MM-DD เช่นเดียวกัน
+ */
   const formattedSelectedDate = useMemo(() => {
-    if (!selectedDate) return '';
-    const [year, month, day] = selectedDate.split('-');
-    return `${parseInt(day, 10)}/${parseInt(month, 10)}/${year.slice(-2)}`;
+    if (!selectedDate) {
+      return '';
+    }
+
+    return selectedDate.trim().slice(0, 10);
   }, [selectedDate]);
 
   const filteredTrucks = useMemo(() => {
-    if (!selectedDate) return [];
-    return trucks.filter(t => t.planDate === formattedSelectedDate);
-  }, [trucks, selectedDate, formattedSelectedDate]);
+    if (!formattedSelectedDate) {
+      return [];
+    }
 
-  const stats = {
-    total: filteredTrucks.length,
-    unloading: filteredTrucks.filter(t => t.status === 'DOCK_IN' || t.status === 'UNLOADING').length,
-    complete: filteredTrucks.filter(t => t.status === 'COMPLETED' || t.status === 'TRUCK_OUT').length,
-    remain: filteredTrucks.filter(t => t.status !== 'COMPLETED' && t.status !== 'TRUCK_OUT').length,
-  };
+    return trucks.filter(truck => {
+      const truckPlanDate = String(
+        truck.planDate || ''
+      )
+        .trim()
+        .slice(0, 10);
+
+      return truckPlanDate === formattedSelectedDate;
+    });
+  }, [trucks, formattedSelectedDate]);
+
+  const stats = useMemo(() => {
+    return {
+      total: filteredTrucks.length,
+
+      unloading: filteredTrucks.filter(
+        truck =>
+          truck.status === 'DOCK_IN' ||
+          truck.status === 'UNLOADING' ||
+          truck.status === 'UNLOADING_AT_TPCAP'
+      ).length,
+
+      complete: filteredTrucks.filter(
+        truck =>
+          truck.status === 'COMPLETED' ||
+          truck.status === 'TRUCK_OUT'
+      ).length,
+
+      remain: filteredTrucks.filter(
+        truck =>
+          truck.status !== 'COMPLETED' &&
+          truck.status !== 'TRUCK_OUT'
+      ).length,
+    };
+  }, [filteredTrucks]);
 
   const isDelayedNoStamp = (planEta?: string, stampEta?: string, actualEta?: string) => {
     if (stampEta || actualEta) return false;
