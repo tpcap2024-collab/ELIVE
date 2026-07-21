@@ -615,7 +615,13 @@ export default function App() {
           </main>
         )}
 
-        {currentView === 'diagram' && (2  <main className="flex-1 min-w-0 overflow-auto bg-white">3    <div className="w-full min-w-[1800px]">4      <PlatformDiagram trucks={filteredTrucks} />5    </div>6  </main>7)}
+        {currentView === 'diagram' && (2
+          <main className="flex-1 min-w-0 overflow-auto bg-white">
+              <div className="w-full min-w-[1800px]">
+                <PlatformDiagram trucks={filteredTrucks}>
+              </div>
+          </main>
+        )}
 
         {currentView === 'incident' && (
           <main className="flex-1 overflow-hidden">
