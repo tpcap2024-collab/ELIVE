@@ -190,19 +190,31 @@ export function PlatformDiagram({ trucks }: PlatformDiagramProps) {
       </div>
       
 
-      {/* Top Header Labels */}
-      <div className="bg-slate-800 py-2 flex justify-center gap-2 border-b-2 border-slate-900 shrink-0">
-        <div className="font-bold text-white text-sm mr-auto ml-4">PLATFORM DIAGRAM</div>
-        {categories.map((cat, i) => (
-          <div key={i} className={`px-4 py-1 text-[10px] font-bold border-2 border-black ${cat.color}`}>
-            {cat.label}
-          </div>
-        ))}
-      </div>
+      {/* Diagram Scrollable Area */}
+      <div className="flex-1 min-h-0 *in-w-0 overflow-auto bg-slate-50 relative">
+        <div className="flex flex-col w-[6000px] min-w-[6000px] bg-slate-50">
 
-      {/* Main Scrollable Area */}
-      <div className="flex-1 overflow-auto bg-slate-50 relative overflow-x-hidden">
-        <div className="flex flex-col w-full bg-slate-50">
+          {/* Platform Header - Scrolls horizontally with timeline */}
+          <div className="sticky top-0 z-50 w-full h-10 bg-slate-800 px-4 flex items-center gap-2 border-b-2 border-slate-900 shrink-0">
+            <div className="sticky left-4 z-[60] font-bold text-white text-sm whitespace-nowrap mr-auto">
+              PLATFORM DIAGRAM
+            </div>
+
+            <div className="ml-auto flex items-center gap-2">
+              {categories.map((cat, i) => (
+                <div
+                  key={i}
+                  className={`min-w-[120px] px-4 py-1 text-center text-[10px] font-bold whitespace-nowrap border-2 border-black ${cat.color}`}
+                >
+                  {cat.label}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {dynamicGroups.map((group, groupIdx) => (
+      
+       
           
           {dynamicGroups.map((group, groupIdx) => (
             <div key={group.groupName} className="flex flex-col border-b-2 border-slate-900">
