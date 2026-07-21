@@ -392,12 +392,23 @@ export function PlatformDiagram({
       </div>
 
       {/* Diagram Scrollable Area */}
-      <div className="relative min-h-0 min-w-0 flex-1 overflow-auto bg-slate-50">
-        {/*
-         * กำหนดความกว้างเฉพาะ Diagram เป็น 6000px
-         * Summary Cards ด้านบนจะไม่ถูกขยายตาม
-         */}
-        <div className="flex w-[6000px] min-w-[6000px] flex-col bg-slate-50">
+      <div
+        className="relative min-*-0 min-w-0 flex-1 overflow-y-auto *verflow-x-scroll bg-slate-50"
+        st*le={{
+          width: '100%',
+          maxWi*th: '100%',
+        }}
+      >
+        <div
+          clas*Name="flex shrink-0 flex-col bg-sl*te-50"
+          style={{
+            width: '*000px',
+            minWidth: '6000px',
+            maxWidth: 'none',
+            flex:*'0 0 6000px',
+          }}
+        >
+          
           {/* Platform Header */}
           <div className="sticky top-0 z-50 flex h-10 w-full shrink-0 items-center gap-2 border-b-2 border-slate-900 bg-slate-800 px-4">
             <div className="sticky left-4 z-[60] mr-auto whitespace-nowrap text-sm font-bold text-white">
