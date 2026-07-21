@@ -51,10 +51,15 @@ app.get('/', (req, res) => {
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
+    version: '2',
+    routes: [
+      '/health',
+      '/api/trucks',
+      '/api/trucks/update',
+    ],
     timestamp: new Date().toISOString(),
   });
 });
-
 /*
  * อ่านข้อมูลรถจาก Google Apps Script
  */
