@@ -408,11 +408,13 @@ export async function fetchTrucksFromSheets(): Promise<Truck[]> {
     if (
       performanceStatus === 'ON_PLAN' &&
       stampEta &&
-      planEta
+      planEta &&
+      planEtd
     ) {
       performanceStatus =
         calculatePerformanceStatus(
           planEta,
+          planEtd,
           stampEta
         );
     }
