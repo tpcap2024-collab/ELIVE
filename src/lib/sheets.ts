@@ -4,25 +4,15 @@ import {
   PerformanceStatus,
 } from '../types';
 
-import { calculatePerformanceStatus } from '../utils';
+import {
+  calculatePerformanceStatus,
+} from '../utils';
 
-/*
- * Render Backend API URL
- *
- * ระบบจะอ่าน URL ตามลำดับ:
- * 1. Environment Variable: VITE_API_URL
- * 2. URL เริ่มต้นด้านล่าง
- */
+// Render Backend API URL
 const DEFAULT_API_URL =
   'https://elive-api.onrender.com';
 
-/*
- * คงชื่อ getAppsScriptUrl ไว้
- * เพื่อไม่ให้ App.tsx ที่เรียกฟังก์ชันเดิมเกิด Build Error
- *
- * แต่ค่าที่คืนกลับตอนนี้คือ Render Backend API URL
- * ไม่ใช่ Google Apps Script URL
- */
+// คงชื่อฟังก์ชันเดิมไว้เพื่อให้ App.tsx ใช้งานต่อได้
 export const getAppsScriptUrl = (): string => {
   const env = (import.meta as any).env;
 
@@ -35,12 +25,7 @@ export const getAppsScriptUrl = (): string => {
     .replace(/\/+$/, '');
 };
 
-/**
- * แปลงเวลาที่ได้รับจาก Google Sheets
- *
- * Google Sheets อาจส่งเวลาในรูปแบบ:
- * 1899-12-30T07:56:00.000Z
- */
+// แปลงเวลาจาก Google Sheets เป็น HH:mm
 function parseGoogleSheetsTime(
   timeValue: unknown
 ): string {
@@ -52,31 +37,53 @@ function parseGoogleSheetsTime(
     return '';
   }
 
-  const timeStr = String(timeValue).trim();
+  const timeText =
+    String(timeValue).trim();
 
-  if (!timeStr) {
+  if (!timeText) {
     return '';
   }
 
-  if (timeStr.includes('1899-12-30T')) {
-    const date = new Date(timeStr);
+  // รองรับค่าที่ Google Sheets ส่งมาเป็น ISO Date
+  if (timeText.includes('T')) {
+    const date =
+      new Date(timeText);
 
     if (!Number.isNaN(date.getTime())) {
-      return date.toLocaleTimeString('en-GB', {
-        timeZone: 'Asia/Bangkok',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false,
-      });
+      return date.toLocaleTimeString(
+        'en-GB',
+        {
+          timeZone: 'Asia/Bangkok',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+        }
+      );
     }
   }
 
-  return timeStr;
+  // รองรับ HH:mm และ HH:mm:ss
+  const timeMatch =
+    timeText.match(
+      /^(\d{1,2}):(\d{2})/
+    );
+
+  if (timeMatch) {
+    const hour =
+      String(
+        Number(timeMatch[1])
+      ).padStart(2, '0');
+
+    const minute =
+      timeMatch[2];
+
+    return `${hour}:${minute}`;
+  }
+
+  return timeText;
 }
 
-/**
- * แปลงวันที่จาก Google Sheets เป็น YYYY-MM-DD
- */
+// แปลงวันที่จาก Google Sheets เป็น YYYY-MM-DD
 function parseGoogleSheetsDate(
   dateValue: unknown
 ): string {
@@ -88,28 +95,44 @@ function parseGoogleSheetsDate(
     return '';
   }
 
-  const dateStr = String(dateValue).trim();
+  const dateText =
+    String(dateValue).trim();
 
-  if (!dateStr) {
+  if (!dateText) {
     return '';
   }
 
-  if (dateStr.includes('T')) {
-    const date = new Date(dateStr);
+  // ถ้าเป็น YYYY-MM-DD อยู่แล้ว ให้ใช้ได้ทันที
+  const plainDateMatch =
+    dateText.match(
+      /^(\d{4})-(\d{2})-(\d{2})$/
+    );
 
-    if (!Number.isNaN(date.getTime())) {
-      return date.toLocaleDateString('en-CA', {
-        timeZone: 'Asia/Bangkok',
-      });
-    }
+  if (plainDateMatch) {
+    return (
+      `${plainDateMatch[1]}-` +
+      `${plainDateMatch[2]}-` +
+      `${plainDateMatch[3]}`
+    );
   }
 
-  return dateStr;
+  // รองรับ ISO Date จาก Google Sheets
+  const date =
+    new Date(dateText);
+
+  if (!Number.isNaN(date.getTime())) {
+    return date.toLocaleDateString(
+      'en-CA',
+      {
+        timeZone: 'Asia/Bangkok',
+      }
+    );
+  }
+
+  return dateText;
 }
 
-/**
- * อ่านข้อความ Error จาก Backend API
- */
+// อ่านข้อความ Error จาก Backend API
 function getApiError(
   data: unknown
 ): string | null {
@@ -118,9 +141,12 @@ function getApiError(
     data !== null &&
     'error' in data
   ) {
-    const errorValue = (
-      data as { error?: unknown }
-    ).error;
+    const errorValue =
+      (
+        data as {
+          error?: unknown;
+        }
+      ).error;
 
     if (errorValue) {
       return String(errorValue);
@@ -130,11 +156,11 @@ function getApiError(
   return null;
 }
 
-/**
- * ดึงข้อมูลรถผ่าน Render Backend API
- */
-export async function fetchTrucksFromSheets(): Promise<Truck[]> {
-  const apiUrl = getAppsScriptUrl();
+// ดึงข้อมูลรถผ่าน Render Backend API
+export async function fetchTrucksFromSheets():
+  Promise<Truck[]> {
+  const apiUrl =
+    getAppsScriptUrl();
 
   if (!apiUrl) {
     throw new Error(
@@ -148,13 +174,16 @@ export async function fetchTrucksFromSheets(): Promise<Truck[]> {
   let response: Response;
 
   try {
-    response = await fetch(requestUrl, {
-      method: 'GET',
-      headers: {
-        Accept: 'application/json',
-      },
-      cache: 'no-store',
-    });
+    response = await fetch(
+      requestUrl,
+      {
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+        },
+        cache: 'no-store',
+      }
+    );
   } catch (error) {
     console.error(
       'Unable to connect to ELIVE Backend API:',
@@ -168,26 +197,34 @@ export async function fetchTrucksFromSheets(): Promise<Truck[]> {
 
   if (!response.ok) {
     let errorMessage =
-      `Failed to fetch truck data (${response.status} ${response.statusText})`;
+      `Failed to fetch truck data ` +
+      `(${response.status} ${response.statusText})`;
 
     try {
-      const errorData = await response.json();
-      const apiError = getApiError(errorData);
+      const errorData =
+        await response.json();
+
+      const apiError =
+        getApiError(errorData);
 
       if (apiError) {
-        errorMessage = apiError;
+        errorMessage =
+          apiError;
       }
     } catch {
       // ใช้ข้อความ Error เริ่มต้น
     }
 
-    throw new Error(errorMessage);
+    throw new Error(
+      errorMessage
+    );
   }
 
   let data: any;
 
   try {
-    data = await response.json();
+    data =
+      await response.json();
   } catch (error) {
     console.error(
       'Backend API returned invalid JSON:',
@@ -199,10 +236,13 @@ export async function fetchTrucksFromSheets(): Promise<Truck[]> {
     );
   }
 
-  const apiError = getApiError(data);
+  const apiError =
+    getApiError(data);
 
   if (apiError) {
-    throw new Error(apiError);
+    throw new Error(
+      apiError
+    );
   }
 
   if (data.status !== 'success') {
@@ -221,16 +261,14 @@ export async function fetchTrucksFromSheets(): Promise<Truck[]> {
       ? data.actual
       : [];
 
-  /*
-   * ข้ามแถวแรก เพราะเป็น Header
-   */
-  const planRows = planData.slice(1);
-  const actualRows = actualData.slice(1);
+  // ข้ามแถว Header
+  const planRows =
+    planData.slice(1);
 
-  /*
-   * สร้าง Map ของ Actual data
-   * โดยใช้ Code run ในคอลัมน์แรกเป็น Key
-   */
+  const actualRows =
+    actualData.slice(1);
+
+  // สร้าง Map ของ Actual โดยใช้ Code run เป็น Key
   const actualMap =
     new Map<string, any[]>();
 
@@ -243,7 +281,10 @@ export async function fetchTrucksFromSheets(): Promise<Truck[]> {
       String(row[0] || '').trim();
 
     if (codeRun) {
-      actualMap.set(codeRun, row);
+      actualMap.set(
+        codeRun,
+        row
+      );
     }
   }
 
@@ -257,9 +298,6 @@ export async function fetchTrucksFromSheets(): Promise<Truck[]> {
     const codeRun =
       String(row[0] || '').trim();
 
-    /*
-     * ข้ามแถวที่ไม่มี Code run
-     */
     if (!codeRun) {
       continue;
     }
@@ -268,143 +306,212 @@ export async function fetchTrucksFromSheets(): Promise<Truck[]> {
       actualMap.get(codeRun);
 
     const planDate =
-      parseGoogleSheetsDate(row[1]);
+      parseGoogleSheetsDate(
+        row[1]
+      );
 
     const planEta =
-      parseGoogleSheetsTime(row[10]);
+      parseGoogleSheetsTime(
+        row[10]
+      );
 
     const planEtd =
-      parseGoogleSheetsTime(row[11]);
+      parseGoogleSheetsTime(
+        row[11]
+      );
 
-    /*
-     * ค่าเริ่มต้นกรณียังไม่มี Actual data
-     */
-    let currentStatus = 'TRAVELING';
-    let efficiencyStatus = 'ON_PLAN';
+    let currentStatus =
+      'TRAVELING';
+
+    let efficiencyStatus =
+      'ON_PLAN';
+
     let stampEta = '';
     let stampEtd = '';
+
     let actionProblem = '';
     let actionCountermeasure = '';
     let actionResponsible = '';
     let actionStatus = '';
 
     if (actualRow) {
-      currentStatus = String(
-        actualRow[1] || 'TRAVELING'
-      );
+      currentStatus =
+        String(
+          actualRow[1] ||
+          'TRAVELING'
+        );
 
-      efficiencyStatus = String(
-        actualRow[2] || 'ON_PLAN'
-      );
+      efficiencyStatus =
+        String(
+          actualRow[2] ||
+          'ON_PLAN'
+        );
 
-      stampEta = parseGoogleSheetsTime(
-        actualRow[4]
-      );
+      stampEta =
+        parseGoogleSheetsTime(
+          actualRow[4]
+        );
 
-      stampEtd = parseGoogleSheetsTime(
-        actualRow[5]
-      );
+      stampEtd =
+        parseGoogleSheetsTime(
+          actualRow[5]
+        );
 
-      actionProblem = String(
-        actualRow[6] || ''
-      );
+      actionProblem =
+        String(
+          actualRow[6] || ''
+        );
 
-      actionCountermeasure = String(
-        actualRow[7] || ''
-      );
+      actionCountermeasure =
+        String(
+          actualRow[7] || ''
+        );
 
-      actionResponsible = String(
-        actualRow[8] || ''
-      );
+      actionResponsible =
+        String(
+          actualRow[8] || ''
+        );
 
-      actionStatus = String(
-        actualRow[9] || ''
-      );
+      actionStatus =
+        String(
+          actualRow[9] || ''
+        );
     }
 
-    /*
-     * แปลง Current Status เป็น TruckStatus
-     */
     const normalizedStatus =
       currentStatus
         .trim()
         .toLowerCase();
 
-    let mappedStatus: TruckStatus =
-      'TRAVELING';
+    let mappedStatus:
+      TruckStatus =
+        'TRAVELING';
 
     if (
-      normalizedStatus.includes('complete') ||
-      normalizedStatus.includes('completed') ||
-      normalizedStatus.includes('เสร็จ')
+      normalizedStatus.includes(
+        'complete'
+      ) ||
+      normalizedStatus.includes(
+        'completed'
+      ) ||
+      normalizedStatus.includes(
+        'เสร็จ'
+      )
     ) {
-      mappedStatus = 'COMPLETED';
+      mappedStatus =
+        'COMPLETED';
     } else if (
       normalizedStatus.includes(
         'unloading at tpcap'
       ) ||
-      normalizedStatus.includes('arrive') ||
-      normalizedStatus.includes('arrived') ||
-      normalizedStatus.includes('ถึง')
+      normalizedStatus.includes(
+        'arrive'
+      ) ||
+      normalizedStatus.includes(
+        'arrived'
+      ) ||
+      normalizedStatus.includes(
+        'ถึง'
+      )
     ) {
       mappedStatus =
         'UNLOADING_AT_TPCAP';
     } else if (
-      normalizedStatus.includes('กำลังลงงาน') ||
-      normalizedStatus.includes('dock') ||
-      normalizedStatus.includes('unloading') ||
+      normalizedStatus.includes(
+        'กำลังลงงาน'
+      ) ||
+      normalizedStatus.includes(
+        'dock'
+      ) ||
+      normalizedStatus.includes(
+        'unloading'
+      ) ||
       normalizedStatus.includes(
         'unload at tpcap'
       )
     ) {
-      mappedStatus = 'UNLOADING';
+      mappedStatus =
+        'UNLOADING';
     } else if (
-      normalizedStatus.includes('wait') ||
-      normalizedStatus.includes('waiting') ||
-      normalizedStatus.includes('รอ')
+      normalizedStatus.includes(
+        'wait'
+      ) ||
+      normalizedStatus.includes(
+        'waiting'
+      ) ||
+      normalizedStatus.includes(
+        'รอ'
+      )
     ) {
-      mappedStatus = 'WAITING_AREA';
+      mappedStatus =
+        'WAITING_AREA';
     } else if (
-      normalizedStatus.includes('truck out') ||
-      normalizedStatus.includes('ออก')
+      normalizedStatus.includes(
+        'truck out'
+      ) ||
+      normalizedStatus.includes(
+        'ออก'
+      )
     ) {
-      mappedStatus = 'TRUCK_OUT';
+      mappedStatus =
+        'TRUCK_OUT';
     }
 
-    /*
-     * แปลง Performance Status
-     */
+    // ใช้ค่าในชีทเป็นค่าเริ่มต้น
     const normalizedPerformance =
       efficiencyStatus
         .trim()
         .toLowerCase();
 
     let performanceStatus:
-      PerformanceStatus = 'ON_PLAN';
+      PerformanceStatus =
+        'ON_PLAN';
 
     if (
-      normalizedPerformance.includes('delay') ||
-      normalizedPerformance.includes('delayed') ||
-      normalizedPerformance.includes('ดีเล')
+      normalizedPerformance.includes(
+        'delay'
+      ) ||
+      normalizedPerformance.includes(
+        'delayed'
+      ) ||
+      normalizedPerformance.includes(
+        'ดีเล'
+      )
     ) {
-      performanceStatus = 'DELAY';
+      performanceStatus =
+        'DELAY';
     } else if (
-      normalizedPerformance.includes('early') ||
-      normalizedPerformance.includes('ก่อน') ||
-      normalizedPerformance.includes('ไว')
+      normalizedPerformance.includes(
+        'early'
+      ) ||
+      normalizedPerformance.includes(
+        'ก่อน'
+      ) ||
+      normalizedPerformance.includes(
+        'ไว'
+      )
     ) {
-      performanceStatus = 'EARLY';
+      performanceStatus =
+        'EARLY';
     } else if (
-      normalizedPerformance.includes('warning') ||
-      normalizedPerformance.includes('เตือน')
+      normalizedPerformance.includes(
+        'warning'
+      ) ||
+      normalizedPerformance.includes(
+        'เตือน'
+      )
     ) {
-      performanceStatus = 'WARNING';
+      performanceStatus =
+        'WARNING';
     }
 
-    /*
-     * ถ้าในชีทยังเป็น ON_PLAN
-     * และมี Actual ETA ให้คำนวณใหม่
-     */
+    // คำนวณ Performance ใหม่จาก Stamp ETA
+    //
+    // Stamp ETA ก่อน Plan ETA = EARLY
+    // Stamp ETA ตั้งแต่ Plan ETA ถึง Plan ETD = ON_PLAN
+    // Stamp ETA หลัง Plan ETD = DELAY
+    //
+    // Stamp ETD ไม่มีผลต่อ Performance
     if (
       stampEta &&
       planEta &&
@@ -421,17 +528,34 @@ export async function fetchTrucksFromSheets(): Promise<Truck[]> {
     trucks.push({
       id: codeRun,
       planDate,
-      route: String(row[2] || ''),
-      supplierName: String(row[3] || ''),
-      licensePlate: String(row[4] || ''),
-      truckType: String(row[5] || ''),
-      driverName: String(row[6] || ''),
-      phone: String(row[7] || ''),
-      dropPoint: String(row[9] || ''),
+
+      route:
+        String(row[2] || ''),
+
+      supplierName:
+        String(row[3] || ''),
+
+      licensePlate:
+        String(row[4] || ''),
+
+      truckType:
+        String(row[5] || ''),
+
+      driverName:
+        String(row[6] || ''),
+
+      phone:
+        String(row[7] || ''),
+
+      dropPoint:
+        String(row[9] || ''),
+
       planEta,
       planEtd,
 
-      status: mappedStatus,
+      status:
+        mappedStatus,
+
       performanceStatus,
 
       stampEta,
@@ -443,31 +567,32 @@ export async function fetchTrucksFromSheets(): Promise<Truck[]> {
       actionStatus,
 
       lastUpdated:
-        new Date().toLocaleTimeString(
-          'en-GB',
-          {
-            timeZone: 'Asia/Bangkok',
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit',
-            hour12: false,
-          }
-        ),
+        new Date()
+          .toLocaleTimeString(
+            'en-GB',
+            {
+              timeZone:
+                'Asia/Bangkok',
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit',
+              hour12: false,
+            }
+          ),
     });
   }
 
   return trucks;
 }
 
-/**
- * อัปเดตข้อมูลรถผ่าน Render Backend API
- */
+// อัปเดตข้อมูลรถผ่าน Render Backend API
 export async function updateTruckInSheets(
   truckId: string,
   updates: Partial<Truck>,
   currentTruck: Truck
 ): Promise<void> {
-  const apiUrl = getAppsScriptUrl();
+  const apiUrl =
+    getAppsScriptUrl();
 
   if (!apiUrl) {
     throw new Error(
@@ -482,23 +607,20 @@ export async function updateTruckInSheets(
   }
 
   const datetimeUpdate =
-    new Date().toLocaleString(
-      'en-GB',
-      {
-        timeZone: 'Asia/Bangkok',
-        hour12: false,
-      }
-    );
+    new Date()
+      .toLocaleString(
+        'en-GB',
+        {
+          timeZone:
+            'Asia/Bangkok',
+          hour12: false,
+        }
+      );
 
   const currentStatus =
     updates.status !== undefined
       ? updates.status
       : currentTruck.status;
-
-  const efficiencyStatus =
-    updates.performanceStatus !== undefined
-      ? updates.performanceStatus
-      : currentTruck.performanceStatus;
 
   const stampEta =
     updates.stampEta !== undefined
@@ -510,22 +632,47 @@ export async function updateTruckInSheets(
       ? updates.stampEtd
       : currentTruck.stampEtd;
 
-  /*
-   * ลำดับคอลัมน์ของชีท Actual data:
-   *
-   * 0  Code run
-   * 1  Current status
-   * 2  Efficiency status
-   * 3  Plan ETA
-   * 4  Stamp ETA
-   * 5  Stamp ETD
-   * 6  Problem
-   * 7  Countermeasures
-   * 8  Responsible person
-   * 9  Process status
-   * 10 User
-   * 11 Datetime update
-   */
+  let efficiencyStatus:
+    PerformanceStatus =
+      updates.performanceStatus !==
+      undefined
+        ? updates.performanceStatus
+        : currentTruck.performanceStatus;
+
+  // คำนวณ Performance ใหม่จาก Stamp ETA
+  //
+  // Stamp ETA ก่อน Plan ETA = EARLY
+  // Stamp ETA ตั้งแต่ Plan ETA ถึง Plan ETD = ON_PLAN
+  // Stamp ETA หลัง Plan ETD = DELAY
+  //
+  // Stamp ETD ไม่มีผลต่อ Performance
+  if (
+    stampEta &&
+    currentTruck.planEta &&
+    currentTruck.planEtd
+  ) {
+    efficiencyStatus =
+      calculatePerformanceStatus(
+        currentTruck.planEta,
+        currentTruck.planEtd,
+        stampEta
+      );
+  }
+
+  // ลำดับคอลัมน์ Actual data
+  //
+  // 0  Code run
+  // 1  Current status
+  // 2  Efficiency status
+  // 3  Plan ETA
+  // 4  Stamp ETA
+  // 5  Stamp ETD
+  // 6  Problem
+  // 7  Countermeasures
+  // 8  Responsible person
+  // 9  Process status
+  // 10 User
+  // 11 Datetime update
   const newRow = [
     truckId,
     currentStatus || '',
@@ -536,19 +683,27 @@ export async function updateTruckInSheets(
 
     updates.actionProblem !== undefined
       ? updates.actionProblem
-      : currentTruck.actionProblem || '',
+      : currentTruck.actionProblem ||
+        '',
 
-    updates.actionCountermeasure !== undefined
+    updates.actionCountermeasure !==
+    undefined
       ? updates.actionCountermeasure
-      : currentTruck.actionCountermeasure || '',
+      : currentTruck
+          .actionCountermeasure ||
+        '',
 
-    updates.actionResponsible !== undefined
+    updates.actionResponsible !==
+    undefined
       ? updates.actionResponsible
-      : currentTruck.actionResponsible || '',
+      : currentTruck
+          .actionResponsible ||
+        '',
 
     updates.actionStatus !== undefined
       ? updates.actionStatus
-      : currentTruck.actionStatus || '',
+      : currentTruck.actionStatus ||
+        '',
 
     'System User',
     datetimeUpdate,
@@ -561,11 +716,15 @@ export async function updateTruckInSheets(
       `${apiUrl}/api/trucks/update`,
       {
         method: 'POST',
+
         headers: {
           'Content-Type':
             'application/json',
-          Accept: 'application/json',
+
+          Accept:
+            'application/json',
         },
+
         body: JSON.stringify({
           truckId,
           newRow,
@@ -585,7 +744,8 @@ export async function updateTruckInSheets(
 
   if (!response.ok) {
     let errorMessage =
-      `Failed to update Google Sheet (${response.status} ${response.statusText})`;
+      `Failed to update Google Sheet ` +
+      `(${response.status} ${response.statusText})`;
 
     try {
       const errorData =
@@ -595,19 +755,23 @@ export async function updateTruckInSheets(
         getApiError(errorData);
 
       if (apiError) {
-        errorMessage = apiError;
+        errorMessage =
+          apiError;
       }
     } catch {
       // ใช้ข้อความ Error เริ่มต้น
     }
 
-    throw new Error(errorMessage);
+    throw new Error(
+      errorMessage
+    );
   }
 
   let result: any;
 
   try {
-    result = await response.json();
+    result =
+      await response.json();
   } catch (error) {
     console.error(
       'ELIVE API returned invalid update response:',
@@ -623,10 +787,14 @@ export async function updateTruckInSheets(
     getApiError(result);
 
   if (apiError) {
-    throw new Error(apiError);
+    throw new Error(
+      apiError
+    );
   }
 
-  if (result.success !== true) {
+  if (
+    result.success !== true
+  ) {
     throw new Error(
       'The server did not confirm the update.'
     );
