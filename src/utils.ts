@@ -148,10 +148,6 @@ export const calculateMinutesDifference = (
   let difference =
     endMinutes - startMinutes;
 
-  /*
-   * หากเวลาสิ้นสุดน้อยกว่าเวลาเริ่มต้น
-   * ถือว่าเวลาสิ้นสุดอยู่ในวันถัดไป
-   */
   if (difference < 0) {
     difference += 24 * 60;
   }
@@ -160,84 +156,87 @@ export const calculateMinutesDifference = (
 };
 
 /**
- * คำนวณสถานะ Performance
+ * คำนวณ Performance จาก Stamp ETA เท่านั้น
  *
- * ก่อน Plan ETA                  = EARLY
- * ตั้งแต่ Plan ETA ถึง Plan ETD = ON_PLAN
- * หลัง Plan ETD                 = DELAY
+ * Stamp ETA ก่อน Plan ETA = EARLY
+ * Stamp ETA ตั้งแต่ Plan ETA ถึง Plan ETD = ON_PLAN
+ * Stamp ETA หลัง Plan ETD = DELAY
  *
- * เวลาที่ตรง Plan ETA พอดี = ON_PLAN
- * เวลาที่ตรง Plan ETD พอดี = ON_PLAN
+ * Stamp ETA ตรง Plan ETA = ON_PLAN
+ * Stamp ETA ตรง Plan ETD = ON_PLAN
  *
- * รองรับช่วงเวลาข้ามเที่ยงคืน เช่น:
- * Plan ETA = 23:30
- * Plan ETD = 00:30
+ * Stamp ETD ไม่มีผลต่อ Performance
  */
 export const calculatePerformanceStatus = (
   planEta: string,
   planEtd: string,
-  actualTime: string
+  stampEta: string
 ): PerformanceStatus => {
-  const etaMinutes =
+  const planEtaMinutes =
     timeToMinutes(planEta);
 
-  const etdMinutes =
+  const planEtdMinutes =
     timeToMinutes(planEtd);
 
-  const actualMinutes =
-    timeToMinutes(actualTime);
+  const stampEtaMinutes =
+    timeToMinutes(stampEta);
 
-  /*
-   * หากข้อมูลไม่ครบ ให้ใช้ ON_PLAN
-   * เพื่อป้องกันการแจ้ง Delay ผิด
-   */
   if (
-    etaMinutes === null ||
-    etdMinutes === null ||
-    actualMinutes === null
+    planEtaMinutes === null ||
+    planEtdMinutes === null ||
+    stampEtaMinutes === null
   ) {
     return 'ON_PLAN';
   }
 
-  let adjustedEtd =
-    etdMinutes;
+  let adjustedPlanEtd =
+    planEtdMinutes;
 
-  let adjustedActual =
-    actualMinutes;
+  let adjustedStampEta =
+    stampEtaMinutes;
 
   /*
-   * ETD น้อยกว่า ETA หมายถึงช่วงเวลาข้ามเที่ยงคืน
+   * รองรับช่วงเวลาข้ามเที่ยงคืน
    *
    * ตัวอย่าง:
-   * ETA 23:30
-   * ETD 00:30
+   * Plan ETA = 23:50
+   * Plan ETD = 00:10
    */
-  if (adjustedEtd < etaMinutes) {
-    adjustedEtd += 24 * 60;
+  if (
+    adjustedPlanEtd <
+    planEtaMinutes
+  ) {
+    adjustedPlanEtd += 24 * 60;
 
     /*
-     * Actual ที่อยู่หลังเที่ยงคืน
-     * ต้องเพิ่มเป็นเวลาของวันถัดไปเช่นกัน
+     * Stamp ETA ที่อยู่หลังเที่ยงคืน
+     * ให้ถือว่าเป็นเวลาของวันถัดไป
      */
-    if (adjustedActual < etaMinutes) {
-      adjustedActual += 24 * 60;
+    if (
+      adjustedStampEta <
+      planEtaMinutes
+    ) {
+      adjustedStampEta += 24 * 60;
     }
   }
 
   /*
    * ก่อน Plan ETA
    */
-  if (adjustedActual < etaMinutes) {
+  if (
+    adjustedStampEta <
+    planEtaMinutes
+  ) {
     return 'EARLY';
   }
 
   /*
    * ตั้งแต่ Plan ETA ถึง Plan ETD
-   * รวมเวลาที่ตรง ETA และ ETD
+   * รวมเวลาที่ตรงขอบทั้งสองด้าน
    */
   if (
-    adjustedActual >= etaMinutes &&
-    adjustedActual <= adjustedEtd
+    adjustedStampEta <=
+    adjustedPlanEtd
   ) {
     return 'ON_PLAN';
   }
