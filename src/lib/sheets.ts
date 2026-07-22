@@ -406,7 +406,6 @@ export async function fetchTrucksFromSheets(): Promise<Truck[]> {
      * และมี Actual ETA ให้คำนวณใหม่
      */
     if (
-      performanceStatus === 'ON_PLAN' &&
       stampEta &&
       planEta &&
       planEtd
