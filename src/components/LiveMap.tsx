@@ -11,23 +11,29 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
 import {
-  Truck,
   GpsLocation,
+  Truck,
 } from '../types';
 
 import {
   fetchGpsLocations,
+  fetchRouteToTpcap,
+  RouteToTpcapResult,
 } from '../lib/sheets';
 
 import {
   AlertTriangle,
+  Building2,
   Clock,
   Gauge,
+  LoaderCircle,
   MapPin,
   Navigation,
   RefreshCw,
+  Route,
   Search,
   Truck as TruckIcon,
+  UserRound,
   Wifi,
   WifiOff,
   X,
@@ -35,6 +41,7 @@ import {
 
 interface LiveMapProps {
   trucks: Truck[];
+  initialTruckId?: string | null;
 }
 
 type GpsFreshness =
@@ -47,8 +54,14 @@ const GPS_REFRESH_INTERVAL =
 
 const DEFAULT_MAP_CENTER:
   [number, number] = [
-    13.7563,
-    100.5018,
+    13.623729606202758,
+    101.01501162061923,
+  ];
+
+const TPCAP_POSITION:
+  [number, number] = [
+    13.623729606202758,
+    101.01501162061923,
   ];
 
 function normalizeLicensePlate(
@@ -119,7 +132,8 @@ function getGpsFreshness(
     );
 
   const referenceDate =
-    gpsDate || receivedDate;
+    gpsDate ||
+    receivedDate;
 
   if (!referenceDate) {
     return 'OFFLINE';
@@ -140,63 +154,178 @@ function getGpsFreshness(
   return 'OFFLINE';
 }
 
-function getFreshnessColor(
+function getFreshnessClasses(
   freshness: GpsFreshness
 ): string {
   if (freshness === 'LIVE') {
-    return '#10b981';
+    return [
+      'border-emerald-200',
+      'bg-emerald-50',
+      'text-emerald-700',
+    ].join(' ');
   }
 
   if (freshness === 'STALE') {
-    return '#f59e0b';
+    return [
+      'border-amber-200',
+      'bg-amber-50',
+      'text-amber-700',
+    ].join(' ');
   }
 
-  return '#64748b';
+  return [
+    'border-slate-200',
+    'bg-slate-100',
+    'text-slate-600',
+  ].join(' ');
 }
 
-function escapeHtml(
-  value: unknown
+function formatGpsDateTime(
+  value?: string
 ): string {
-  return String(value ?? '')
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll(
-      "'",
-      '&#039;'
+  if (!value) {
+    return '-';
+  }
+
+  const date =
+    parseGpsDateTime(
+      value
     );
+
+  if (!date) {
+    return value;
+  }
+
+  return date.toLocaleString(
+    'en-GB',
+    {
+      timeZone:
+        'Asia/Bangkok',
+
+      day:
+        '2-digit',
+
+      month:
+        '2-digit',
+
+      year:
+        'numeric',
+
+      hour:
+        '2-digit',
+
+      minute:
+        '2-digit',
+
+      second:
+        '2-digit',
+
+      hour12:
+        false,
+    }
+  );
+}
+
+function formatEta(
+  value?: string
+): string {
+  if (!value) {
+    return '-';
+  }
+
+  const date =
+    new Date(value);
+
+  if (
+    Number.isNaN(
+      date.getTime()
+    )
+  ) {
+    return value;
+  }
+
+  return date.toLocaleString(
+    'en-GB',
+    {
+      timeZone:
+        'Asia/Bangkok',
+
+      day:
+        '2-digit',
+
+      month:
+        '2-digit',
+
+      year:
+        'numeric',
+
+      hour:
+        '2-digit',
+
+      minute:
+        '2-digit',
+
+      hour12:
+        false,
+    }
+  );
+}
+
+function formatDuration(
+  totalMinutes?: number
+): string {
+  if (
+    totalMinutes === undefined ||
+    !Number.isFinite(
+      totalMinutes
+    )
+  ) {
+    return '-';
+  }
+
+  const roundedMinutes =
+    Math.max(
+      1,
+      Math.round(
+        totalMinutes
+      )
+    );
+
+  const hours =
+    Math.floor(
+      roundedMinutes / 60
+    );
+
+  const minutes =
+    roundedMinutes % 60;
+
+  if (hours <= 0) {
+    return `${minutes} นาที`;
+  }
+
+  if (minutes === 0) {
+    return `${hours} ชั่วโมง`;
+  }
+
+  return (
+    `${hours} ชั่วโมง ` +
+    `${minutes} นาที`
+  );
 }
 
 function createTruckMarkerIcon(
-  location: GpsLocation,
-  truck?: Truck
+  heading: number
 ): L.DivIcon {
-  const freshness =
-    getGpsFreshness(
-      location
-    );
-
-  const markerColor =
-    getFreshnessColor(
-      freshness
-    );
-
-  const heading =
+  const safeHeading =
     Number.isFinite(
-      location.heading
+      heading
     )
-      ? location.heading
+      ? heading
       : 0;
-
-  const markerLabel =
-    truck?.licensePlate ||
-    location.licensePlate ||
-    location.gpsId;
 
   return L.divIcon({
     className:
-      'elive-gps-marker',
+      'elive-truck-marker',
 
     html: `
       <div
@@ -210,214 +339,110 @@ function createTruckMarkerIcon(
       >
         <div
           style="
-            width:46px;
-            height:46px;
+            width:48px;
+            height:48px;
             display:flex;
             align-items:center;
             justify-content:center;
             border-radius:50%;
-            background:${markerColor};
-            border:3px solid white;
-            box-shadow:0 4px 14px rgba(15,23,42,0.4);
-            transform:rotate(${heading}deg);
+            background:#00a8ff;
+            border:4px solid white;
+            box-shadow:0 5px 16px rgba(2,132,199,0.5);
+            transform:rotate(${safeHeading}deg);
           "
         >
           <div
             style="
               width:0;
               height:0;
-              border-left:7px solid transparent;
-              border-right:7px solid transparent;
-              border-bottom:17px solid white;
-              transform:translateY(-1px);
+              border-left:8px solid transparent;
+              border-right:8px solid transparent;
+              border-bottom:19px solid white;
+              transform:translateY(-2px);
+            "
+          ></div>
+        </div>
+      </div>
+    `,
+
+    iconSize:
+      [48, 48],
+
+    iconAnchor:
+      [24, 24],
+  });
+}
+
+function createTpcapMarkerIcon():
+  L.DivIcon {
+  return L.divIcon({
+    className:
+      'elive-tpcap-marker',
+
+    html: `
+      <div
+        style="
+          display:flex;
+          flex-direction:column;
+          align-items:center;
+          transform:translate(-50%,-100%);
+          pointer-events:auto;
+        "
+      >
+        <div
+          style="
+            width:46px;
+            height:46px;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            border-radius:50% 50% 50% 0;
+            background:#ef4444;
+            border:4px solid white;
+            box-shadow:0 5px 16px rgba(185,28,28,0.45);
+            transform:rotate(-45deg);
+          "
+        >
+          <div
+            style="
+              width:14px;
+              height:14px;
+              border-radius:50%;
+              background:white;
             "
           ></div>
         </div>
 
         <div
           style="
-            margin-top:5px;
-            padding:4px 8px;
+            margin-top:7px;
+            padding:4px 9px;
             border-radius:6px;
             background:white;
-            border:1px solid #cbd5e1;
-            color:#0f172a;
+            border:1px solid #fecaca;
+            color:#b91c1c;
             font-size:11px;
             font-weight:700;
             white-space:nowrap;
             box-shadow:0 2px 8px rgba(15,23,42,0.2);
           "
         >
-          ${escapeHtml(markerLabel)}
+          TPCAP
         </div>
       </div>
     `,
 
-    iconSize: [46, 64],
-    iconAnchor: [23, 32],
-    popupAnchor: [0, -35],
+    iconSize:
+      [46, 76],
+
+    iconAnchor:
+      [23, 70],
   });
-}
-
-function createPopupContent(
-  location: GpsLocation,
-  truck?: Truck
-): string {
-  const freshness =
-    getGpsFreshness(
-      location
-    );
-
-  const freshnessColor =
-    getFreshnessColor(
-      freshness
-    );
-
-  const plate =
-    truck?.licensePlate ||
-    location.licensePlate ||
-    '-';
-
-  const route =
-    truck?.route || '-';
-
-  const supplier =
-    truck?.supplierName || '-';
-
-  const driverName =
-    truck?.driverName || '-';
-
-  const dropPoint =
-    truck?.dropPoint || '-';
-
-  const gpsStatus =
-    location.gpsStatus || '-';
-
-  const locationName =
-    location.locationName || '-';
-
-  const gpsTime =
-    location.gpsTime || '-';
-
-  const receivedAt =
-    location.receivedAt || '-';
-
-  return `
-    <div
-      style="
-        width:280px;
-        font-family:Arial,sans-serif;
-        color:#0f172a;
-      "
-    >
-      <div
-        style="
-          display:flex;
-          align-items:flex-start;
-          justify-content:space-between;
-          gap:8px;
-          margin-bottom:10px;
-        "
-      >
-        <div>
-          <div
-            style="
-              font-size:16px;
-              font-weight:700;
-            "
-          >
-            ${escapeHtml(plate)}
-          </div>
-
-          <div
-            style="
-              margin-top:3px;
-              color:#64748b;
-              font-size:11px;
-            "
-          >
-            GPS ID: ${escapeHtml(location.gpsId)}
-          </div>
-        </div>
-
-        <div
-          style="
-            padding:4px 8px;
-            border-radius:999px;
-            background:${freshnessColor};
-            color:white;
-            font-size:10px;
-            font-weight:700;
-          "
-        >
-          ${escapeHtml(freshness)}
-        </div>
-      </div>
-
-      <div
-        style="
-          padding-top:9px;
-          border-top:1px solid #e2e8f0;
-          font-size:12px;
-          line-height:1.7;
-        "
-      >
-        <div>
-          <strong>Route:</strong>
-          ${escapeHtml(route)}
-        </div>
-
-        <div>
-          <strong>Supplier:</strong>
-          ${escapeHtml(supplier)}
-        </div>
-
-        <div>
-          <strong>Driver:</strong>
-          ${escapeHtml(driverName)}
-        </div>
-
-        <div>
-          <strong>Drop point:</strong>
-          ${escapeHtml(dropPoint)}
-        </div>
-
-        <div>
-          <strong>สถานที่:</strong>
-          ${escapeHtml(locationName)}
-        </div>
-
-        <div>
-          <strong>ความเร็ว:</strong>
-          ${escapeHtml(location.speed)} km/h
-        </div>
-
-        <div>
-          <strong>ทิศทาง:</strong>
-          ${escapeHtml(location.heading)}°
-        </div>
-
-        <div>
-          <strong>สถานะ GPS:</strong>
-          ${escapeHtml(gpsStatus)}
-        </div>
-
-        <div>
-          <strong>เวลา GPS:</strong>
-          ${escapeHtml(gpsTime)}
-        </div>
-
-        <div>
-          <strong>เวลารับข้อมูล:</strong>
-          ${escapeHtml(receivedAt)}
-        </div>
-      </div>
-    </div>
-  `;
 }
 
 export function LiveMap({
   trucks,
+  initialTruckId,
 }: LiveMapProps) {
   const mapContainerRef =
     useRef<HTMLDivElement | null>(
@@ -434,8 +459,16 @@ export function LiveMap({
       null
     );
 
+  const routeLayerRef =
+    useRef<L.LayerGroup | null>(
+      null
+    );
+
   const requestRunningRef =
     useRef(false);
+
+  const routeRequestIdRef =
+    useRef(0);
 
   const [
     gpsLocations,
@@ -462,6 +495,20 @@ export function LiveMap({
   );
 
   const [
+    routeError,
+    setRouteError,
+  ] = useState<string | null>(
+    null
+  );
+
+  const [
+    routeResult,
+    setRouteResult,
+  ] = useState<RouteToTpcapResult | null>(
+    null
+  );
+
+  const [
     isLoading,
     setIsLoading,
   ] = useState(true);
@@ -469,6 +516,11 @@ export function LiveMap({
   const [
     isRefreshing,
     setIsRefreshing,
+  ] = useState(false);
+
+  const [
+    isRouteLoading,
+    setIsRouteLoading,
   ] = useState(false);
 
   const [
@@ -483,7 +535,9 @@ export function LiveMap({
       const map =
         new Map<string, Truck>();
 
-      for (const truck of trucks) {
+      for (
+        const truck of trucks
+      ) {
         const normalizedPlate =
           normalizeLicensePlate(
             truck.licensePlate
@@ -542,9 +596,10 @@ export function LiveMap({
               normalizedPlate
             );
 
-          const searchSource = [
+          const searchableText = [
             location.licensePlate,
             location.gpsId,
+            location.locationName,
             truck?.licensePlate,
             truck?.route,
             truck?.supplierName,
@@ -554,22 +609,25 @@ export function LiveMap({
             .join(' ')
             .toUpperCase();
 
-          return searchSource.includes(
+          return searchableText.includes(
             normalizedSearch
           );
         })
         .sort(
-          (first, second) => {
-            const firstPlate =
+          (
+            first,
+            second
+          ) => {
+            const firstLabel =
               first.licensePlate ||
               first.gpsId;
 
-            const secondPlate =
+            const secondLabel =
               second.licensePlate ||
               second.gpsId;
 
-            return firstPlate.localeCompare(
-              secondPlate,
+            return firstLabel.localeCompare(
+              secondLabel,
               'th'
             );
           }
@@ -591,7 +649,8 @@ export function LiveMap({
           location =>
             location.gpsId ===
             selectedGpsId
-        ) || null
+        ) ||
+        null
       );
     }, [
       gpsLocations,
@@ -618,6 +677,19 @@ export function LiveMap({
       truckByPlate,
     ]);
 
+  const selectedFreshness =
+    useMemo(() => {
+      if (!selectedGpsLocation) {
+        return null;
+      }
+
+      return getGpsFreshness(
+        selectedGpsLocation
+      );
+    }, [
+      selectedGpsLocation,
+    ]);
+
   const freshnessStats =
     useMemo(() => {
       let live = 0;
@@ -632,7 +704,9 @@ export function LiveMap({
             location
           );
 
-        if (freshness === 'LIVE') {
+        if (
+          freshness === 'LIVE'
+        ) {
           live += 1;
         } else if (
           freshness === 'STALE'
@@ -648,62 +722,80 @@ export function LiveMap({
         stale,
         offline,
       };
-    }, [matchedGpsLocations]);
+    }, [
+      matchedGpsLocations,
+    ]);
 
   const movingCount =
     useMemo(() => {
-      return matchedGpsLocations.filter(
-        location =>
-          location.speed > 0
-      ).length;
-    }, [matchedGpsLocations]);
+      return matchedGpsLocations
+        .filter(
+          location =>
+            location.speed > 0
+        )
+        .length;
+    }, [
+      matchedGpsLocations,
+    ]);
 
   const loadGps =
-    useCallback(async () => {
-      if (
-        requestRunningRef.current
-      ) {
-        return;
-      }
+    useCallback(
+      async () => {
+        if (
+          requestRunningRef.current
+        ) {
+          return;
+        }
 
-      requestRunningRef.current =
-        true;
-
-      setIsRefreshing(true);
-
-      try {
-        const locations =
-          await fetchGpsLocations();
-
-        setGpsLocations(
-          locations
-        );
-
-        setLastRefresh(
-          new Date()
-        );
-
-        setGpsError(null);
-      } catch (error) {
-        console.error(
-          'Unable to load GPS locations:',
-          error
-        );
-
-        const message =
-          error instanceof Error
-            ? error.message
-            : 'Unable to load GPS data.';
-
-        setGpsError(message);
-      } finally {
         requestRunningRef.current =
-          false;
+          true;
 
-        setIsLoading(false);
-        setIsRefreshing(false);
-      }
-    }, []);
+        setIsRefreshing(true);
+
+        try {
+          const locations =
+            await fetchGpsLocations();
+
+          setGpsLocations(
+            locations
+          );
+
+          setLastRefresh(
+            new Date()
+          );
+
+          setGpsError(
+            null
+          );
+        } catch (error) {
+          console.error(
+            'Unable to load GPS locations:',
+            error
+          );
+
+          const message =
+            error instanceof Error
+              ? error.message
+              : 'Unable to load GPS data.';
+
+          setGpsError(
+            message
+          );
+        } finally {
+          requestRunningRef.current =
+            false;
+
+          setIsLoading(
+            false
+          );
+
+          setIsRefreshing(
+            false
+          );
+        }
+      },
+      []
+    );
 
   useEffect(() => {
     if (
@@ -719,24 +811,42 @@ export function LiveMap({
         {
           center:
             DEFAULT_MAP_CENTER,
-          zoom: 9,
-          zoomControl: true,
-          attributionControl: true,
+
+          zoom:
+            10,
+
+          zoomControl:
+            true,
+
+          attributionControl:
+            true,
         }
       );
 
     L.tileLayer(
-      'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+      'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
       {
-        maxZoom: 19,
+        maxZoom:
+          19,
+
         attribution:
           '© OpenStreetMap contributors',
       }
-    ).addTo(map);
+    ).addTo(
+      map
+    );
 
     const markerLayer =
       L.layerGroup()
-        .addTo(map);
+        .addTo(
+          map
+        );
+
+    const routeLayer =
+      L.layerGroup()
+        .addTo(
+          map
+        );
 
     mapRef.current =
       map;
@@ -744,18 +854,29 @@ export function LiveMap({
     markerLayerRef.current =
       markerLayer;
 
+    routeLayerRef.current =
+      routeLayer;
+
     window.setTimeout(
       () => {
         map.invalidateSize();
       },
-      100
+      150
     );
 
     return () => {
-      markerLayer.clearLayers();
+      markerLayer
+        .clearLayers();
+
+      routeLayer
+        .clearLayers();
+
       map.remove();
 
       markerLayerRef.current =
+        null;
+
+      routeLayerRef.current =
         null;
 
       mapRef.current =
@@ -777,7 +898,55 @@ export function LiveMap({
         intervalId
       );
     };
-  }, [loadGps]);
+  }, [
+    loadGps,
+  ]);
+
+  useEffect(() => {
+    if (
+      !initialTruckId ||
+      gpsLocations.length === 0
+    ) {
+      return;
+    }
+
+    const initialTruck =
+      trucks.find(
+        truck =>
+          truck.id ===
+          initialTruckId
+      );
+
+    if (!initialTruck) {
+      return;
+    }
+
+    const normalizedPlate =
+      normalizeLicensePlate(
+        initialTruck.licensePlate
+      );
+
+    const initialGpsLocation =
+      gpsLocations.find(
+        location =>
+          normalizeLicensePlate(
+            location.licensePlate
+          ) ===
+          normalizedPlate
+      );
+
+    if (
+      initialGpsLocation
+    ) {
+      setSelectedGpsId(
+        initialGpsLocation.gpsId
+      );
+    }
+  }, [
+    gpsLocations,
+    initialTruckId,
+    trucks,
+  ]);
 
   useEffect(() => {
     if (!selectedGpsId) {
@@ -791,12 +960,113 @@ export function LiveMap({
           selectedGpsId
       );
 
-    if (!selectedStillExists) {
-      setSelectedGpsId('');
+    if (
+      !selectedStillExists
+    ) {
+      setSelectedGpsId(
+        ''
+      );
     }
   }, [
     gpsLocations,
     selectedGpsId,
+  ]);
+
+  useEffect(() => {
+    if (!selectedGpsLocation) {
+      routeRequestIdRef.current += 1;
+
+      setRouteResult(
+        null
+      );
+
+      setRouteError(
+        null
+      );
+
+      setIsRouteLoading(
+        false
+      );
+
+      return;
+    }
+
+    const requestId =
+      routeRequestIdRef.current + 1;
+
+    routeRequestIdRef.current =
+      requestId;
+
+    const loadRoute =
+      async () => {
+        setIsRouteLoading(
+          true
+        );
+
+        setRouteError(
+          null
+        );
+
+        try {
+          const result =
+            await fetchRouteToTpcap(
+              selectedGpsLocation
+                .latitude,
+
+              selectedGpsLocation
+                .longitude
+            );
+
+          if (
+            routeRequestIdRef.current !==
+            requestId
+          ) {
+            return;
+          }
+
+          setRouteResult(
+            result
+          );
+        } catch (error) {
+          if (
+            routeRequestIdRef.current !==
+            requestId
+          ) {
+            return;
+          }
+
+          console.error(
+            'Unable to calculate route:',
+            error
+          );
+
+          const message =
+            error instanceof Error
+              ? error.message
+              : 'ไม่สามารถคำนวณเส้นทางได้';
+
+          setRouteResult(
+            null
+          );
+
+          setRouteError(
+            message
+          );
+        } finally {
+          if (
+            routeRequestIdRef.current ===
+            requestId
+          ) {
+            setIsRouteLoading(
+              false
+            );
+          }
+        }
+      };
+
+    loadRoute();
+  }, [
+    selectedGpsLocation,
   ]);
 
   useEffect(() => {
@@ -806,33 +1076,46 @@ export function LiveMap({
     const markerLayer =
       markerLayerRef.current;
 
+    const routeLayer =
+      routeLayerRef.current;
+
     if (
       !map ||
-      !markerLayer
+      !markerLayer ||
+      !routeLayer
     ) {
       return;
     }
 
-    markerLayer.clearLayers();
+    markerLayer
+      .clearLayers();
 
-    if (!selectedGpsLocation) {
+    routeLayer
+      .clearLayers();
+
+    if (
+      !selectedGpsLocation
+    ) {
       return;
     }
 
-    const position:
+    const truckPosition:
       L.LatLngExpression = [
-        selectedGpsLocation.latitude,
-        selectedGpsLocation.longitude,
+        selectedGpsLocation
+          .latitude,
+
+        selectedGpsLocation
+          .longitude,
       ];
 
-    const marker =
+    const truckMarker =
       L.marker(
-        position,
+        truckPosition,
         {
           icon:
             createTruckMarkerIcon(
-              selectedGpsLocation,
-              selectedTruck
+              selectedGpsLocation
+                .heading
             ),
 
           title:
@@ -840,43 +1123,149 @@ export function LiveMap({
               ?.licensePlate ||
             selectedGpsLocation
               .licensePlate ||
-            selectedGpsLocation.gpsId,
+            selectedGpsLocation
+              .gpsId,
         }
       );
 
-    marker.bindPopup(
-      createPopupContent(
-        selectedGpsLocation,
-        selectedTruck
-      ),
-      {
-        maxWidth: 320,
-        minWidth: 280,
-      }
-    );
-
-    marker.addTo(
+    truckMarker.addTo(
       markerLayer
     );
 
-    map.setView(
-      position,
-      15,
-      {
-        animate: true,
-      }
+    const tpcapMarker =
+      L.marker(
+        TPCAP_POSITION,
+        {
+          icon:
+            createTpcapMarkerIcon(),
+
+          title:
+            'TPCAP',
+        }
+      );
+
+    tpcapMarker.addTo(
+      markerLayer
     );
 
-    marker.openPopup();
+    if (
+      routeResult &&
+      routeResult
+        .geometry
+        .coordinates
+        .length >= 2
+    ) {
+      const routePoints:
+        [number, number][] =
+          routeResult
+            .geometry
+            .coordinates
+            .map(
+              coordinate => {
+                return [
+                  coordinate[1],
+                  coordinate[0],
+                ];
+              }
+            );
+
+      const routeLine =
+        L.polyline(
+          routePoints,
+          {
+            color:
+              '#0284c7',
+
+            weight:
+              6,
+
+            opacity:
+              0.9,
+
+            lineCap:
+              'round',
+
+            lineJoin:
+              'round',
+          }
+        );
+
+      routeLine.addTo(
+        routeLayer
+      );
+
+      const bounds =
+        L.latLngBounds(
+          routePoints
+        );
+
+      bounds.extend(
+        truckPosition
+      );
+
+      bounds.extend(
+        TPCAP_POSITION
+      );
+
+      map.fitBounds(
+        bounds,
+        {
+          padding:
+            [40, 40],
+
+          maxZoom:
+            15,
+
+          animate:
+            true,
+        }
+      );
+    } else {
+      const bounds =
+        L.latLngBounds([
+          truckPosition,
+          TPCAP_POSITION,
+        ]);
+
+      map.fitBounds(
+        bounds,
+        {
+          padding:
+            [40, 40],
+
+          maxZoom:
+            15,
+
+          animate:
+            true,
+        }
+      );
+    }
   }, [
     selectedGpsLocation,
     selectedTruck,
+    routeResult,
   ]);
 
   const clearSelection =
     () => {
-      setSelectedGpsId('');
-      setSearchText('');
+      routeRequestIdRef.current += 1;
+
+      setSelectedGpsId(
+        ''
+      );
+
+      setSearchText(
+        ''
+      );
+
+      setRouteResult(
+        null
+      );
+
+      setRouteError(
+        null
+      );
 
       const map =
         mapRef.current;
@@ -884,9 +1273,10 @@ export function LiveMap({
       if (map) {
         map.setView(
           DEFAULT_MAP_CENTER,
-          9,
+          10,
           {
-            animate: true,
+            animate:
+              true,
           }
         );
       }
@@ -913,23 +1303,30 @@ export function LiveMap({
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700">
               <Wifi className="h-3.5 w-3.5" />
+
               Live {freshnessStats.live}
             </div>
 
             <div className="flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700">
               <Clock className="h-3.5 w-3.5" />
+
               Stale {freshnessStats.stale}
             </div>
 
             <div className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-xs font-bold text-slate-600">
               <WifiOff className="h-3.5 w-3.5" />
+
               Offline {freshnessStats.offline}
             </div>
 
             <button
               type="button"
-              onClick={loadGps}
-              disabled={isRefreshing}
+              onClick={
+                loadGps
+              }
+              disabled={
+                isRefreshing
+              }
               className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <RefreshCw
@@ -951,24 +1348,32 @@ export function LiveMap({
 
             <input
               type="text"
-              value={searchText}
-              onChange={event => {
-                setSearchText(
-                  event.target.value
-                );
-              }}
+              value={
+                searchText
+              }
+              onChange={
+                event => {
+                  setSearchText(
+                    event.target.value
+                  );
+                }
+              }
               placeholder="ค้นหาทะเบียน Route บริษัท หรือชื่อคนขับ"
               className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
             />
           </div>
 
           <select
-            value={selectedGpsId}
-            onChange={event => {
-              setSelectedGpsId(
-                event.target.value
-              );
-            }}
+            value={
+              selectedGpsId
+            }
+            onChange={
+              event => {
+                setSelectedGpsId(
+                  event.target.value
+                );
+              }
+            }
             className="min-w-[300px] rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
           >
             <option value="">
@@ -979,7 +1384,8 @@ export function LiveMap({
               location => {
                 const normalizedPlate =
                   normalizeLicensePlate(
-                    location.licensePlate
+                    location
+                      .licensePlate
                   );
 
                 const truck =
@@ -988,9 +1394,12 @@ export function LiveMap({
                   );
 
                 const plate =
-                  truck?.licensePlate ||
-                  location.licensePlate ||
-                  location.gpsId;
+                  truck
+                    ?.licensePlate ||
+                  location
+                    .licensePlate ||
+                  location
+                    .gpsId;
 
                 const route =
                   truck?.route
@@ -999,8 +1408,12 @@ export function LiveMap({
 
                 return (
                   <option
-                    key={location.gpsId}
-                    value={location.gpsId}
+                    key={
+                      location.gpsId
+                    }
+                    value={
+                      location.gpsId
+                    }
                   >
                     {plate}
                     {route}
@@ -1012,7 +1425,9 @@ export function LiveMap({
 
           <button
             type="button"
-            onClick={clearSelection}
+            onClick={
+              clearSelection
+            }
             disabled={
               !selectedGpsId &&
               !searchText
@@ -1020,6 +1435,7 @@ export function LiveMap({
             className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <X className="h-3.5 w-3.5" />
+
             ล้างการเลือก
           </button>
         </div>
@@ -1028,6 +1444,7 @@ export function LiveMap({
           <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
             <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase text-slate-500">
               <MapPin className="h-3.5 w-3.5" />
+
               GPS Devices
             </div>
 
@@ -1039,6 +1456,7 @@ export function LiveMap({
           <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
             <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase text-slate-500">
               <TruckIcon className="h-3.5 w-3.5" />
+
               Matched Trucks
             </div>
 
@@ -1050,6 +1468,7 @@ export function LiveMap({
           <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
             <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase text-slate-500">
               <Gauge className="h-3.5 w-3.5" />
+
               Moving
             </div>
 
@@ -1061,22 +1480,32 @@ export function LiveMap({
           <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
             <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase text-slate-500">
               <Navigation className="h-3.5 w-3.5" />
+
               Last Refresh
             </div>
 
             <div className="mt-1 font-mono text-sm font-bold text-slate-800">
               {lastRefresh
-                ? lastRefresh.toLocaleTimeString(
-                    'en-GB',
-                    {
-                      timeZone:
-                        'Asia/Bangkok',
-                      hour: '2-digit',
-                      minute: '2-digit',
-                      second: '2-digit',
-                      hour12: false,
-                    }
-                  )
+                ? lastRefresh
+                    .toLocaleTimeString(
+                      'en-GB',
+                      {
+                        timeZone:
+                          'Asia/Bangkok',
+
+                        hour:
+                          '2-digit',
+
+                        minute:
+                          '2-digit',
+
+                        second:
+                          '2-digit',
+
+                        hour12:
+                          false,
+                      }
+                    )
                 : '-'}
             </div>
           </div>
@@ -1093,84 +1522,421 @@ export function LiveMap({
         </div>
       )}
 
-      <div className="relative min-h-0 flex-1 overflow-hidden rounded-b-xl border border-slate-200 bg-slate-100 shadow-sm">
-        <div
-          ref={mapContainerRef}
-          className="h-full min-h-[420px] w-full"
-        />
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-b-xl border border-slate-200 bg-white shadow-sm lg:flex-row">
+        <div className="relative min-h-[420px] flex-1 overflow-hidden bg-slate-100">
+          <div
+            ref={
+              mapContainerRef
+            }
+            className="h-full min-h-[420px] w-full"
+          />
 
-        {isLoading && (
-          <div className="pointer-events-none absolute inset-0 z-[500] flex items-center justify-center bg-white/70 backdrop-blur-sm">
-            <div className="rounded-xl border border-slate-200 bg-white px-6 py-4 text-center shadow-lg">
-              <RefreshCw className="mx-auto h-6 w-6 animate-spin text-blue-600" />
+          {isLoading && (
+            <div className="pointer-events-none absolute inset-0 z-[500] flex items-center justify-center bg-white/70 backdrop-blur-sm">
+              <div className="rounded-xl border border-slate-200 bg-white px-6 py-4 text-center shadow-lg">
+                <RefreshCw className="mx-auto h-6 w-6 animate-spin text-blue-600" />
 
-              <div className="mt-2 text-sm font-bold text-slate-700">
-                Loading GPS data
-              </div>
-            </div>
-          </div>
-        )}
-
-        {!isLoading &&
-          gpsLocations.length === 0 && (
-            <div className="pointer-events-none absolute inset-0 z-[500] flex items-center justify-center bg-white/60 backdrop-blur-sm">
-              <div className="max-w-sm rounded-xl border border-slate-200 bg-white p-6 text-center shadow-lg">
-                <MapPin className="mx-auto h-8 w-8 text-slate-400" />
-
-                <div className="mt-3 font-bold text-slate-700">
-                  No GPS locations found
-                </div>
-
-                <div className="mt-1 text-sm text-slate-500">
-                  ตรวจสอบข้อมูลในชีท API GPS และ API response
+                <div className="mt-2 text-sm font-bold text-slate-700">
+                  Loading GPS data
                 </div>
               </div>
             </div>
           )}
 
-        {!isLoading &&
-          gpsLocations.length > 0 &&
-          matchedGpsLocations.length ===
-            0 && (
-            <div className="pointer-events-none absolute inset-0 z-[500] flex items-center justify-center">
-              <div className="max-w-sm rounded-xl border border-amber-200 bg-white p-6 text-center shadow-lg">
-                <AlertTriangle className="mx-auto h-8 w-8 text-amber-500" />
+          {!isLoading &&
+            gpsLocations.length ===
+              0 && (
+              <div className="pointer-events-none absolute inset-0 z-[500] flex items-center justify-center bg-white/60 backdrop-blur-sm">
+                <div className="max-w-sm rounded-xl border border-slate-200 bg-white p-6 text-center shadow-lg">
+                  <MapPin className="mx-auto h-8 w-8 text-slate-400" />
 
-                <div className="mt-3 font-bold text-slate-700">
-                  ไม่พบรถในแผนที่ตรงกับ GPS
-                </div>
+                  <div className="mt-3 font-bold text-slate-700">
+                    No GPS locations found
+                  </div>
 
-                <div className="mt-1 text-sm text-slate-500">
-                  ตรวจสอบทะเบียนรถใน Plan และ API GPS
+                  <div className="mt-1 text-sm text-slate-500">
+                    ตรวจสอบข้อมูลในชีท API GPS และ API response
+                  </div>
                 </div>
+              </div>
+            )}
+
+          {!isLoading &&
+            gpsLocations.length >
+              0 &&
+            matchedGpsLocations
+              .length === 0 && (
+              <div className="pointer-events-none absolute inset-0 z-[500] flex items-center justify-center">
+                <div className="max-w-sm rounded-xl border border-amber-200 bg-white p-6 text-center shadow-lg">
+                  <AlertTriangle className="mx-auto h-8 w-8 text-amber-500" />
+
+                  <div className="mt-3 font-bold text-slate-700">
+                    ไม่พบรถในแผนที่ตรงกับ GPS
+                  </div>
+
+                  <div className="mt-1 text-sm text-slate-500">
+                    ตรวจสอบทะเบียนรถใน Plan และ API GPS
+                  </div>
+                </div>
+              </div>
+            )}
+
+          {!isLoading &&
+            matchedGpsLocations
+              .length > 0 &&
+            !selectedGpsLocation && (
+              <div className="pointer-events-none absolute inset-0 z-[500] flex items-center justify-center">
+                <div className="rounded-xl border border-slate-200 bg-white p-6 text-center shadow-lg">
+                  <MapPin className="mx-auto h-8 w-8 text-blue-500" />
+
+                  <div className="mt-3 font-bold text-slate-700">
+                    เลือกรถที่ต้องการติดตาม
+                  </div>
+
+                  <div className="mt-1 text-sm text-slate-500">
+                    เลือกทะเบียนรถจากรายการด้านบน
+                  </div>
+
+                  <div className="mt-2 text-xs text-slate-400">
+                    พบรถที่จับคู่ GPS ได้{' '}
+                    {
+                      matchedGpsLocations
+                        .length
+                    }
+                    {' '}คัน
+                  </div>
+                </div>
+              </div>
+            )}
+        </div>
+
+        <aside className="w-full shrink-0 overflow-y-auto border-t border-slate-200 bg-white lg:w-[360px] lg:border-l lg:border-t-0">
+          {!selectedGpsLocation && (
+            <div className="flex h-full min-h-[260px] flex-col items-center justify-center p-8 text-center">
+              <TruckIcon className="h-10 w-10 text-slate-300" />
+
+              <div className="mt-3 font-bold text-slate-700">
+                ยังไม่ได้เลือกรถ
+              </div>
+
+              <div className="mt-1 text-sm text-slate-500">
+                รายละเอียดรถและเส้นทางจะปรากฏบริเวณนี้
               </div>
             </div>
           )}
 
-        {!isLoading &&
-          matchedGpsLocations.length >
-            0 &&
-          !selectedGpsLocation && (
-            <div className="pointer-events-none absolute inset-0 z-[500] flex items-center justify-center">
-              <div className="rounded-xl border border-slate-200 bg-white p-6 text-center shadow-lg">
-                <MapPin className="mx-auto h-8 w-8 text-blue-500" />
+          {selectedGpsLocation && (
+            <div className="p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                    Selected Truck
+                  </div>
 
-                <div className="mt-3 font-bold text-slate-700">
-                  เลือกรถที่ต้องการติดตาม
+                  <div className="mt-1 text-xl font-bold text-slate-900">
+                    {selectedTruck
+                      ?.licensePlate ||
+                      selectedGpsLocation
+                        .licensePlate ||
+                      '-'}
+                  </div>
+
+                  <div className="mt-1 text-xs text-slate-500">
+                    GPS ID:{' '}
+                    {
+                      selectedGpsLocation
+                        .gpsId
+                    }
+                  </div>
                 </div>
 
-                <div className="mt-1 text-sm text-slate-500">
-                  เลือกทะเบียนรถจากรายการด้านบน
+                {selectedFreshness && (
+                  <div
+                    className={`rounded-full border px-3 py-1 text-[10px] font-bold ${getFreshnessClasses(
+                      selectedFreshness
+                    )}`}
+                  >
+                    {selectedFreshness}
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-5 grid grid-cols-2 gap-3">
+                <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
+                  <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase text-blue-600">
+                    <Route className="h-3.5 w-3.5" />
+
+                    Distance
+                  </div>
+
+                  <div className="mt-2 text-xl font-bold text-blue-800">
+                    {routeResult
+                      ? `${routeResult.distanceKilometers.toFixed(
+                          1
+                        )} km`
+                      : '-'}
+                  </div>
                 </div>
 
-                <div className="mt-2 text-xs text-slate-400">
-                  พบรถในแผนที่จับคู่ GPS ได้{' '}
-                  {matchedGpsLocations.length}
-                  {' '}คัน
+                <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-3">
+                  <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase text-indigo-600">
+                    <Clock className="h-3.5 w-3.5" />
+
+                    Travel Time
+                  </div>
+
+                  <div className="mt-2 text-base font-bold text-indigo-800">
+                    {routeResult
+                      ? formatDuration(
+                          routeResult
+                            .durationMinutes
+                        )
+                      : '-'}
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+                <div className="flex items-center gap-2 text-xs font-bold uppercase text-emerald-700">
+                  <Navigation className="h-4 w-4" />
+
+                  Estimated arrival at TPCAP
+                </div>
+
+                <div className="mt-2 text-lg font-bold text-emerald-900">
+                  {routeResult
+                    ? formatEta(
+                        routeResult
+                          .estimatedArrival
+                      )
+                    : '-'}
+                </div>
+
+                <div className="mt-1 text-xs text-emerald-700">
+                  คำนวณจากเส้นทางถนนไปยัง TPCAP
+                </div>
+              </div>
+
+              {isRouteLoading && (
+                <div className="mt-3 flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-3 text-sm text-blue-700">
+                  <LoaderCircle className="h-4 w-4 animate-spin" />
+
+                  กำลังคำนวณเส้นทาง
+                </div>
+              )}
+
+              {routeError && (
+                <div className="mt-3 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-3 text-sm text-red-700">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+
+                  <span>
+                    {routeError}
+                  </span>
+                </div>
+              )}
+
+              <div className="mt-5 border-t border-slate-200 pt-5">
+                <div className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                  Truck Information
+                </div>
+
+                <div className="mt-3 space-y-3 text-sm">
+                  <div className="flex items-start gap-3">
+                    <Route className="mt-0.5 h-4 w-4 shrink-0 text-blue-500" />
+
+                    <div>
+                      <div className="text-xs text-slate-400">
+                        Route
+                      </div>
+
+                      <div className="font-medium text-slate-800">
+                        {selectedTruck
+                          ?.route ||
+                          '-'}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-start gap-3">
+                    <Building2 className="mt-0.5 h-4 w-4 shrink-0 text-violet-500" />
+
+                    <div>
+                      <div className="text-xs text-slate-400">
+                        Supplier
+                      </div>
+
+                      <div className="font-medium text-slate-800">
+                        {selectedTruck
+                          ?.supplierName ||
+                          '-'}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-start gap-3">
+                    <UserRound className="mt-0.5 h-4 w-4 shrink-0 text-slate-500" />
+
+                    <div>
+                      <div className="text-xs text-slate-400">
+                        Driver
+                      </div>
+
+                      <div className="font-medium text-slate-800">
+                        {selectedTruck
+                          ?.driverName ||
+                          '-'}
+                      </div>
+
+                      <div className="mt-0.5 text-xs text-slate-500">
+                        {selectedTruck
+                          ?.phone ||
+                          '-'}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-start gap-3">
+                    <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
+
+                    <div>
+                      <div className="text-xs text-slate-400">
+                        Drop Point
+                      </div>
+
+                      <div className="font-medium text-slate-800">
+                        {selectedTruck
+                          ?.dropPoint ||
+                          '-'}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-5 border-t border-slate-200 pt-5">
+                <div className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                  GPS Information
+                </div>
+
+                <div className="mt-3 grid grid-cols-2 gap-3">
+                  <div className="rounded-lg bg-slate-50 p-3">
+                    <div className="text-[10px] font-bold uppercase text-slate-400">
+                      Speed
+                    </div>
+
+                    <div className="mt-1 text-lg font-bold text-slate-800">
+                      {
+                        selectedGpsLocation
+                          .speed
+                      }{' '}
+                      km/h
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg bg-slate-50 p-3">
+                    <div className="text-[10px] font-bold uppercase text-slate-400">
+                      Heading
+                    </div>
+
+                    <div className="mt-1 text-lg font-bold text-slate-800">
+                      {
+                        selectedGpsLocation
+                          .heading
+                      }
+                      °
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-3 space-y-3 text-sm">
+                  <div>
+                    <div className="text-xs text-slate-400">
+                      สถานที่ล่าสุด
+                    </div>
+
+                    <div className="mt-1 font-medium text-slate-800">
+                      {selectedGpsLocation
+                        .locationName ||
+                        '-'}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-xs text-slate-400">
+                      สถานะ GPS
+                    </div>
+
+                    <div className="mt-1 font-medium text-slate-800">
+                      {selectedGpsLocation
+                        .gpsStatus ||
+                        '-'}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-xs text-slate-400">
+                      เวลา GPS
+                    </div>
+
+                    <div className="mt-1 font-mono text-xs font-medium text-slate-700">
+                      {formatGpsDateTime(
+                        selectedGpsLocation
+                          .gpsTime
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-xs text-slate-400">
+                      เวลารับข้อมูล
+                    </div>
+
+                    <div className="mt-1 font-mono text-xs font-medium text-slate-700">
+                      {formatGpsDateTime(
+                        selectedGpsLocation
+                          .receivedAt
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-xs text-slate-400">
+                      พิกัดล่าสุด
+                    </div>
+
+                    <div className="mt-1 break-all font-mono text-xs font-medium text-slate-700">
+                      {selectedGpsLocation
+                        .latitude.toFixed(
+                          6
+                        )}
+                      ,{' '}
+                      {selectedGpsLocation
+                        .longitude.toFixed(
+                          6
+                        )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-5 rounded-lg border border-red-100 bg-red-50 p-3">
+                <div className="flex items-center gap-2 text-xs font-bold text-red-700">
+                  <MapPin className="h-4 w-4" />
+
+                  TPCAP Destination
+                </div>
+
+                <div className="mt-2 font-mono text-xs text-red-700">
+                  13.623729606202758
+                </div>
+
+                <div className="font-mono text-xs text-red-700">
+                  101.01501162061923
                 </div>
               </div>
             </div>
           )}
+        </aside>
       </div>
     </div>
   );
