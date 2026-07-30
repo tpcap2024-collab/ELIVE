@@ -25,7 +25,6 @@ import {
   AlertTriangle,
   Building2,
   Clock,
-  Gauge,
   LoaderCircle,
   MapPin,
   Navigation,
@@ -188,9 +187,7 @@ function formatGpsDateTime(
   }
 
   const date =
-    parseGpsDateTime(
-      value
-    );
+    parseGpsDateTime(value);
 
   if (!date) {
     return value;
@@ -330,46 +327,36 @@ function createTruckMarkerIcon(
     html: `
       <div
         style="
+          width:52px;
+          height:52px;
           display:flex;
-          flex-direction:column;
           align-items:center;
-          transform:translate(-50%,-50%);
-          pointer-events:auto;
+          justify-content:center;
+          border-radius:50%;
+          background:#00a8ff;
+          border:4px solid white;
+          box-shadow:0 5px 16px rgba(2,132,199,0.5);
         "
       >
         <div
           style="
-            width:48px;
-            height:48px;
-            display:flex;
-            align-items:center;
-            justify-content:center;
-            border-radius:50%;
-            background:#00a8ff;
-            border:4px solid white;
-            box-shadow:0 5px 16px rgba(2,132,199,0.5);
+            width:0;
+            height:0;
+            border-left:8px solid transparent;
+            border-right:8px solid transparent;
+            border-bottom:20px solid white;
             transform:rotate(${safeHeading}deg);
+            transform-origin:center;
           "
-        >
-          <div
-            style="
-              width:0;
-              height:0;
-              border-left:8px solid transparent;
-              border-right:8px solid transparent;
-              border-bottom:19px solid white;
-              transform:translateY(-2px);
-            "
-          ></div>
-        </div>
+        ></div>
       </div>
     `,
 
     iconSize:
-      [48, 48],
+      [52, 52],
 
     iconAnchor:
-      [24, 24],
+      [26, 26],
   });
 }
 
@@ -382,29 +369,41 @@ function createTpcapMarkerIcon():
     html: `
       <div
         style="
+          width:70px;
+          height:80px;
           display:flex;
           flex-direction:column;
           align-items:center;
-          transform:translate(-50%,-100%);
-          pointer-events:auto;
         "
       >
         <div
           style="
-            width:46px;
-            height:46px;
-            display:flex;
-            align-items:center;
-            justify-content:center;
-            border-radius:50% 50% 50% 0;
-            background:#ef4444;
-            border:4px solid white;
-            box-shadow:0 5px 16px rgba(185,28,28,0.45);
-            transform:rotate(-45deg);
+            position:relative;
+            width:48px;
+            height:48px;
           "
         >
           <div
             style="
+              position:absolute;
+              left:4px;
+              top:4px;
+              width:40px;
+              height:40px;
+              border-radius:50% 50% 50% 0;
+              background:#ef4444;
+              border:4px solid white;
+              box-shadow:0 5px 16px rgba(185,28,28,0.45);
+              transform:rotate(-45deg);
+              box-sizing:border-box;
+            "
+          ></div>
+
+          <div
+            style="
+              position:absolute;
+              left:17px;
+              top:17px;
               width:14px;
               height:14px;
               border-radius:50%;
@@ -415,7 +414,7 @@ function createTpcapMarkerIcon():
 
         <div
           style="
-            margin-top:7px;
+            margin-top:4px;
             padding:4px 9px;
             border-radius:6px;
             background:white;
@@ -433,10 +432,10 @@ function createTpcapMarkerIcon():
     `,
 
     iconSize:
-      [46, 76],
+      [70, 80],
 
     iconAnchor:
-      [23, 70],
+      [35, 44],
   });
 }
 
@@ -469,6 +468,11 @@ export function LiveMap({
 
   const routeRequestIdRef =
     useRef(0);
+
+  const appliedInitialTruckIdRef =
+    useRef<string | null>(
+      null
+    );
 
   const [
     gpsLocations,
@@ -522,13 +526,6 @@ export function LiveMap({
     isRouteLoading,
     setIsRouteLoading,
   ] = useState(false);
-
-  const [
-    lastRefresh,
-    setLastRefresh,
-  ] = useState<Date | null>(
-    null
-  );
 
   const truckByPlate =
     useMemo(() => {
@@ -726,18 +723,6 @@ export function LiveMap({
       matchedGpsLocations,
     ]);
 
-  const movingCount =
-    useMemo(() => {
-      return matchedGpsLocations
-        .filter(
-          location =>
-            location.speed > 0
-        )
-        .length;
-    }, [
-      matchedGpsLocations,
-    ]);
-
   const loadGps =
     useCallback(
       async () => {
@@ -750,7 +735,9 @@ export function LiveMap({
         requestRunningRef.current =
           true;
 
-        setIsRefreshing(true);
+        setIsRefreshing(
+          true
+        );
 
         try {
           const locations =
@@ -758,10 +745,6 @@ export function LiveMap({
 
           setGpsLocations(
             locations
-          );
-
-          setLastRefresh(
-            new Date()
           );
 
           setGpsError(
@@ -904,8 +887,27 @@ export function LiveMap({
 
   useEffect(() => {
     if (
+      initialTruckId !==
+      appliedInitialTruckIdRef.current
+    ) {
+      appliedInitialTruckIdRef.current =
+        null;
+    }
+  }, [
+    initialTruckId,
+  ]);
+
+  useEffect(() => {
+    if (
       !initialTruckId ||
       gpsLocations.length === 0
+    ) {
+      return;
+    }
+
+    if (
+      appliedInitialTruckIdRef.current ===
+      initialTruckId
     ) {
       return;
     }
@@ -935,13 +937,20 @@ export function LiveMap({
           normalizedPlate
       );
 
-    if (
-      initialGpsLocation
-    ) {
-      setSelectedGpsId(
-        initialGpsLocation.gpsId
-      );
+    if (!initialGpsLocation) {
+      return;
     }
+
+    setSelectedGpsId(
+      initialGpsLocation.gpsId
+    );
+
+    setSearchText(
+      initialTruck.licensePlate
+    );
+
+    appliedInitialTruckIdRef.current =
+      initialTruckId;
   }, [
     gpsLocations,
     initialTruckId,
@@ -992,7 +1001,8 @@ export function LiveMap({
     }
 
     const requestId =
-      routeRequestIdRef.current + 1;
+      routeRequestIdRef.current +
+      1;
 
     routeRequestIdRef.current =
       requestId;
@@ -1100,7 +1110,7 @@ export function LiveMap({
     }
 
     const truckPosition:
-      L.LatLngExpression = [
+      [number, number] = [
         selectedGpsLocation
           .latitude,
 
@@ -1125,6 +1135,9 @@ export function LiveMap({
               .licensePlate ||
             selectedGpsLocation
               .gpsId,
+
+          zIndexOffset:
+            1000,
         }
       );
 
@@ -1141,6 +1154,9 @@ export function LiveMap({
 
           title:
             'TPCAP',
+
+          zIndexOffset:
+            900,
         }
       );
 
@@ -1211,7 +1227,7 @@ export function LiveMap({
         bounds,
         {
           padding:
-            [40, 40],
+            [50, 50],
 
           maxZoom:
             15,
@@ -1231,7 +1247,7 @@ export function LiveMap({
         bounds,
         {
           padding:
-            [40, 40],
+            [50, 50],
 
           maxZoom:
             15,
@@ -1250,6 +1266,9 @@ export function LiveMap({
   const clearSelection =
     () => {
       routeRequestIdRef.current += 1;
+
+      appliedInitialTruckIdRef.current =
+        null;
 
       setSelectedGpsId(
         ''
@@ -1372,6 +1391,9 @@ export function LiveMap({
                 setSelectedGpsId(
                   event.target.value
                 );
+
+                appliedInitialTruckIdRef.current =
+                  null;
               }
             }
             className="min-w-[300px] rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
@@ -1439,77 +1461,6 @@ export function LiveMap({
             ล้างการเลือก
           </button>
         </div>
-
-        <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
-          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-            <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase text-slate-500">
-              <MapPin className="h-3.5 w-3.5" />
-
-              GPS Devices
-            </div>
-
-            <div className="mt-1 text-lg font-bold text-slate-800">
-              {gpsLocations.length}
-            </div>
-          </div>
-
-          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-            <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase text-slate-500">
-              <TruckIcon className="h-3.5 w-3.5" />
-
-              Matched Trucks
-            </div>
-
-            <div className="mt-1 text-lg font-bold text-slate-800">
-              {matchedGpsLocations.length}
-            </div>
-          </div>
-
-          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-            <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase text-slate-500">
-              <Gauge className="h-3.5 w-3.5" />
-
-              Moving
-            </div>
-
-            <div className="mt-1 text-lg font-bold text-slate-800">
-              {movingCount}
-            </div>
-          </div>
-
-          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-            <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase text-slate-500">
-              <Navigation className="h-3.5 w-3.5" />
-
-              Last Refresh
-            </div>
-
-            <div className="mt-1 font-mono text-sm font-bold text-slate-800">
-              {lastRefresh
-                ? lastRefresh
-                    .toLocaleTimeString(
-                      'en-GB',
-                      {
-                        timeZone:
-                          'Asia/Bangkok',
-
-                        hour:
-                          '2-digit',
-
-                        minute:
-                          '2-digit',
-
-                        second:
-                          '2-digit',
-
-                        hour12:
-                          false,
-                      }
-                    )
-                : '-'}
-            </div>
-          </div>
-        </div>
       </div>
 
       {gpsError && (
@@ -1523,12 +1474,12 @@ export function LiveMap({
       )}
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-b-xl border border-slate-200 bg-white shadow-sm lg:flex-row">
-        <div className="relative min-h-[420px] flex-1 overflow-hidden bg-slate-100">
+        <div className="relative min-h-[460px] flex-1 overflow-hidden bg-slate-100">
           <div
             ref={
               mapContainerRef
             }
-            className="h-full min-h-[420px] w-full"
+            className="h-full min-h-[460px] w-full"
           />
 
           {isLoading && (
@@ -1595,15 +1546,6 @@ export function LiveMap({
 
                   <div className="mt-1 text-sm text-slate-500">
                     เลือกทะเบียนรถจากรายการด้านบน
-                  </div>
-
-                  <div className="mt-2 text-xs text-slate-400">
-                    พบรถที่จับคู่ GPS ได้{' '}
-                    {
-                      matchedGpsLocations
-                        .length
-                    }
-                    {' '}คัน
                   </div>
                 </div>
               </div>
@@ -1916,22 +1858,6 @@ export function LiveMap({
                         )}
                     </div>
                   </div>
-                </div>
-              </div>
-
-              <div className="mt-5 rounded-lg border border-red-100 bg-red-50 p-3">
-                <div className="flex items-center gap-2 text-xs font-bold text-red-700">
-                  <MapPin className="h-4 w-4" />
-
-                  TPCAP Destination
-                </div>
-
-                <div className="mt-2 font-mono text-xs text-red-700">
-                  13.623729606202758
-                </div>
-
-                <div className="font-mono text-xs text-red-700">
-                  101.01501162061923
                 </div>
               </div>
             </div>
