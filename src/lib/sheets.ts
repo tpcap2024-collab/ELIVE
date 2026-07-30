@@ -2,17 +2,16 @@ import {
   Truck,
   TruckStatus,
   PerformanceStatus,
+  GpsLocation,
 } from '../types';
 
 import {
   calculatePerformanceStatus,
 } from '../utils';
 
-// Render Backend API URL
 const DEFAULT_API_URL =
   'https://elive-api.onrender.com';
 
-// คงชื่อฟังก์ชันเดิมไว้เพื่อให้ App.tsx ใช้งานต่อได้
 export const getAppsScriptUrl = (): string => {
   const env = (import.meta as any).env;
 
@@ -25,7 +24,6 @@ export const getAppsScriptUrl = (): string => {
     .replace(/\/+$/, '');
 };
 
-// แปลงเวลาจาก Google Sheets เป็น HH:mm
 function parseGoogleSheetsTime(
   timeValue: unknown
 ): string {
@@ -44,7 +42,6 @@ function parseGoogleSheetsTime(
     return '';
   }
 
-  // รองรับค่าที่ Google Sheets ส่งมาเป็น ISO Date
   if (timeText.includes('T')) {
     const date =
       new Date(timeText);
@@ -62,7 +59,6 @@ function parseGoogleSheetsTime(
     }
   }
 
-  // รองรับ HH:mm และ HH:mm:ss
   const timeMatch =
     timeText.match(
       /^(\d{1,2}):(\d{2})/
@@ -83,7 +79,6 @@ function parseGoogleSheetsTime(
   return timeText;
 }
 
-// แปลงวันที่จาก Google Sheets เป็น YYYY-MM-DD
 function parseGoogleSheetsDate(
   dateValue: unknown
 ): string {
@@ -102,7 +97,6 @@ function parseGoogleSheetsDate(
     return '';
   }
 
-  // ถ้าเป็น YYYY-MM-DD อยู่แล้ว ให้ใช้ได้ทันที
   const plainDateMatch =
     dateText.match(
       /^(\d{4})-(\d{2})-(\d{2})$/
@@ -116,7 +110,6 @@ function parseGoogleSheetsDate(
     );
   }
 
-  // รองรับ ISO Date จาก Google Sheets
   const date =
     new Date(dateText);
 
@@ -132,7 +125,6 @@ function parseGoogleSheetsDate(
   return dateText;
 }
 
-// อ่านข้อความ Error จาก Backend API
 function getApiError(
   data: unknown
 ): string | null {
@@ -156,9 +148,8 @@ function getApiError(
   return null;
 }
 
-// ดึงข้อมูลรถผ่าน Render Backend API
-export async function fetchTrucksFromSheets():
-  Promise<Truck[]> {
+async function fetchEliveApiData():
+  Promise<any> {
   const apiUrl =
     getAppsScriptUrl();
 
@@ -168,14 +159,11 @@ export async function fetchTrucksFromSheets():
     );
   }
 
-  const requestUrl =
-    `${apiUrl}/api/trucks`;
-
   let response: Response;
 
   try {
     response = await fetch(
-      requestUrl,
+      `${apiUrl}/api/trucks`,
       {
         method: 'GET',
         headers: {
@@ -197,7 +185,7 @@ export async function fetchTrucksFromSheets():
 
   if (!response.ok) {
     let errorMessage =
-      `Failed to fetch truck data ` +
+      `Failed to fetch ELIVE data ` +
       `(${response.status} ${response.statusText})`;
 
     try {
@@ -212,7 +200,9 @@ export async function fetchTrucksFromSheets():
           apiError;
       }
     } catch {
-      // ใช้ข้อความ Error เริ่มต้น
+      console.error(
+        'Unable to read ELIVE API error response.'
+      );
     }
 
     throw new Error(
@@ -227,7 +217,7 @@ export async function fetchTrucksFromSheets():
       await response.json();
   } catch (error) {
     console.error(
-      'Backend API returned invalid JSON:',
+      'ELIVE API returned invalid JSON:',
       error
     );
 
@@ -251,6 +241,14 @@ export async function fetchTrucksFromSheets():
     );
   }
 
+  return data;
+}
+
+export async function fetchTrucksFromSheets():
+  Promise<Truck[]> {
+  const data =
+    await fetchEliveApiData();
+
   const planData: any[][] =
     Array.isArray(data.plan)
       ? data.plan
@@ -261,14 +259,12 @@ export async function fetchTrucksFromSheets():
       ? data.actual
       : [];
 
-  // ข้ามแถว Header
   const planRows =
     planData.slice(1);
 
   const actualRows =
     actualData.slice(1);
 
-  // สร้าง Map ของ Actual โดยใช้ Code run เป็น Key
   const actualMap =
     new Map<string, any[]>();
 
@@ -402,6 +398,16 @@ export async function fetchTrucksFromSheets():
         'COMPLETED';
     } else if (
       normalizedStatus.includes(
+        'truck out'
+      ) ||
+      normalizedStatus.includes(
+        'ออก'
+      )
+    ) {
+      mappedStatus =
+        'TRUCK_OUT';
+    } else if (
+      normalizedStatus.includes(
         'unloading at tpcap'
       ) ||
       normalizedStatus.includes(
@@ -445,19 +451,8 @@ export async function fetchTrucksFromSheets():
     ) {
       mappedStatus =
         'WAITING_AREA';
-    } else if (
-      normalizedStatus.includes(
-        'truck out'
-      ) ||
-      normalizedStatus.includes(
-        'ออก'
-      )
-    ) {
-      mappedStatus =
-        'TRUCK_OUT';
     }
 
-    // ใช้ค่าในชีทเป็นค่าเริ่มต้น
     const normalizedPerformance =
       efficiencyStatus
         .trim()
@@ -505,13 +500,6 @@ export async function fetchTrucksFromSheets():
         'WARNING';
     }
 
-    // คำนวณ Performance ใหม่จาก Stamp ETA
-    //
-    // Stamp ETA ก่อน Plan ETA = EARLY
-    // Stamp ETA ตั้งแต่ Plan ETA ถึง Plan ETD = ON_PLAN
-    // Stamp ETA หลัง Plan ETD = DELAY
-    //
-    // Stamp ETD ไม่มีผลต่อ Performance
     if (
       stampEta &&
       planEta &&
@@ -585,7 +573,6 @@ export async function fetchTrucksFromSheets():
   return trucks;
 }
 
-// อัปเดตข้อมูลรถผ่าน Render Backend API
 export async function updateTruckInSheets(
   truckId: string,
   updates: Partial<Truck>,
@@ -639,13 +626,6 @@ export async function updateTruckInSheets(
         ? updates.performanceStatus
         : currentTruck.performanceStatus;
 
-  // คำนวณ Performance ใหม่จาก Stamp ETA
-  //
-  // Stamp ETA ก่อน Plan ETA = EARLY
-  // Stamp ETA ตั้งแต่ Plan ETA ถึง Plan ETD = ON_PLAN
-  // Stamp ETA หลัง Plan ETD = DELAY
-  //
-  // Stamp ETD ไม่มีผลต่อ Performance
   if (
     stampEta &&
     currentTruck.planEta &&
@@ -659,20 +639,6 @@ export async function updateTruckInSheets(
       );
   }
 
-  // ลำดับคอลัมน์ Actual data
-  //
-  // 0  Code run
-  // 1  Current status
-  // 2  Efficiency status
-  // 3  Plan ETA
-  // 4  Stamp ETA
-  // 5  Stamp ETD
-  // 6  Problem
-  // 7  Countermeasures
-  // 8  Responsible person
-  // 9  Process status
-  // 10 User
-  // 11 Datetime update
   const newRow = [
     truckId,
     currentStatus || '',
@@ -706,6 +672,7 @@ export async function updateTruckInSheets(
         '',
 
     'System User',
+
     datetimeUpdate,
   ];
 
@@ -759,7 +726,9 @@ export async function updateTruckInSheets(
           apiError;
       }
     } catch {
-      // ใช้ข้อความ Error เริ่มต้น
+      console.error(
+        'Unable to read update error response.'
+      );
     }
 
     throw new Error(
@@ -792,11 +761,113 @@ export async function updateTruckInSheets(
     );
   }
 
-  if (
-    result.success !== true
-  ) {
+  if (result.success !== true) {
     throw new Error(
       'The server did not confirm the update.'
     );
   }
+}
+
+export async function fetchGpsLocations():
+  Promise<GpsLocation[]> {
+  const data =
+    await fetchEliveApiData();
+
+  const gpsData: any[][] =
+    Array.isArray(data.gps)
+      ? data.gps
+      : [];
+
+  if (gpsData.length <= 1) {
+    return [];
+  }
+
+  const gpsRows =
+    gpsData.slice(1);
+
+  const locations:
+    GpsLocation[] = [];
+
+  for (const row of gpsRows) {
+    if (!Array.isArray(row)) {
+      continue;
+    }
+
+    const gpsId =
+      String(row[0] || '').trim();
+
+    const licensePlate =
+      String(row[1] || '').trim();
+
+    const latitude =
+      Number(
+        String(row[2] || '')
+          .trim()
+          .replace(',', '.')
+      );
+
+    const longitude =
+      Number(
+        String(row[3] || '')
+          .trim()
+          .replace(',', '.')
+      );
+
+    const speed =
+      Number(
+        String(row[4] || '0')
+          .trim()
+          .replace(',', '.')
+      );
+
+    const heading =
+      Number(
+        String(row[5] || '0')
+          .trim()
+          .replace(',', '.')
+      );
+
+    if (
+      !gpsId ||
+      !Number.isFinite(latitude) ||
+      !Number.isFinite(longitude) ||
+      latitude < -90 ||
+      latitude > 90 ||
+      longitude < -180 ||
+      longitude > 180
+    ) {
+      continue;
+    }
+
+    locations.push({
+      gpsId,
+      licensePlate,
+      latitude,
+      longitude,
+
+      speed:
+        Number.isFinite(speed)
+          ? speed
+          : 0,
+
+      heading:
+        Number.isFinite(heading)
+          ? heading
+          : 0,
+
+      locationName:
+        String(row[6] || '').trim(),
+
+      gpsTime:
+        String(row[7] || '').trim(),
+
+      gpsStatus:
+        String(row[8] || '').trim(),
+
+      receivedAt:
+        String(row[9] || '').trim(),
+    });
+  }
+
+  return locations;
 }
