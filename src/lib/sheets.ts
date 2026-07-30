@@ -9,11 +9,43 @@ import {
   calculatePerformanceStatus,
 } from '../utils';
 
+export interface RouteGeometry {
+  type: 'LineString';
+  coordinates: number[][];
+}
+
+export interface RouteToTpcapResult {
+  success: boolean;
+
+  origin: {
+    latitude: number;
+    longitude: number;
+  };
+
+  destination: {
+    name: string;
+    latitude: number;
+    longitude: number;
+  };
+
+  distanceMeters: number;
+  distanceKilometers: number;
+
+  durationSeconds: number;
+  durationMinutes: number;
+
+  estimatedArrival: string;
+  estimatedArrivalBangkok: string;
+
+  geometry: RouteGeometry;
+}
+
 const DEFAULT_API_URL =
   'https://elive-api.onrender.com';
 
 export const getAppsScriptUrl = (): string => {
-  const env = (import.meta as any).env;
+  const env =
+    (import.meta as any).env;
 
   const apiUrl =
     env?.VITE_API_URL ||
@@ -46,14 +78,22 @@ function parseGoogleSheetsTime(
     const date =
       new Date(timeText);
 
-    if (!Number.isNaN(date.getTime())) {
+    if (
+      !Number.isNaN(
+        date.getTime()
+      )
+    ) {
       return date.toLocaleTimeString(
         'en-GB',
         {
-          timeZone: 'Asia/Bangkok',
-          hour: '2-digit',
-          minute: '2-digit',
-          hour12: false,
+          timeZone:
+            'Asia/Bangkok',
+          hour:
+            '2-digit',
+          minute:
+            '2-digit',
+          hour12:
+            false,
         }
       );
     }
@@ -113,11 +153,16 @@ function parseGoogleSheetsDate(
   const date =
     new Date(dateText);
 
-  if (!Number.isNaN(date.getTime())) {
+  if (
+    !Number.isNaN(
+      date.getTime()
+    )
+  ) {
     return date.toLocaleDateString(
       'en-CA',
       {
-        timeZone: 'Asia/Bangkok',
+        timeZone:
+          'Asia/Bangkok',
       }
     );
   }
@@ -141,11 +186,31 @@ function getApiError(
       ).error;
 
     if (errorValue) {
-      return String(errorValue);
+      return String(
+        errorValue
+      );
     }
   }
 
   return null;
+}
+
+async function readJsonResponse(
+  response: Response,
+  invalidMessage: string
+): Promise<any> {
+  try {
+    return await response.json();
+  } catch (error) {
+    console.error(
+      invalidMessage,
+      error
+    );
+
+    throw new Error(
+      invalidMessage
+    );
+  }
 }
 
 async function fetchEliveApiData():
@@ -169,10 +234,14 @@ async function fetchEliveApiData():
       requestUrl,
       {
         method: 'GET',
+
         headers: {
-          Accept: 'application/json',
+          Accept:
+            'application/json',
         },
-        cache: 'no-store',
+
+        cache:
+          'no-store',
       }
     );
   } catch (error) {
@@ -186,59 +255,29 @@ async function fetchEliveApiData():
     );
   }
 
-  if (!response.ok) {
-    let errorMessage =
-      `Failed to fetch ELIVE data ` +
-      `(${response.status} ${response.statusText})`;
-
-    try {
-      const errorData =
-        await response.json();
-
-      const apiError =
-        getApiError(errorData);
-
-      if (apiError) {
-        errorMessage =
-          apiError;
-      }
-    } catch {
-      console.error(
-        'Unable to read ELIVE API error response.'
-      );
-    }
-
-    throw new Error(
-      errorMessage
-    );
-  }
-
-  let data: any;
-
-  try {
-    data =
-      await response.json();
-  } catch (error) {
-    console.error(
-      'ELIVE API returned invalid JSON:',
-      error
-    );
-
-    throw new Error(
+  const data =
+    await readJsonResponse(
+      response,
       'The ELIVE Backend API returned invalid JSON.'
     );
-  }
 
   const apiError =
     getApiError(data);
 
-  if (apiError) {
+  if (
+    !response.ok ||
+    apiError
+  ) {
     throw new Error(
-      apiError
+      apiError ||
+      `Failed to fetch ELIVE data ` +
+      `(${response.status} ${response.statusText})`
     );
   }
 
-  if (data.status !== 'success') {
+  if (
+    data.status !== 'success'
+  ) {
     throw new Error(
       'The ELIVE Backend API did not return success status.'
     );
@@ -256,16 +295,26 @@ function mapTruckStatus(
       .toLowerCase();
 
   if (
-    normalizedStatus.includes('complete') ||
-    normalizedStatus.includes('completed') ||
-    normalizedStatus.includes('เสร็จ')
+    normalizedStatus.includes(
+      'complete'
+    ) ||
+    normalizedStatus.includes(
+      'completed'
+    ) ||
+    normalizedStatus.includes(
+      'เสร็จ'
+    )
   ) {
     return 'COMPLETED';
   }
 
   if (
-    normalizedStatus.includes('truck out') ||
-    normalizedStatus.includes('ออก')
+    normalizedStatus.includes(
+      'truck out'
+    ) ||
+    normalizedStatus.includes(
+      'ออก'
+    )
   ) {
     return 'TRUCK_OUT';
   }
@@ -274,23 +323,37 @@ function mapTruckStatus(
     normalizedStatus.includes(
       'unloading at tpcap'
     ) ||
-    normalizedStatus.includes('arrive') ||
-    normalizedStatus.includes('arrived') ||
-    normalizedStatus.includes('ถึง')
+    normalizedStatus.includes(
+      'arrive'
+    ) ||
+    normalizedStatus.includes(
+      'arrived'
+    ) ||
+    normalizedStatus.includes(
+      'ถึง'
+    )
   ) {
     return 'UNLOADING_AT_TPCAP';
   }
 
   if (
-    normalizedStatus.includes('dock in')
+    normalizedStatus.includes(
+      'dock in'
+    )
   ) {
     return 'DOCK_IN';
   }
 
   if (
-    normalizedStatus.includes('กำลังลงงาน') ||
-    normalizedStatus.includes('dock') ||
-    normalizedStatus.includes('unloading') ||
+    normalizedStatus.includes(
+      'กำลังลงงาน'
+    ) ||
+    normalizedStatus.includes(
+      'dock'
+    ) ||
+    normalizedStatus.includes(
+      'unloading'
+    ) ||
     normalizedStatus.includes(
       'unload at tpcap'
     )
@@ -299,9 +362,15 @@ function mapTruckStatus(
   }
 
   if (
-    normalizedStatus.includes('wait') ||
-    normalizedStatus.includes('waiting') ||
-    normalizedStatus.includes('รอ')
+    normalizedStatus.includes(
+      'wait'
+    ) ||
+    normalizedStatus.includes(
+      'waiting'
+    ) ||
+    normalizedStatus.includes(
+      'รอ'
+    )
   ) {
     return 'WAITING_AREA';
   }
@@ -318,24 +387,40 @@ function mapPerformanceStatus(
       .toLowerCase();
 
   if (
-    normalizedPerformance.includes('delay') ||
-    normalizedPerformance.includes('delayed') ||
-    normalizedPerformance.includes('ดีเล')
+    normalizedPerformance.includes(
+      'delay'
+    ) ||
+    normalizedPerformance.includes(
+      'delayed'
+    ) ||
+    normalizedPerformance.includes(
+      'ดีเล'
+    )
   ) {
     return 'DELAY';
   }
 
   if (
-    normalizedPerformance.includes('early') ||
-    normalizedPerformance.includes('ก่อน') ||
-    normalizedPerformance.includes('ไว')
+    normalizedPerformance.includes(
+      'early'
+    ) ||
+    normalizedPerformance.includes(
+      'ก่อน'
+    ) ||
+    normalizedPerformance.includes(
+      'ไว'
+    )
   ) {
     return 'EARLY';
   }
 
   if (
-    normalizedPerformance.includes('warning') ||
-    normalizedPerformance.includes('เตือน')
+    normalizedPerformance.includes(
+      'warning'
+    ) ||
+    normalizedPerformance.includes(
+      'เตือน'
+    )
   ) {
     return 'WARNING';
   }
@@ -367,13 +452,19 @@ export async function fetchTrucksFromSheets():
   const actualMap =
     new Map<string, any[]>();
 
-  for (const row of actualRows) {
-    if (!Array.isArray(row)) {
+  for (
+    const row of actualRows
+  ) {
+    if (
+      !Array.isArray(row)
+    ) {
       continue;
     }
 
     const codeRun =
-      String(row[0] || '').trim();
+      String(
+        row[0] || ''
+      ).trim();
 
     if (codeRun) {
       actualMap.set(
@@ -383,22 +474,31 @@ export async function fetchTrucksFromSheets():
     }
   }
 
-  const trucks: Truck[] = [];
+  const trucks:
+    Truck[] = [];
 
-  for (const row of planRows) {
-    if (!Array.isArray(row)) {
+  for (
+    const row of planRows
+  ) {
+    if (
+      !Array.isArray(row)
+    ) {
       continue;
     }
 
     const codeRun =
-      String(row[0] || '').trim();
+      String(
+        row[0] || ''
+      ).trim();
 
     if (!codeRun) {
       continue;
     }
 
     const actualRow =
-      actualMap.get(codeRun);
+      actualMap.get(
+        codeRun
+      );
 
     const planDate =
       parseGoogleSheetsDate(
@@ -421,13 +521,23 @@ export async function fetchTrucksFromSheets():
     let efficiencyStatus =
       'ON_PLAN';
 
-    let stampEta = '';
-    let stampEtd = '';
+    let stampEta =
+      '';
 
-    let actionProblem = '';
-    let actionCountermeasure = '';
-    let actionResponsible = '';
-    let actionStatus = '';
+    let stampEtd =
+      '';
+
+    let actionProblem =
+      '';
+
+    let actionCountermeasure =
+      '';
+
+    let actionResponsible =
+      '';
+
+    let actionStatus =
+      '';
 
     if (actualRow) {
       currentStatus =
@@ -497,29 +607,45 @@ export async function fetchTrucksFromSheets():
     }
 
     trucks.push({
-      id: codeRun,
+      id:
+        codeRun,
+
       planDate,
 
       route:
-        String(row[2] || ''),
+        String(
+          row[2] || ''
+        ),
 
       supplierName:
-        String(row[3] || ''),
+        String(
+          row[3] || ''
+        ),
 
       licensePlate:
-        String(row[4] || ''),
+        String(
+          row[4] || ''
+        ),
 
       truckType:
-        String(row[5] || ''),
+        String(
+          row[5] || ''
+        ),
 
       driverName:
-        String(row[6] || ''),
+        String(
+          row[6] || ''
+        ),
 
       phone:
-        String(row[7] || ''),
+        String(
+          row[7] || ''
+        ),
 
       dropPoint:
-        String(row[9] || ''),
+        String(
+          row[9] || ''
+        ),
 
       planEta,
       planEtd,
@@ -544,10 +670,18 @@ export async function fetchTrucksFromSheets():
             {
               timeZone:
                 'Asia/Bangkok',
-              hour: '2-digit',
-              minute: '2-digit',
-              second: '2-digit',
-              hour12: false,
+
+              hour:
+                '2-digit',
+
+              minute:
+                '2-digit',
+
+              second:
+                '2-digit',
+
+              hour12:
+                false,
             }
           ),
     });
@@ -583,7 +717,9 @@ export async function updateTruckInSheets(
         {
           timeZone:
             'Asia/Bangkok',
-          hour12: false,
+
+          hour12:
+            false,
         }
       );
 
@@ -604,9 +740,11 @@ export async function updateTruckInSheets(
 
   let efficiencyStatus:
     PerformanceStatus =
-      updates.performanceStatus !== undefined
+      updates.performanceStatus !==
+      undefined
         ? updates.performanceStatus
-        : currentTruck.performanceStatus;
+        : currentTruck
+            .performanceStatus;
 
   if (
     stampEta &&
@@ -623,49 +761,80 @@ export async function updateTruckInSheets(
 
   const newRow = [
     truckId,
-    currentStatus || '',
-    efficiencyStatus || '',
-    currentTruck.planEta || '',
-    stampEta || '',
-    stampEtd || '',
 
-    updates.actionProblem !== undefined
+    currentStatus ||
+    '',
+
+    efficiencyStatus ||
+    '',
+
+    currentTruck.planEta ||
+    '',
+
+    stampEta ||
+    '',
+
+    stampEtd ||
+    '',
+
+    updates.actionProblem !==
+    undefined
       ? updates.actionProblem
-      : currentTruck.actionProblem || '',
+      : currentTruck
+          .actionProblem ||
+        '',
 
-    updates.actionCountermeasure !== undefined
-      ? updates.actionCountermeasure
-      : currentTruck.actionCountermeasure || '',
+    updates.actionCountermeasure !==
+    undefined
+      ? updates
+          .actionCountermeasure
+      : currentTruck
+          .actionCountermeasure ||
+        '',
 
-    updates.actionResponsible !== undefined
-      ? updates.actionResponsible
-      : currentTruck.actionResponsible || '',
+    updates.actionResponsible !==
+    undefined
+      ? updates
+          .actionResponsible
+      : currentTruck
+          .actionResponsible ||
+        '',
 
-    updates.actionStatus !== undefined
+    updates.actionStatus !==
+    undefined
       ? updates.actionStatus
-      : currentTruck.actionStatus || '',
+      : currentTruck
+          .actionStatus ||
+        '',
 
     'System User',
+
     datetimeUpdate,
   ];
 
-  let response: Response;
+  let response:
+    Response;
 
   try {
     response = await fetch(
       `${apiUrl}/api/trucks/update`,
       {
-        method: 'POST',
+        method:
+          'POST',
+
         headers: {
           'Content-Type':
             'application/json',
+
           Accept:
             'application/json',
         },
-        body: JSON.stringify({
-          truckId,
-          newRow,
-        }),
+
+        body:
+          JSON.stringify({
+            truckId,
+            newRow,
+          }),
       }
     );
   } catch (error) {
@@ -679,59 +848,31 @@ export async function updateTruckInSheets(
     );
   }
 
-  if (!response.ok) {
-    let errorMessage =
-      `Failed to update Google Sheet ` +
-      `(${response.status} ${response.statusText})`;
-
-    try {
-      const errorData =
-        await response.json();
-
-      const apiError =
-        getApiError(errorData);
-
-      if (apiError) {
-        errorMessage =
-          apiError;
-      }
-    } catch {
-      console.error(
-        'Unable to read update error response.'
-      );
-    }
-
-    throw new Error(
-      errorMessage
-    );
-  }
-
-  let result: any;
-
-  try {
-    result =
-      await response.json();
-  } catch (error) {
-    console.error(
-      'ELIVE API returned invalid update response:',
-      error
-    );
-
-    throw new Error(
+  const result =
+    await readJsonResponse(
+      response,
       'ELIVE API returned an invalid update response.'
     );
-  }
 
   const apiError =
-    getApiError(result);
+    getApiError(
+      result
+    );
 
-  if (apiError) {
+  if (
+    !response.ok ||
+    apiError
+  ) {
     throw new Error(
-      apiError
+      apiError ||
+      `Failed to update Google Sheet ` +
+      `(${response.status} ${response.statusText})`
     );
   }
 
-  if (result.success !== true) {
+  if (
+    result.success !== true
+  ) {
     throw new Error(
       'The server did not confirm the update.'
     );
@@ -756,7 +897,9 @@ function findGpsColumn(
       possibleNames.some(
         name =>
           header.includes(
-            normalizeGpsHeader(name)
+            normalizeGpsHeader(
+              name
+            )
           )
       )
   );
@@ -778,12 +921,15 @@ function readGpsCell(
   row: any[],
   columnIndex: number
 ): string {
-  if (columnIndex < 0) {
+  if (
+    columnIndex < 0
+  ) {
     return '';
   }
 
   return String(
-    row[columnIndex] ?? ''
+    row[columnIndex] ??
+    ''
   ).trim();
 }
 
@@ -792,17 +938,22 @@ export async function fetchGpsLocations():
   const data =
     await fetchEliveApiData();
 
-  const gpsData: any[][] =
-    Array.isArray(data.gps)
-      ? data.gps
-      : [];
+  const gpsData:
+    any[][] =
+      Array.isArray(
+        data.gps
+      )
+        ? data.gps
+        : [];
 
   console.log(
     'GPS RAW ROW COUNT:',
     gpsData.length
   );
 
-  if (gpsData.length <= 1) {
+  if (
+    gpsData.length <= 1
+  ) {
     return [];
   }
 
@@ -943,8 +1094,12 @@ export async function fetchGpsLocations():
   const gpsRows =
     gpsData.slice(1);
 
-  for (const row of gpsRows) {
-    if (!Array.isArray(row)) {
+  for (
+    const row of gpsRows
+  ) {
+    if (
+      !Array.isArray(row)
+    ) {
       continue;
     }
 
@@ -985,8 +1140,12 @@ export async function fetchGpsLocations():
         : 0;
 
     if (
-      !Number.isFinite(latitude) ||
-      !Number.isFinite(longitude) ||
+      !Number.isFinite(
+        latitude
+      ) ||
+      !Number.isFinite(
+        longitude
+      ) ||
       latitude < -90 ||
       latitude > 90 ||
       longitude < -180 ||
@@ -1019,12 +1178,16 @@ export async function fetchGpsLocations():
       longitude,
 
       speed:
-        Number.isFinite(speed)
+        Number.isFinite(
+          speed
+        )
           ? speed
           : 0,
 
       heading:
-        Number.isFinite(heading)
+        Number.isFinite(
+          heading
+        )
           ? heading
           : 0,
 
@@ -1059,10 +1222,327 @@ export async function fetchGpsLocations():
     locations.length
   );
 
-  console.log(
-    'PARSED GPS LOCATIONS:',
-    locations
-  );
-
   return locations;
+}
+
+export async function fetchRouteToTpcap(
+  latitude: number,
+  longitude: number
+): Promise<RouteToTpcapResult> {
+  if (
+    !Number.isFinite(
+      latitude
+    ) ||
+    latitude < -90 ||
+    latitude > 90
+  ) {
+    throw new Error(
+      'Latitude is invalid.'
+    );
+  }
+
+  if (
+    !Number.isFinite(
+      longitude
+    ) ||
+    longitude < -180 ||
+    longitude > 180
+  ) {
+    throw new Error(
+      'Longitude is invalid.'
+    );
+  }
+
+  const apiUrl =
+    getAppsScriptUrl();
+
+  if (!apiUrl) {
+    throw new Error(
+      'Render Backend API URL is not configured.'
+    );
+  }
+
+  const query =
+    new URLSearchParams({
+      lat:
+        String(latitude),
+
+      lng:
+        String(longitude),
+
+      t:
+        String(
+          Date.now()
+        ),
+    });
+
+  const requestUrl =
+    `${apiUrl}/api/route-to-tpcap?${query.toString()}`;
+
+  let response:
+    Response;
+
+  try {
+    response = await fetch(
+      requestUrl,
+      {
+        method:
+          'GET',
+
+        headers: {
+          Accept:
+            'application/json',
+        },
+
+        cache:
+          'no-store',
+      }
+    );
+  } catch (error) {
+    console.error(
+      'Unable to connect to route API:',
+      error
+    );
+
+    throw new Error(
+      'ไม่สามารถเชื่อมต่อระบบคำนวณเส้นทางได้'
+    );
+  }
+
+  const data =
+    await readJsonResponse(
+      response,
+      'ระบบคำนวณเส้นทางส่งข้อมูลไม่ถูกต้อง'
+    );
+
+  const apiError =
+    getApiError(
+      data
+    );
+
+  if (
+    !response.ok ||
+    apiError
+  ) {
+    throw new Error(
+      apiError ||
+      `Route API request failed with status ${response.status}`
+    );
+  }
+
+  if (
+    data.success !== true
+  ) {
+    throw new Error(
+      'ระบบไม่สามารถยืนยันผลการคำนวณเส้นทางได้'
+    );
+  }
+
+  const distanceMeters =
+    Number(
+      data.distanceMeters
+    );
+
+  const distanceKilometers =
+    Number(
+      data.distanceKilometers
+    );
+
+  const durationSeconds =
+    Number(
+      data.durationSeconds
+    );
+
+  const durationMinutes =
+    Number(
+      data.durationMinutes
+    );
+
+  if (
+    !Number.isFinite(
+      distanceMeters
+    ) ||
+    !Number.isFinite(
+      distanceKilometers
+    ) ||
+    !Number.isFinite(
+      durationSeconds
+    ) ||
+    !Number.isFinite(
+      durationMinutes
+    )
+  ) {
+    throw new Error(
+      'ข้อมูลระยะทางหรือเวลาเดินทางไม่ถูกต้อง'
+    );
+  }
+
+  const geometry =
+    data.geometry;
+
+  if (
+    !geometry ||
+    geometry.type !==
+      'LineString' ||
+    !Array.isArray(
+      geometry.coordinates
+    )
+  ) {
+    throw new Error(
+      'ไม่พบข้อมูลเส้นทางสำหรับแสดงบนแผนที่'
+    );
+  }
+
+  const validCoordinates:
+    number[][] =
+      geometry.coordinates
+        .filter(
+          (
+            coordinate: unknown
+          ): coordinate is unknown[] => {
+            return (
+              Array.isArray(
+                coordinate
+              ) &&
+              coordinate.length >= 2
+            );
+          }
+        )
+        .map(
+          coordinate => {
+            return [
+              Number(
+                coordinate[0]
+              ),
+
+              Number(
+                coordinate[1]
+              ),
+            ];
+          }
+        )
+        .filter(
+          coordinate => {
+            const routeLongitude =
+              coordinate[0];
+
+            const routeLatitude =
+              coordinate[1];
+
+            return (
+              Number.isFinite(
+                routeLongitude
+              ) &&
+              Number.isFinite(
+                routeLatitude
+              ) &&
+              routeLongitude >= -180 &&
+              routeLongitude <= 180 &&
+              routeLatitude >= -90 &&
+              routeLatitude <= 90
+            );
+          }
+        );
+
+  if (
+    validCoordinates.length < 2
+  ) {
+    throw new Error(
+      'ข้อมูลเส้นทางมีจำนวนพิกัดไม่เพียงพอ'
+    );
+  }
+
+  const originLatitude =
+    Number(
+      data.origin?.latitude
+    );
+
+  const originLongitude =
+    Number(
+      data.origin?.longitude
+    );
+
+  const destinationLatitude =
+    Number(
+      data.destination?.latitude
+    );
+
+  const destinationLongitude =
+    Number(
+      data.destination?.longitude
+    );
+
+  if (
+    !Number.isFinite(
+      originLatitude
+    ) ||
+    !Number.isFinite(
+      originLongitude
+    ) ||
+    !Number.isFinite(
+      destinationLatitude
+    ) ||
+    !Number.isFinite(
+      destinationLongitude
+    )
+  ) {
+    throw new Error(
+      'ข้อมูลพิกัดต้นทางหรือปลายทางไม่ถูกต้อง'
+    );
+  }
+
+  return {
+    success:
+      true,
+
+    origin: {
+      latitude:
+        originLatitude,
+
+      longitude:
+        originLongitude,
+    },
+
+    destination: {
+      name:
+        String(
+          data.destination?.name ||
+          'TPCAP'
+        ),
+
+      latitude:
+        destinationLatitude,
+
+      longitude:
+        destinationLongitude,
+    },
+
+    distanceMeters,
+
+    distanceKilometers,
+
+    durationSeconds,
+
+    durationMinutes,
+
+    estimatedArrival:
+      String(
+        data.estimatedArrival ||
+        ''
+      ),
+
+    estimatedArrivalBangkok:
+      String(
+        data.estimatedArrivalBangkok ||
+        ''
+      ),
+
+    geometry: {
+      type:
+        'LineString',
+
+      coordinates:
+        validCoordinates,
+    },
+  };
 }
