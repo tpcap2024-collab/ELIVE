@@ -159,15 +159,19 @@ async function fetchEliveApiData():
     );
   }
 
+  const requestUrl =
+    `${apiUrl}/api/trucks?t=${Date.now()}`;
+
   let response: Response;
 
   try {
     response = await fetch(
-      `${apiUrl}/api/trucks`,
+      requestUrl,
       {
         method: 'GET',
         headers: {
           Accept: 'application/json',
+          'Cache-Control': 'no-cache',
         },
         cache: 'no-store',
       }
@@ -222,7 +226,7 @@ async function fetchEliveApiData():
     );
 
     throw new Error(
-      'The ELIVE Backend API returned an invalid response.'
+      'The ELIVE Backend API returned invalid JSON.'
     );
   }
 
@@ -237,11 +241,107 @@ async function fetchEliveApiData():
 
   if (data.status !== 'success') {
     throw new Error(
-      'The ELIVE Backend API did not return a success status.'
+      'The ELIVE Backend API did not return success status.'
     );
   }
 
   return data;
+}
+
+function mapTruckStatus(
+  currentStatus: string
+): TruckStatus {
+  const normalizedStatus =
+    String(currentStatus || '')
+      .trim()
+      .toLowerCase();
+
+  if (
+    normalizedStatus.includes('complete') ||
+    normalizedStatus.includes('completed') ||
+    normalizedStatus.includes('เสร็จ')
+  ) {
+    return 'COMPLETED';
+  }
+
+  if (
+    normalizedStatus.includes('truck out') ||
+    normalizedStatus.includes('ออก')
+  ) {
+    return 'TRUCK_OUT';
+  }
+
+  if (
+    normalizedStatus.includes(
+      'unloading at tpcap'
+    ) ||
+    normalizedStatus.includes('arrive') ||
+    normalizedStatus.includes('arrived') ||
+    normalizedStatus.includes('ถึง')
+  ) {
+    return 'UNLOADING_AT_TPCAP';
+  }
+
+  if (
+    normalizedStatus.includes('dock in')
+  ) {
+    return 'DOCK_IN';
+  }
+
+  if (
+    normalizedStatus.includes('กำลังลงงาน') ||
+    normalizedStatus.includes('dock') ||
+    normalizedStatus.includes('unloading') ||
+    normalizedStatus.includes(
+      'unload at tpcap'
+    )
+  ) {
+    return 'UNLOADING';
+  }
+
+  if (
+    normalizedStatus.includes('wait') ||
+    normalizedStatus.includes('waiting') ||
+    normalizedStatus.includes('รอ')
+  ) {
+    return 'WAITING_AREA';
+  }
+
+  return 'TRAVELING';
+}
+
+function mapPerformanceStatus(
+  efficiencyStatus: string
+): PerformanceStatus {
+  const normalizedPerformance =
+    String(efficiencyStatus || '')
+      .trim()
+      .toLowerCase();
+
+  if (
+    normalizedPerformance.includes('delay') ||
+    normalizedPerformance.includes('delayed') ||
+    normalizedPerformance.includes('ดีเล')
+  ) {
+    return 'DELAY';
+  }
+
+  if (
+    normalizedPerformance.includes('early') ||
+    normalizedPerformance.includes('ก่อน') ||
+    normalizedPerformance.includes('ไว')
+  ) {
+    return 'EARLY';
+  }
+
+  if (
+    normalizedPerformance.includes('warning') ||
+    normalizedPerformance.includes('เตือน')
+  ) {
+    return 'WARNING';
+  }
+
+  return 'ON_PLAN';
 }
 
 export async function fetchTrucksFromSheets():
@@ -374,131 +474,15 @@ export async function fetchTrucksFromSheets():
         );
     }
 
-    const normalizedStatus =
-      currentStatus
-        .trim()
-        .toLowerCase();
+    const mappedStatus =
+      mapTruckStatus(
+        currentStatus
+      );
 
-    let mappedStatus:
-      TruckStatus =
-        'TRAVELING';
-
-    if (
-      normalizedStatus.includes(
-        'complete'
-      ) ||
-      normalizedStatus.includes(
-        'completed'
-      ) ||
-      normalizedStatus.includes(
-        'เสร็จ'
-      )
-    ) {
-      mappedStatus =
-        'COMPLETED';
-    } else if (
-      normalizedStatus.includes(
-        'truck out'
-      ) ||
-      normalizedStatus.includes(
-        'ออก'
-      )
-    ) {
-      mappedStatus =
-        'TRUCK_OUT';
-    } else if (
-      normalizedStatus.includes(
-        'unloading at tpcap'
-      ) ||
-      normalizedStatus.includes(
-        'arrive'
-      ) ||
-      normalizedStatus.includes(
-        'arrived'
-      ) ||
-      normalizedStatus.includes(
-        'ถึง'
-      )
-    ) {
-      mappedStatus =
-        'UNLOADING_AT_TPCAP';
-    } else if (
-      normalizedStatus.includes(
-        'กำลังลงงาน'
-      ) ||
-      normalizedStatus.includes(
-        'dock'
-      ) ||
-      normalizedStatus.includes(
-        'unloading'
-      ) ||
-      normalizedStatus.includes(
-        'unload at tpcap'
-      )
-    ) {
-      mappedStatus =
-        'UNLOADING';
-    } else if (
-      normalizedStatus.includes(
-        'wait'
-      ) ||
-      normalizedStatus.includes(
-        'waiting'
-      ) ||
-      normalizedStatus.includes(
-        'รอ'
-      )
-    ) {
-      mappedStatus =
-        'WAITING_AREA';
-    }
-
-    const normalizedPerformance =
-      efficiencyStatus
-        .trim()
-        .toLowerCase();
-
-    let performanceStatus:
-      PerformanceStatus =
-        'ON_PLAN';
-
-    if (
-      normalizedPerformance.includes(
-        'delay'
-      ) ||
-      normalizedPerformance.includes(
-        'delayed'
-      ) ||
-      normalizedPerformance.includes(
-        'ดีเล'
-      )
-    ) {
-      performanceStatus =
-        'DELAY';
-    } else if (
-      normalizedPerformance.includes(
-        'early'
-      ) ||
-      normalizedPerformance.includes(
-        'ก่อน'
-      ) ||
-      normalizedPerformance.includes(
-        'ไว'
-      )
-    ) {
-      performanceStatus =
-        'EARLY';
-    } else if (
-      normalizedPerformance.includes(
-        'warning'
-      ) ||
-      normalizedPerformance.includes(
-        'เตือน'
-      )
-    ) {
-      performanceStatus =
-        'WARNING';
-    }
+    let performanceStatus =
+      mapPerformanceStatus(
+        efficiencyStatus
+      );
 
     if (
       stampEta &&
@@ -621,8 +605,7 @@ export async function updateTruckInSheets(
 
   let efficiencyStatus:
     PerformanceStatus =
-      updates.performanceStatus !==
-      undefined
+      updates.performanceStatus !== undefined
         ? updates.performanceStatus
         : currentTruck.performanceStatus;
 
@@ -649,30 +632,21 @@ export async function updateTruckInSheets(
 
     updates.actionProblem !== undefined
       ? updates.actionProblem
-      : currentTruck.actionProblem ||
-        '',
+      : currentTruck.actionProblem || '',
 
-    updates.actionCountermeasure !==
-    undefined
+    updates.actionCountermeasure !== undefined
       ? updates.actionCountermeasure
-      : currentTruck
-          .actionCountermeasure ||
-        '',
+      : currentTruck.actionCountermeasure || '',
 
-    updates.actionResponsible !==
-    undefined
+    updates.actionResponsible !== undefined
       ? updates.actionResponsible
-      : currentTruck
-          .actionResponsible ||
-        '',
+      : currentTruck.actionResponsible || '',
 
     updates.actionStatus !== undefined
       ? updates.actionStatus
-      : currentTruck.actionStatus ||
-        '',
+      : currentTruck.actionStatus || '',
 
     'System User',
-
     datetimeUpdate,
   ];
 
@@ -683,15 +657,12 @@ export async function updateTruckInSheets(
       `${apiUrl}/api/trucks/update`,
       {
         method: 'POST',
-
         headers: {
           'Content-Type':
             'application/json',
-
           Accept:
             'application/json',
         },
-
         body: JSON.stringify({
           truckId,
           newRow,
@@ -700,12 +671,12 @@ export async function updateTruckInSheets(
     );
   } catch (error) {
     console.error(
-      'Unable to update Google Sheets through ELIVE API:',
+      'Unable to update Google Sheets:',
       error
     );
 
     throw new Error(
-      'Unable to connect to the ELIVE Backend API while updating data.'
+      'Unable to connect to ELIVE API while updating.'
     );
   }
 
@@ -748,7 +719,7 @@ export async function updateTruckInSheets(
     );
 
     throw new Error(
-      'The ELIVE Backend API returned an invalid update response.'
+      'ELIVE API returned an invalid update response.'
     );
   }
 
@@ -768,6 +739,55 @@ export async function updateTruckInSheets(
   }
 }
 
+function normalizeGpsHeader(
+  value: unknown
+): string {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s/g, '');
+}
+
+function findGpsColumn(
+  headers: string[],
+  possibleNames: string[]
+): number {
+  return headers.findIndex(
+    header =>
+      possibleNames.some(
+        name =>
+          header.includes(
+            normalizeGpsHeader(name)
+          )
+      )
+  );
+}
+
+function parseGpsNumber(
+  value: unknown
+): number {
+  const text =
+    String(value ?? '')
+      .trim()
+      .replace(/\s/g, '')
+      .replace(',', '.');
+
+  return Number(text);
+}
+
+function readGpsCell(
+  row: any[],
+  columnIndex: number
+): string {
+  if (columnIndex < 0) {
+    return '';
+  }
+
+  return String(
+    row[columnIndex] ?? ''
+  ).trim();
+}
+
 export async function fetchGpsLocations():
   Promise<GpsLocation[]> {
   const data =
@@ -778,15 +798,151 @@ export async function fetchGpsLocations():
       ? data.gps
       : [];
 
+  console.log(
+    'GPS RAW ROW COUNT:',
+    gpsData.length
+  );
+
   if (gpsData.length <= 1) {
     return [];
   }
 
-  const gpsRows =
-    gpsData.slice(1);
+  const headers =
+    gpsData[0].map(
+      normalizeGpsHeader
+    );
+
+  const gpsIdIndex =
+    findGpsColumn(
+      headers,
+      [
+        'GPS ID',
+        'GPSID',
+        'รหัส GPS',
+      ]
+    );
+
+  const licensePlateIndex =
+    findGpsColumn(
+      headers,
+      [
+        'ทะเบียนรถ',
+        'License Plate',
+        'Truck Name',
+        'Plate',
+      ]
+    );
+
+  const latitudeIndex =
+    findGpsColumn(
+      headers,
+      [
+        'ละติจูด',
+        'Latitude',
+        'Lat',
+      ]
+    );
+
+  const longitudeIndex =
+    findGpsColumn(
+      headers,
+      [
+        'ลองจิจูด',
+        'Longitude',
+        'Lng',
+        'Lon',
+      ]
+    );
+
+  const speedIndex =
+    findGpsColumn(
+      headers,
+      [
+        'ความเร็ว',
+        'Speed',
+      ]
+    );
+
+  const headingIndex =
+    findGpsColumn(
+      headers,
+      [
+        'ทิศทาง',
+        'Heading',
+        'Direction',
+      ]
+    );
+
+  const locationNameIndex =
+    findGpsColumn(
+      headers,
+      [
+        'ชื่อสถานที่',
+        'สถานที่',
+        'Location',
+      ]
+    );
+
+  const gpsTimeIndex =
+    findGpsColumn(
+      headers,
+      [
+        'เวลา GPS',
+        'GPS Time',
+        'GPS Datetime',
+      ]
+    );
+
+  const gpsStatusIndex =
+    findGpsColumn(
+      headers,
+      [
+        'สถานะ',
+        'Status',
+      ]
+    );
+
+  const receivedAtIndex =
+    findGpsColumn(
+      headers,
+      [
+        'เวลาที่ระบบดึงข้อมูล',
+        'เวลารับข้อมูล',
+        'Received At',
+        'Update Time',
+      ]
+    );
+
+  console.log(
+    'GPS COLUMN INDEXES:',
+    {
+      gpsIdIndex,
+      licensePlateIndex,
+      latitudeIndex,
+      longitudeIndex,
+      speedIndex,
+      headingIndex,
+      locationNameIndex,
+      gpsTimeIndex,
+      gpsStatusIndex,
+      receivedAtIndex,
+    }
+  );
+
+  if (
+    latitudeIndex === -1 ||
+    longitudeIndex === -1
+  ) {
+    throw new Error(
+      'ไม่พบคอลัมน์ละติจูดหรือลองจิจูดในข้อมูล GPS'
+    );
+  }
 
   const locations:
     GpsLocation[] = [];
+
+  const gpsRows =
+    gpsData.slice(1);
 
   for (const row of gpsRows) {
     if (!Array.isArray(row)) {
@@ -794,41 +950,42 @@ export async function fetchGpsLocations():
     }
 
     const gpsId =
-      String(row[0] || '').trim();
+      readGpsCell(
+        row,
+        gpsIdIndex
+      );
 
     const licensePlate =
-      String(row[1] || '').trim();
+      readGpsCell(
+        row,
+        licensePlateIndex
+      );
 
     const latitude =
-      Number(
-        String(row[2] || '')
-          .trim()
-          .replace(',', '.')
+      parseGpsNumber(
+        row[latitudeIndex]
       );
 
     const longitude =
-      Number(
-        String(row[3] || '')
-          .trim()
-          .replace(',', '.')
+      parseGpsNumber(
+        row[longitudeIndex]
       );
 
     const speed =
-      Number(
-        String(row[4] || '0')
-          .trim()
-          .replace(',', '.')
-      );
+      speedIndex >= 0
+        ? parseGpsNumber(
+            row[speedIndex]
+          )
+        : 0;
 
     const heading =
-      Number(
-        String(row[5] || '0')
-          .trim()
-          .replace(',', '.')
-      );
+      headingIndex >= 0
+        ? parseGpsNumber(
+            row[headingIndex]
+          )
+        : 0;
 
     if (
-      !gpsId ||
       !Number.isFinite(latitude) ||
       !Number.isFinite(longitude) ||
       latitude < -90 ||
@@ -836,12 +993,29 @@ export async function fetchGpsLocations():
       longitude < -180 ||
       longitude > 180
     ) {
+      console.warn(
+        'Skipping invalid GPS row:',
+        {
+          gpsId,
+          licensePlate,
+          latitude,
+          longitude,
+        }
+      );
+
       continue;
     }
 
+    const fallbackGpsId =
+      `${latitude},${longitude}`;
+
     locations.push({
-      gpsId,
+      gpsId:
+        gpsId ||
+        fallbackGpsId,
+
       licensePlate,
+
       latitude,
       longitude,
 
@@ -856,18 +1030,40 @@ export async function fetchGpsLocations():
           : 0,
 
       locationName:
-        String(row[6] || '').trim(),
+        readGpsCell(
+          row,
+          locationNameIndex
+        ),
 
       gpsTime:
-        String(row[7] || '').trim(),
+        readGpsCell(
+          row,
+          gpsTimeIndex
+        ),
 
       gpsStatus:
-        String(row[8] || '').trim(),
+        readGpsCell(
+          row,
+          gpsStatusIndex
+        ),
 
       receivedAt:
-        String(row[9] || '').trim(),
+        readGpsCell(
+          row,
+          receivedAtIndex
+        ),
     });
   }
+
+  console.log(
+    'PARSED GPS COUNT:',
+    locations.length
+  );
+
+  console.log(
+    'PARSED GPS LOCATIONS:',
+    locations
+  );
 
   return locations;
 }
