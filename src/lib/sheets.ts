@@ -171,7 +171,6 @@ async function fetchEliveApiData():
         method: 'GET',
         headers: {
           Accept: 'application/json',
-          'Cache-Control': 'no-cache',
         },
         cache: 'no-store',
       }
