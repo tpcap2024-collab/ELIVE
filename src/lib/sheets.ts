@@ -40,21 +40,27 @@ export interface RouteToTpcapResult {
   geometry: RouteGeometry;
 }
 
+export interface EliveDashboardData {
+  trucks: Truck[];
+  gpsLocations: GpsLocation[];
+}
+
 const DEFAULT_API_URL =
   'https://elive-api.onrender.com';
 
-export const getAppsScriptUrl = (): string => {
-  const env =
-    (import.meta as any).env;
+export const getAppsScriptUrl =
+  (): string => {
+    const env =
+      (import.meta as any).env;
 
-  const apiUrl =
-    env?.VITE_API_URL ||
-    DEFAULT_API_URL;
+    const apiUrl =
+      env?.VITE_API_URL ||
+      DEFAULT_API_URL;
 
-  return String(apiUrl)
-    .trim()
-    .replace(/\/+$/, '');
-};
+    return String(apiUrl)
+      .trim()
+      .replace(/\/+$/, '');
+  };
 
 function parseGoogleSheetsTime(
   timeValue: unknown
@@ -88,10 +94,13 @@ function parseGoogleSheetsTime(
         {
           timeZone:
             'Asia/Bangkok',
+
           hour:
             '2-digit',
+
           minute:
             '2-digit',
+
           hour12:
             false,
         }
@@ -107,8 +116,13 @@ function parseGoogleSheetsTime(
   if (timeMatch) {
     const hour =
       String(
-        Number(timeMatch[1])
-      ).padStart(2, '0');
+        Number(
+          timeMatch[1]
+        )
+      ).padStart(
+        2,
+        '0'
+      );
 
     const minute =
       timeMatch[2];
@@ -227,13 +241,15 @@ async function fetchEliveApiData():
   const requestUrl =
     `${apiUrl}/api/trucks?t=${Date.now()}`;
 
-  let response: Response;
+  let response:
+    Response;
 
   try {
     response = await fetch(
       requestUrl,
       {
-        method: 'GET',
+        method:
+          'GET',
 
         headers: {
           Accept:
@@ -262,7 +278,9 @@ async function fetchEliveApiData():
     );
 
   const apiError =
-    getApiError(data);
+    getApiError(
+      data
+    );
 
   if (
     !response.ok ||
@@ -270,13 +288,16 @@ async function fetchEliveApiData():
   ) {
     throw new Error(
       apiError ||
-      `Failed to fetch ELIVE data ` +
-      `(${response.status} ${response.statusText})`
+      (
+        `Failed to fetch ELIVE data ` +
+        `(${response.status} ${response.statusText})`
+      )
     );
   }
 
   if (
-    data.status !== 'success'
+    data.status !==
+    'success'
   ) {
     throw new Error(
       'The ELIVE Backend API did not return success status.'
@@ -290,7 +311,9 @@ function mapTruckStatus(
   currentStatus: string
 ): TruckStatus {
   const normalizedStatus =
-    String(currentStatus || '')
+    String(
+      currentStatus || ''
+    )
       .trim()
       .toLowerCase();
 
@@ -382,7 +405,9 @@ function mapPerformanceStatus(
   efficiencyStatus: string
 ): PerformanceStatus {
   const normalizedPerformance =
-    String(efficiencyStatus || '')
+    String(
+      efficiencyStatus || ''
+    )
       .trim()
       .toLowerCase();
 
@@ -428,35 +453,52 @@ function mapPerformanceStatus(
   return 'ON_PLAN';
 }
 
-export async function fetchTrucksFromSheets():
-  Promise<Truck[]> {
+export async function fetchTrucksFromSheets(
+  sourceData?: any
+): Promise<Truck[]> {
   const data =
+    sourceData ??
     await fetchEliveApiData();
 
-  const planData: any[][] =
-    Array.isArray(data.plan)
-      ? data.plan
-      : [];
+  const planData:
+    any[][] =
+      Array.isArray(
+        data.plan
+      )
+        ? data.plan
+        : [];
 
-  const actualData: any[][] =
-    Array.isArray(data.actual)
-      ? data.actual
-      : [];
+  const actualData:
+    any[][] =
+      Array.isArray(
+        data.actual
+      )
+        ? data.actual
+        : [];
 
   const planRows =
-    planData.slice(1);
+    planData.slice(
+      1
+    );
 
   const actualRows =
-    actualData.slice(1);
+    actualData.slice(
+      1
+    );
 
   const actualMap =
-    new Map<string, any[]>();
+    new Map<
+      string,
+      any[]
+    >();
 
   for (
     const row of actualRows
   ) {
     if (
-      !Array.isArray(row)
+      !Array.isArray(
+        row
+      )
     ) {
       continue;
     }
@@ -481,7 +523,9 @@ export async function fetchTrucksFromSheets():
     const row of planRows
   ) {
     if (
-      !Array.isArray(row)
+      !Array.isArray(
+        row
+      )
     ) {
       continue;
     }
@@ -648,6 +692,7 @@ export async function fetchTrucksFromSheets():
         ),
 
       planEta,
+
       planEtd,
 
       status:
@@ -656,11 +701,15 @@ export async function fetchTrucksFromSheets():
       performanceStatus,
 
       stampEta,
+
       stampEtd,
 
       actionProblem,
+
       actionCountermeasure,
+
       actionResponsible,
+
       actionStatus,
 
       lastUpdated:
@@ -724,17 +773,20 @@ export async function updateTruckInSheets(
       );
 
   const currentStatus =
-    updates.status !== undefined
+    updates.status !==
+    undefined
       ? updates.status
       : currentTruck.status;
 
   const stampEta =
-    updates.stampEta !== undefined
+    updates.stampEta !==
+    undefined
       ? updates.stampEta
       : currentTruck.stampEta;
 
   const stampEtd =
-    updates.stampEtd !== undefined
+    updates.stampEtd !==
+    undefined
       ? updates.stampEtd
       : currentTruck.stampEtd;
 
@@ -865,8 +917,10 @@ export async function updateTruckInSheets(
   ) {
     throw new Error(
       apiError ||
-      `Failed to update Google Sheet ` +
-      `(${response.status} ${response.statusText})`
+      (
+        `Failed to update Google Sheet ` +
+        `(${response.status} ${response.statusText})`
+      )
     );
   }
 
@@ -882,10 +936,15 @@ export async function updateTruckInSheets(
 function normalizeGpsHeader(
   value: unknown
 ): string {
-  return String(value || '')
+  return String(
+    value || ''
+  )
     .trim()
     .toLowerCase()
-    .replace(/\s/g, '');
+    .replace(
+      /\s/g,
+      ''
+    );
 }
 
 function findGpsColumn(
@@ -909,12 +968,22 @@ function parseGpsNumber(
   value: unknown
 ): number {
   const text =
-    String(value ?? '')
+    String(
+      value ?? ''
+    )
       .trim()
-      .replace(/\s/g, '')
-      .replace(',', '.');
+      .replace(
+        /\s/g,
+        ''
+      )
+      .replace(
+        ',',
+        '.'
+      );
 
-  return Number(text);
+  return Number(
+    text
+  );
 }
 
 function readGpsCell(
@@ -933,9 +1002,11 @@ function readGpsCell(
   ).trim();
 }
 
-export async function fetchGpsLocations():
-  Promise<GpsLocation[]> {
+export async function fetchGpsLocations(
+  sourceData?: any
+): Promise<GpsLocation[]> {
   const data =
+    sourceData ??
     await fetchEliveApiData();
 
   const gpsData:
@@ -945,11 +1016,6 @@ export async function fetchGpsLocations():
       )
         ? data.gps
         : [];
-
-  console.log(
-    'GPS RAW ROW COUNT:',
-    gpsData.length
-  );
 
   if (
     gpsData.length <= 1
@@ -1063,22 +1129,6 @@ export async function fetchGpsLocations():
       ]
     );
 
-  console.log(
-    'GPS COLUMN INDEXES:',
-    {
-      gpsIdIndex,
-      licensePlateIndex,
-      latitudeIndex,
-      longitudeIndex,
-      speedIndex,
-      headingIndex,
-      locationNameIndex,
-      gpsTimeIndex,
-      gpsStatusIndex,
-      receivedAtIndex,
-    }
-  );
-
   if (
     latitudeIndex === -1 ||
     longitudeIndex === -1
@@ -1092,13 +1142,17 @@ export async function fetchGpsLocations():
     GpsLocation[] = [];
 
   const gpsRows =
-    gpsData.slice(1);
+    gpsData.slice(
+      1
+    );
 
   for (
     const row of gpsRows
   ) {
     if (
-      !Array.isArray(row)
+      !Array.isArray(
+        row
+      )
     ) {
       continue;
     }
@@ -1151,16 +1205,6 @@ export async function fetchGpsLocations():
       longitude < -180 ||
       longitude > 180
     ) {
-      console.warn(
-        'Skipping invalid GPS row:',
-        {
-          gpsId,
-          licensePlate,
-          latitude,
-          longitude,
-        }
-      );
-
       continue;
     }
 
@@ -1175,6 +1219,7 @@ export async function fetchGpsLocations():
       licensePlate,
 
       latitude,
+
       longitude,
 
       speed:
@@ -1216,11 +1261,6 @@ export async function fetchGpsLocations():
         ),
     });
   }
-
-  console.log(
-    'PARSED GPS COUNT:',
-    locations.length
-  );
 
   return locations;
 }
@@ -1265,10 +1305,14 @@ export async function fetchRouteToTpcap(
   const query =
     new URLSearchParams({
       lat:
-        String(latitude),
+        String(
+          latitude
+        ),
 
       lng:
-        String(longitude),
+        String(
+          longitude
+        ),
 
       t:
         String(
@@ -1544,5 +1588,26 @@ export async function fetchRouteToTpcap(
       coordinates:
         validCoordinates,
     },
+  };
+}
+
+export async function fetchEliveDashboardData():
+  Promise<EliveDashboardData> {
+  const sourceData =
+    await fetchEliveApiData();
+
+  const trucks =
+    await fetchTrucksFromSheets(
+      sourceData
+    );
+
+  const gpsLocations =
+    await fetchGpsLocations(
+      sourceData
+    );
+
+  return {
+    trucks,
+    gpsLocations,
   };
 }
