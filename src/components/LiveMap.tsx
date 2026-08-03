@@ -1,5 +1,4 @@
 import React, {
-  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -16,7 +15,6 @@ import {
 } from '../types';
 
 import {
-  fetchGpsLocations,
   fetchRouteToTpcap,
   RouteToTpcapResult,
 } from '../lib/sheets';
@@ -40,16 +38,16 @@ import {
 
 interface LiveMapProps {
   trucks: Truck[];
+  gpsLocations: GpsLocation[];
   initialTruckId?: string | null;
+  onRefresh?: () => void | Promise<void>;
+  isRefreshing?: boolean;
 }
 
 type GpsFreshness =
   | 'LIVE'
   | 'STALE'
   | 'OFFLINE';
-
-const GPS_REFRESH_INTERVAL =
-  60_000;
 
 const DEFAULT_MAP_CENTER:
   [number, number] = [
@@ -90,7 +88,10 @@ function parseGpsDateTime(
   const isoText =
     text.includes('T')
       ? text
-      : text.replace(' ', 'T');
+      : text.replace(
+          ' ',
+          'T'
+        );
 
   const hasTimeZone =
     isoText.endsWith('Z') ||
@@ -104,7 +105,9 @@ function parseGpsDateTime(
       : `${isoText}+07:00`;
 
   const date =
-    new Date(normalizedText);
+    new Date(
+      normalizedText
+    );
 
   if (
     Number.isNaN(
@@ -142,11 +145,15 @@ function getGpsFreshness(
     Date.now() -
     referenceDate.getTime();
 
-  if (ageMs <= 120_000) {
+  if (
+    ageMs <= 120000
+  ) {
     return 'LIVE';
   }
 
-  if (ageMs <= 300_000) {
+  if (
+    ageMs <= 300000
+  ) {
     return 'STALE';
   }
 
@@ -156,7 +163,9 @@ function getGpsFreshness(
 function getFreshnessClasses(
   freshness: GpsFreshness
 ): string {
-  if (freshness === 'LIVE') {
+  if (
+    freshness === 'LIVE'
+  ) {
     return [
       'border-emerald-200',
       'bg-emerald-50',
@@ -164,7 +173,9 @@ function getFreshnessClasses(
     ].join(' ');
   }
 
-  if (freshness === 'STALE') {
+  if (
+    freshness === 'STALE'
+  ) {
     return [
       'border-amber-200',
       'bg-amber-50',
@@ -187,7 +198,9 @@ function formatGpsDateTime(
   }
 
   const date =
-    parseGpsDateTime(value);
+    parseGpsDateTime(
+      value
+    );
 
   if (!date) {
     return value;
@@ -290,17 +303,23 @@ function formatDuration(
 
   const hours =
     Math.floor(
-      roundedMinutes / 60
+      roundedMinutes /
+      60
     );
 
   const minutes =
-    roundedMinutes % 60;
+    roundedMinutes %
+    60;
 
-  if (hours <= 0) {
+  if (
+    hours <= 0
+  ) {
     return `${minutes} นาที`;
   }
 
-  if (minutes === 0) {
+  if (
+    minutes === 0
+  ) {
     return `${hours} ชั่วโมง`;
   }
 
@@ -336,6 +355,7 @@ function createTruckMarkerIcon(
           background:#00a8ff;
           border:4px solid white;
           box-shadow:0 5px 16px rgba(2,132,199,0.5);
+          box-sizing:border-box;
         "
       >
         <div
@@ -441,7 +461,10 @@ function createTpcapMarkerIcon():
 
 export function LiveMap({
   trucks,
+  gpsLocations,
   initialTruckId,
+  onRefresh,
+  isRefreshing = false,
 }: LiveMapProps) {
   const mapContainerRef =
     useRef<HTMLDivElement | null>(
@@ -463,9 +486,6 @@ export function LiveMap({
       null
     );
 
-  const requestRunningRef =
-    useRef(false);
-
   const routeRequestIdRef =
     useRef(0);
 
@@ -473,13 +493,6 @@ export function LiveMap({
     useRef<string | null>(
       null
     );
-
-  const [
-    gpsLocations,
-    setGpsLocations,
-  ] = useState<GpsLocation[]>(
-    []
-  );
 
   const [
     selectedGpsId,
@@ -490,13 +503,6 @@ export function LiveMap({
     searchText,
     setSearchText,
   ] = useState('');
-
-  const [
-    gpsError,
-    setGpsError,
-  ] = useState<string | null>(
-    null
-  );
 
   const [
     routeError,
@@ -513,16 +519,6 @@ export function LiveMap({
   );
 
   const [
-    isLoading,
-    setIsLoading,
-  ] = useState(true);
-
-  const [
-    isRefreshing,
-    setIsRefreshing,
-  ] = useState(false);
-
-  const [
     isRouteLoading,
     setIsRouteLoading,
   ] = useState(false);
@@ -530,7 +526,10 @@ export function LiveMap({
   const truckByPlate =
     useMemo(() => {
       const map =
-        new Map<string, Truck>();
+        new Map<
+          string,
+          Truck
+        >();
 
       for (
         const truck of trucks
@@ -540,7 +539,9 @@ export function LiveMap({
             truck.licensePlate
           );
 
-        if (normalizedPlate) {
+        if (
+          normalizedPlate
+        ) {
           map.set(
             normalizedPlate,
             truck
@@ -549,7 +550,9 @@ export function LiveMap({
       }
 
       return map;
-    }, [trucks]);
+    }, [
+      trucks,
+    ]);
 
   const matchedGpsLocations =
     useMemo(() => {
@@ -560,8 +563,11 @@ export function LiveMap({
               location.licensePlate
             );
 
-          return truckByPlate.has(
-            normalizedPlate
+          return (
+            normalizedPlate !== '' &&
+            truckByPlate.has(
+              normalizedPlate
+            )
           );
         }
       );
@@ -578,38 +584,44 @@ export function LiveMap({
           .toUpperCase();
 
       return matchedGpsLocations
-        .filter(location => {
-          if (!normalizedSearch) {
-            return true;
+        .filter(
+          location => {
+            if (
+              !normalizedSearch
+            ) {
+              return true;
+            }
+
+            const normalizedPlate =
+              normalizeLicensePlate(
+                location.licensePlate
+              );
+
+            const truck =
+              truckByPlate.get(
+                normalizedPlate
+              );
+
+            const searchableText = [
+              location.licensePlate,
+              location.gpsId,
+              location.locationName,
+              truck?.licensePlate,
+              truck?.route,
+              truck?.supplierName,
+              truck?.driverName,
+            ]
+              .filter(
+                Boolean
+              )
+              .join(' ')
+              .toUpperCase();
+
+            return searchableText.includes(
+              normalizedSearch
+            );
           }
-
-          const normalizedPlate =
-            normalizeLicensePlate(
-              location.licensePlate
-            );
-
-          const truck =
-            truckByPlate.get(
-              normalizedPlate
-            );
-
-          const searchableText = [
-            location.licensePlate,
-            location.gpsId,
-            location.locationName,
-            truck?.licensePlate,
-            truck?.route,
-            truck?.supplierName,
-            truck?.driverName,
-          ]
-            .filter(Boolean)
-            .join(' ')
-            .toUpperCase();
-
-          return searchableText.includes(
-            normalizedSearch
-          );
-        })
+        )
         .sort(
           (
             first,
@@ -637,7 +649,9 @@ export function LiveMap({
 
   const selectedGpsLocation =
     useMemo(() => {
-      if (!selectedGpsId) {
+      if (
+        !selectedGpsId
+      ) {
         return null;
       }
 
@@ -656,7 +670,9 @@ export function LiveMap({
 
   const selectedTruck =
     useMemo(() => {
-      if (!selectedGpsLocation) {
+      if (
+        !selectedGpsLocation
+      ) {
         return undefined;
       }
 
@@ -676,7 +692,9 @@ export function LiveMap({
 
   const selectedFreshness =
     useMemo(() => {
-      if (!selectedGpsLocation) {
+      if (
+        !selectedGpsLocation
+      ) {
         return null;
       }
 
@@ -689,9 +707,14 @@ export function LiveMap({
 
   const freshnessStats =
     useMemo(() => {
-      let live = 0;
-      let stale = 0;
-      let offline = 0;
+      let live =
+        0;
+
+      let stale =
+        0;
+
+      let offline =
+        0;
 
       for (
         const location of matchedGpsLocations
@@ -702,15 +725,20 @@ export function LiveMap({
           );
 
         if (
-          freshness === 'LIVE'
+          freshness ===
+          'LIVE'
         ) {
-          live += 1;
+          live +=
+            1;
         } else if (
-          freshness === 'STALE'
+          freshness ===
+          'STALE'
         ) {
-          stale += 1;
+          stale +=
+            1;
         } else {
-          offline += 1;
+          offline +=
+            1;
         }
       }
 
@@ -722,63 +750,6 @@ export function LiveMap({
     }, [
       matchedGpsLocations,
     ]);
-
-  const loadGps =
-    useCallback(
-      async () => {
-        if (
-          requestRunningRef.current
-        ) {
-          return;
-        }
-
-        requestRunningRef.current =
-          true;
-
-        setIsRefreshing(
-          true
-        );
-
-        try {
-          const locations =
-            await fetchGpsLocations();
-
-          setGpsLocations(
-            locations
-          );
-
-          setGpsError(
-            null
-          );
-        } catch (error) {
-          console.error(
-            'Unable to load GPS locations:',
-            error
-          );
-
-          const message =
-            error instanceof Error
-              ? error.message
-              : 'Unable to load GPS data.';
-
-          setGpsError(
-            message
-          );
-        } finally {
-          requestRunningRef.current =
-            false;
-
-          setIsLoading(
-            false
-          );
-
-          setIsRefreshing(
-            false
-          );
-        }
-      },
-      []
-    );
 
   useEffect(() => {
     if (
@@ -868,24 +839,6 @@ export function LiveMap({
   }, []);
 
   useEffect(() => {
-    loadGps();
-
-    const intervalId =
-      window.setInterval(
-        loadGps,
-        GPS_REFRESH_INTERVAL
-      );
-
-    return () => {
-      window.clearInterval(
-        intervalId
-      );
-    };
-  }, [
-    loadGps,
-  ]);
-
-  useEffect(() => {
     if (
       initialTruckId !==
       appliedInitialTruckIdRef.current
@@ -900,7 +853,8 @@ export function LiveMap({
   useEffect(() => {
     if (
       !initialTruckId ||
-      gpsLocations.length === 0
+      gpsLocations.length ===
+        0
     ) {
       return;
     }
@@ -919,7 +873,9 @@ export function LiveMap({
           initialTruckId
       );
 
-    if (!initialTruck) {
+    if (
+      !initialTruck
+    ) {
       return;
     }
 
@@ -937,7 +893,9 @@ export function LiveMap({
           normalizedPlate
       );
 
-    if (!initialGpsLocation) {
+    if (
+      !initialGpsLocation
+    ) {
       return;
     }
 
@@ -958,7 +916,9 @@ export function LiveMap({
   ]);
 
   useEffect(() => {
-    if (!selectedGpsId) {
+    if (
+      !selectedGpsId
+    ) {
       return;
     }
 
@@ -975,6 +935,14 @@ export function LiveMap({
       setSelectedGpsId(
         ''
       );
+
+      setRouteResult(
+        null
+      );
+
+      setRouteError(
+        null
+      );
     }
   }, [
     gpsLocations,
@@ -982,8 +950,11 @@ export function LiveMap({
   ]);
 
   useEffect(() => {
-    if (!selectedGpsLocation) {
-      routeRequestIdRef.current += 1;
+    if (
+      !selectedGpsLocation
+    ) {
+      routeRequestIdRef.current +=
+        1;
 
       setRouteResult(
         null
@@ -1263,9 +1234,22 @@ export function LiveMap({
     routeResult,
   ]);
 
+  const handleRefresh =
+    async () => {
+      if (
+        !onRefresh ||
+        isRefreshing
+      ) {
+        return;
+      }
+
+      await onRefresh();
+    };
+
   const clearSelection =
     () => {
-      routeRequestIdRef.current += 1;
+      routeRequestIdRef.current +=
+        1;
 
       appliedInitialTruckIdRef.current =
         null;
@@ -1301,6 +1285,23 @@ export function LiveMap({
       }
     };
 
+  const showNoGpsMessage =
+    gpsLocations.length ===
+      0 &&
+    !selectedGpsLocation;
+
+  const showNoMatchMessage =
+    gpsLocations.length >
+      0 &&
+    matchedGpsLocations.length ===
+      0 &&
+    !selectedGpsLocation;
+
+  const showSelectTruckMessage =
+    matchedGpsLocations.length >
+      0 &&
+    !selectedGpsLocation;
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-slate-50 p-4 md:p-6 lg:p-8">
       <div className="shrink-0 rounded-t-xl border border-b-0 border-slate-200 bg-white p-4 shadow-sm">
@@ -1315,36 +1316,34 @@ export function LiveMap({
             </div>
 
             <p className="mt-1 text-xs text-slate-500">
-              GPS updates every 60 seconds
+              GPS data prepared from the selected plan
             </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700">
               <Wifi className="h-3.5 w-3.5" />
-
               Live {freshnessStats.live}
             </div>
 
             <div className="flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700">
               <Clock className="h-3.5 w-3.5" />
-
               Stale {freshnessStats.stale}
             </div>
 
             <div className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-xs font-bold text-slate-600">
               <WifiOff className="h-3.5 w-3.5" />
-
               Offline {freshnessStats.offline}
             </div>
 
             <button
               type="button"
               onClick={
-                loadGps
+                handleRefresh
               }
               disabled={
-                isRefreshing
+                isRefreshing ||
+                !onRefresh
               }
               className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
@@ -1457,21 +1456,10 @@ export function LiveMap({
             className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <X className="h-3.5 w-3.5" />
-
             ล้างการเลือก
           </button>
         </div>
       </div>
-
-      {gpsError && (
-        <div className="flex shrink-0 items-center gap-2 border-x border-t border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          <AlertTriangle className="h-4 w-4 shrink-0" />
-
-          <span>
-            {gpsError}
-          </span>
-        </div>
-      )}
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-b-xl border border-slate-200 bg-white shadow-sm lg:flex-row">
         <div className="relative min-h-[460px] flex-1 overflow-hidden bg-slate-100">
@@ -1482,74 +1470,61 @@ export function LiveMap({
             className="h-full min-h-[460px] w-full"
           />
 
-          {isLoading && (
-            <div className="pointer-events-none absolute inset-0 z-[500] flex items-center justify-center bg-white/70 backdrop-blur-sm">
-              <div className="rounded-xl border border-slate-200 bg-white px-6 py-4 text-center shadow-lg">
-                <RefreshCw className="mx-auto h-6 w-6 animate-spin text-blue-600" />
+          {showNoGpsMessage && (
+            <div className="pointer-events-none absolute inset-0 z-[500] flex items-center justify-center bg-white/60 backdrop-blur-sm">
+              <div className="max-w-sm rounded-xl border border-slate-200 bg-white p-6 text-center shadow-lg">
+                <MapPin className="mx-auto h-8 w-8 text-slate-400" />
 
-                <div className="mt-2 text-sm font-bold text-slate-700">
-                  Loading GPS data
+                <div className="mt-3 font-bold text-slate-700">
+                  ไม่พบข้อมูล GPS ของรถในแผน
+                </div>
+
+                <div className="mt-1 text-sm text-slate-500">
+                  ตรวจสอบทะเบียนรถใน Plan และข้อมูล API GPS
                 </div>
               </div>
             </div>
           )}
 
-          {!isLoading &&
-            gpsLocations.length ===
-              0 && (
-              <div className="pointer-events-none absolute inset-0 z-[500] flex items-center justify-center bg-white/60 backdrop-blur-sm">
-                <div className="max-w-sm rounded-xl border border-slate-200 bg-white p-6 text-center shadow-lg">
-                  <MapPin className="mx-auto h-8 w-8 text-slate-400" />
+          {showNoMatchMessage && (
+            <div className="pointer-events-none absolute inset-0 z-[500] flex items-center justify-center">
+              <div className="max-w-sm rounded-xl border border-amber-200 bg-white p-6 text-center shadow-lg">
+                <AlertTriangle className="mx-auto h-8 w-8 text-amber-500" />
 
-                  <div className="mt-3 font-bold text-slate-700">
-                    No GPS locations found
-                  </div>
+                <div className="mt-3 font-bold text-slate-700">
+                  ไม่พบท้ายทะเบียนที่ตรงกับ GPS
+                </div>
 
-                  <div className="mt-1 text-sm text-slate-500">
-                    ตรวจสอบข้อมูลในชีท API GPS และ API response
-                  </div>
+                <div className="mt-1 text-sm text-slate-500">
+                  ตรวจสอบรูปแบบทะเบียนรถใน Plan และ API GPS
                 </div>
               </div>
-            )}
+            </div>
+          )}
 
-          {!isLoading &&
-            gpsLocations.length >
-              0 &&
-            matchedGpsLocations
-              .length === 0 && (
-              <div className="pointer-events-none absolute inset-0 z-[500] flex items-center justify-center">
-                <div className="max-w-sm rounded-xl border border-amber-200 bg-white p-6 text-center shadow-lg">
-                  <AlertTriangle className="mx-auto h-8 w-8 text-amber-500" />
+          {showSelectTruckMessage && (
+            <div className="pointer-events-none absolute inset-0 z-[500] flex items-center justify-center">
+              <div className="rounded-xl border border-slate-200 bg-white p-6 text-center shadow-lg">
+                <MapPin className="mx-auto h-8 w-8 text-blue-500" />
 
-                  <div className="mt-3 font-bold text-slate-700">
-                    ไม่พบรถในแผนที่ตรงกับ GPS
-                  </div>
+                <div className="mt-3 font-bold text-slate-700">
+                  เลือกรถที่ต้องการติดตาม
+                </div>
 
-                  <div className="mt-1 text-sm text-slate-500">
-                    ตรวจสอบทะเบียนรถใน Plan และ API GPS
-                  </div>
+                <div className="mt-1 text-sm text-slate-500">
+                  เลือกทะเบียนจากรายการด้านบน
+                </div>
+
+                <div className="mt-2 text-xs text-slate-400">
+                  พบรถที่จับคู่ GPS ได้{' '}
+                  {
+                    matchedGpsLocations.length
+                  }{' '}
+                  คัน
                 </div>
               </div>
-            )}
-
-          {!isLoading &&
-            matchedGpsLocations
-              .length > 0 &&
-            !selectedGpsLocation && (
-              <div className="pointer-events-none absolute inset-0 z-[500] flex items-center justify-center">
-                <div className="rounded-xl border border-slate-200 bg-white p-6 text-center shadow-lg">
-                  <MapPin className="mx-auto h-8 w-8 text-blue-500" />
-
-                  <div className="mt-3 font-bold text-slate-700">
-                    เลือกรถที่ต้องการติดตาม
-                  </div>
-
-                  <div className="mt-1 text-sm text-slate-500">
-                    เลือกทะเบียนรถจากรายการด้านบน
-                  </div>
-                </div>
-              </div>
-            )}
+            </div>
+          )}
         </div>
 
         <aside className="w-full shrink-0 overflow-y-auto border-t border-slate-200 bg-white lg:w-[360px] lg:border-l lg:border-t-0">
@@ -1562,7 +1537,7 @@ export function LiveMap({
               </div>
 
               <div className="mt-1 text-sm text-slate-500">
-                รายละเอียดรถและเส้นทางจะปรากฏบริเวณนี้
+                รายละเอียดรถและเส้นทางจะแสดงบริเวณนี้
               </div>
             </div>
           )}
@@ -1607,7 +1582,6 @@ export function LiveMap({
                 <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
                   <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase text-blue-600">
                     <Route className="h-3.5 w-3.5" />
-
                     Distance
                   </div>
 
@@ -1623,7 +1597,6 @@ export function LiveMap({
                 <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-3">
                   <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase text-indigo-600">
                     <Clock className="h-3.5 w-3.5" />
-
                     Travel Time
                   </div>
 
@@ -1641,7 +1614,6 @@ export function LiveMap({
               <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4">
                 <div className="flex items-center gap-2 text-xs font-bold uppercase text-emerald-700">
                   <Navigation className="h-4 w-4" />
-
                   Estimated arrival at TPCAP
                 </div>
 
@@ -1662,7 +1634,6 @@ export function LiveMap({
               {isRouteLoading && (
                 <div className="mt-3 flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-3 text-sm text-blue-700">
                   <LoaderCircle className="h-4 w-4 animate-spin" />
-
                   กำลังคำนวณเส้นทาง
                 </div>
               )}
