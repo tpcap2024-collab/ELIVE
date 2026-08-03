@@ -1,6 +1,8 @@
 import React, {
+  useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 
@@ -29,12 +31,13 @@ import {
 } from './components/StatusBadge';
 
 import {
-  Truck,
+  GpsLocation,
   PerformanceStatus,
+  Truck,
 } from './types';
 
 import {
-  fetchTrucksFromSheets,
+  fetchEliveDashboardData,
   getAppsScriptUrl,
   updateTruckInSheets,
 } from './lib/sheets';
@@ -51,6 +54,7 @@ import {
   MessageSquare,
   Network,
   Package,
+  RefreshCw,
   Search,
   Settings,
   ShieldAlert,
@@ -80,7 +84,22 @@ const ROWS_PER_PAGE =
   20;
 
 const REFRESH_INTERVAL =
-  30000;
+  60000;
+
+function normalizeLicensePlate(
+  value?: string
+): string {
+  return String(
+    value || ''
+  )
+    .split('(')[0]
+    .replace(
+      /[\s-]/g,
+      ''
+    )
+    .trim()
+    .toUpperCase();
+}
 
 export default function App() {
   const [
@@ -88,6 +107,13 @@ export default function App() {
     setTrucks,
   ] = useState<Truck[]>(
     mockTrucks
+  );
+
+  const [
+    gpsLocations,
+    setGpsLocations,
+  ] = useState<GpsLocation[]>(
+    []
   );
 
   const [
@@ -119,14 +145,7 @@ export default function App() {
   const [
     lastUpdate,
     setLastUpdate,
-  ] = useState(
-    new Date().toLocaleTimeString(
-      'en-US',
-      {
-        hour12: false,
-      }
-    )
-  );
+  ] = useState('-');
 
   const [
     actionDialog,
@@ -166,6 +185,16 @@ export default function App() {
   );
 
   const [
+    isRefreshing,
+    setIsRefreshing,
+  ] = useState(false);
+
+  const [
+    hasLoadedSuccessfully,
+    setHasLoadedSuccessfully,
+  ] = useState(false);
+
+  const [
     appLoginUser,
     setAppLoginUser,
   ] = useState('');
@@ -184,52 +213,104 @@ export default function App() {
     ) === 'true'
   );
 
-  const loadData =
-    async () => {
-      try {
-        const data =
-          await fetchTrucksFromSheets();
+  const requestRunningRef =
+    useRef(false);
 
-        if (data.length > 0) {
-          setTrucks(
-            data
+  const loadData =
+    useCallback(
+      async () => {
+        if (
+          requestRunningRef.current
+        ) {
+          return;
+        }
+
+        requestRunningRef.current =
+          true;
+
+        setIsRefreshing(
+          true
+        );
+
+        try {
+          const data =
+            await fetchEliveDashboardData();
+
+          if (
+            data.trucks.length > 0
+          ) {
+            setTrucks(
+              data.trucks
+            );
+          }
+
+          setGpsLocations(
+            data.gpsLocations
           );
 
           setLastUpdate(
-            new Date().toLocaleTimeString(
-              'en-US',
-              {
-                hour12: false,
-              }
-            )
+            new Date()
+              .toLocaleTimeString(
+                'en-GB',
+                {
+                  timeZone:
+                    'Asia/Bangkok',
+
+                  hour:
+                    '2-digit',
+
+                  minute:
+                    '2-digit',
+
+                  second:
+                    '2-digit',
+
+                  hour12:
+                    false,
+                }
+              )
           );
 
           setSheetError(
             null
           );
+
+          setHasLoadedSuccessfully(
+            true
+          );
+        } catch (error) {
+          console.error(
+            'Failed to fetch ELIVE data:',
+            error
+          );
+
+          const message =
+            error instanceof Error
+              ? error.message
+              : 'Failed to fetch ELIVE data';
+
+          setSheetError(
+            message
+          );
+        } finally {
+          requestRunningRef.current =
+            false;
+
+          setIsRefreshing(
+            false
+          );
         }
-      } catch (error) {
-        console.error(
-          'Failed to fetch sheets data:',
-          error
-        );
-
-        const message =
-          error instanceof Error
-            ? error.message
-            : 'Failed to fetch sheets data';
-
-        setSheetError(
-          message
-        );
-      }
-    };
+      },
+      []
+    );
 
   useEffect(() => {
+    if (!isAppLoggedIn) {
+      return;
+    }
+
     loadData();
-  }, []);
 
-  useEffect(() => {
     const intervalId =
       window.setInterval(
         loadData,
@@ -241,7 +322,10 @@ export default function App() {
         intervalId
       );
     };
-  }, []);
+  }, [
+    isAppLoggedIn,
+    loadData,
+  ]);
 
   useEffect(() => {
     setCurrentPage(
@@ -286,13 +370,22 @@ export default function App() {
           updates,
           currentTruck
         );
+
+        await loadData();
       } catch (error) {
         console.error(
           'Failed to update sheet:',
           error
         );
 
-        await loadData();
+        const message =
+          error instanceof Error
+            ? error.message
+            : 'Failed to update truck data';
+
+        setSheetError(
+          message
+        );
       }
     };
 
@@ -355,14 +448,19 @@ export default function App() {
 
       return selectedDate
         .trim()
-        .slice(0, 10);
+        .slice(
+          0,
+          10
+        );
     }, [
       selectedDate,
     ]);
 
   const filteredTrucks =
     useMemo(() => {
-      if (!formattedSelectedDate) {
+      if (
+        !formattedSelectedDate
+      ) {
         return [];
       }
 
@@ -373,7 +471,10 @@ export default function App() {
               truck.planDate || ''
             )
               .trim()
-              .slice(0, 10);
+              .slice(
+                0,
+                10
+              );
 
           return (
             truckPlanDate ===
@@ -384,6 +485,53 @@ export default function App() {
     }, [
       trucks,
       formattedSelectedDate,
+    ]);
+
+  const filteredGpsLocations =
+    useMemo(() => {
+      if (
+        filteredTrucks.length === 0 ||
+        gpsLocations.length === 0
+      ) {
+        return [];
+      }
+
+      const planLicensePlates =
+        new Set<string>();
+
+      for (
+        const truck of filteredTrucks
+      ) {
+        const normalizedPlate =
+          normalizeLicensePlate(
+            truck.licensePlate
+          );
+
+        if (normalizedPlate) {
+          planLicensePlates.add(
+            normalizedPlate
+          );
+        }
+      }
+
+      return gpsLocations.filter(
+        location => {
+          const normalizedPlate =
+            normalizeLicensePlate(
+              location.licensePlate
+            );
+
+          return (
+            normalizedPlate !== '' &&
+            planLicensePlates.has(
+              normalizedPlate
+            )
+          );
+        }
+      );
+    }, [
+      filteredTrucks,
+      gpsLocations,
     ]);
 
   const stats =
@@ -449,14 +597,20 @@ export default function App() {
           truck.planDate
         )
           .trim()
-          .slice(0, 10);
+          .slice(
+            0,
+            10
+          );
 
       const planEta =
         String(
           truck.planEta
         )
           .trim()
-          .slice(0, 5);
+          .slice(
+            0,
+            5
+          );
 
       if (
         !/^\d{4}-\d{2}-\d{2}$/.test(
@@ -703,8 +857,6 @@ export default function App() {
           'isAppLoggedIn',
           'true'
         );
-
-        await loadData();
 
         return;
       }
@@ -1067,6 +1219,26 @@ export default function App() {
 
               <button
                 type="button"
+                onClick={
+                  loadData
+                }
+                disabled={
+                  isRefreshing
+                }
+                className="relative flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-slate-600 transition-colors hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+                title="Refresh data"
+              >
+                <RefreshCw
+                  className={`h-5 w-5 ${
+                    isRefreshing
+                      ? 'animate-spin'
+                      : ''
+                  }`}
+                />
+              </button>
+
+              <button
+                type="button"
                 className="relative flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-slate-600 transition-colors hover:bg-slate-200"
               >
                 <Bell className="h-5 w-5" />
@@ -1090,9 +1262,12 @@ export default function App() {
                 การอัปเดตล่าสุดไม่สำเร็จ:
               </span>{' '}
               {sheetError}
-              <span className="ml-2">
-                กำลังแสดงข้อมูลจากรอบล่าสุดที่โหลดสำเร็จ
-              </span>
+
+              {hasLoadedSuccessfully && (
+                <span className="ml-2">
+                  กำลังแสดงข้อมูลรอบล่าสุดที่โหลดสำเร็จ
+                </span>
+              )}
             </div>
           </div>
         )}
@@ -1480,8 +1655,17 @@ export default function App() {
                   trucks={
                     filteredTrucks
                   }
+                  gpsLocations={
+                    filteredGpsLocations
+                  }
                   initialTruckId={
                     selectedGpsTruckId
+                  }
+                  onRefresh={
+                    loadData
+                  }
+                  isRefreshing={
+                    isRefreshing
                   }
                 />
               </main>
@@ -1535,7 +1719,7 @@ export default function App() {
             </span>
 
             <span className="hidden sm:inline">
-              System running. Check the warning banner for the latest connection status.
+              System running. Check the warning banner for connection status.
             </span>
           </div>
 
@@ -1611,6 +1795,7 @@ export default function App() {
                         {
                           actionProblem:
                             problem,
+
                           actionStatus:
                             'OPEN',
                         }
@@ -1620,6 +1805,7 @@ export default function App() {
                     setActionDialog({
                       isOpen:
                         false,
+
                       truck:
                         null,
                     });
@@ -1654,6 +1840,7 @@ export default function App() {
                       setActionDialog({
                         isOpen:
                           false,
+
                         truck:
                           null,
                       })
@@ -1680,16 +1867,25 @@ export default function App() {
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
             <motion.div
               initial={{
-                opacity: 0,
-                scale: 0.95,
+                opacity:
+                  0,
+
+                scale:
+                  0.95,
               }}
               animate={{
-                opacity: 1,
-                scale: 1,
+                opacity:
+                  1,
+
+                scale:
+                  1,
               }}
               exit={{
-                opacity: 0,
-                scale: 0.95,
+                opacity:
+                  0,
+
+                scale:
+                  0.95,
               }}
               className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl"
             >
