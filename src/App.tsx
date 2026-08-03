@@ -31,7 +31,6 @@ import {
 import {
   Truck,
   PerformanceStatus,
-  TruckStatus,
 } from './types';
 
 import {
@@ -80,6 +79,9 @@ interface ActionDialogState {
 const ROWS_PER_PAGE =
   20;
 
+const REFRESH_INTERVAL =
+  30000;
+
 export default function App() {
   const [
     trucks,
@@ -118,13 +120,12 @@ export default function App() {
     lastUpdate,
     setLastUpdate,
   ] = useState(
-    new Date()
-      .toLocaleTimeString(
-        'en-US',
-        {
-          hour12: false,
-        }
-      )
+    new Date().toLocaleTimeString(
+      'en-US',
+      {
+        hour12: false,
+      }
+    )
   );
 
   const [
@@ -186,22 +187,25 @@ export default function App() {
   const loadData =
     async () => {
       try {
-        setSheetError(null);
-
         const data =
           await fetchTrucksFromSheets();
 
         if (data.length > 0) {
-          setTrucks(data);
+          setTrucks(
+            data
+          );
 
           setLastUpdate(
-            new Date()
-              .toLocaleTimeString(
-                'en-US',
-                {
-                  hour12: false,
-                }
-              )
+            new Date().toLocaleTimeString(
+              'en-US',
+              {
+                hour12: false,
+              }
+            )
+          );
+
+          setSheetError(
+            null
           );
         }
       } catch (error) {
@@ -218,10 +222,6 @@ export default function App() {
         setSheetError(
           message
         );
-
-        setTrucks(
-          mockTrucks
-        );
       }
     };
 
@@ -233,7 +233,7 @@ export default function App() {
     const intervalId =
       window.setInterval(
         loadData,
-        30000
+        REFRESH_INTERVAL
       );
 
     return () => {
@@ -244,7 +244,9 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    setCurrentPage(1);
+    setCurrentPage(
+      1
+    );
   }, [
     selectedDate,
     showHiddenRows,
@@ -266,8 +268,8 @@ export default function App() {
       }
 
       setTrucks(
-        previous =>
-          previous.map(
+        previousTrucks =>
+          previousTrucks.map(
             truck =>
               truck.id === id
                 ? {
@@ -325,6 +327,17 @@ export default function App() {
         'map'
       );
 
+      if (
+        window.innerWidth < 768
+      ) {
+        setIsSidebarOpen(
+          false
+        );
+      }
+    };
+
+  const closeSidebarOnMobile =
+    () => {
       if (
         window.innerWidth < 768
       ) {
@@ -671,17 +684,6 @@ export default function App() {
     currentPage,
     totalPages,
   ]);
-
-  const closeSidebarOnMobile =
-    () => {
-      if (
-        window.innerWidth < 768
-      ) {
-        setIsSidebarOpen(
-          false
-        );
-      }
-    };
 
   const handleAppLogin =
     async (
@@ -1080,14 +1082,17 @@ export default function App() {
         </header>
 
         {sheetError && (
-          <div className="z-10 flex shrink-0 items-center gap-3 border-b border-red-200 bg-red-50 px-6 py-3 text-sm text-red-700">
-            <AlertTriangle className="h-5 w-5" />
+          <div className="z-10 flex shrink-0 items-center gap-3 border-b border-amber-200 bg-amber-50 px-6 py-3 text-sm text-amber-800">
+            <AlertTriangle className="h-5 w-5 shrink-0" />
 
             <div>
               <span className="font-bold">
-                Error connecting to Google Sheets:
+                การอัปเดตล่าสุดไม่สำเร็จ:
               </span>{' '}
               {sheetError}
+              <span className="ml-2">
+                กำลังแสดงข้อมูลจากรอบล่าสุดที่โหลดสำเร็จ
+              </span>
             </div>
           </div>
         )}
@@ -1103,7 +1108,7 @@ export default function App() {
                 Select a Date
               </h2>
 
-              <p className="mb-6 text-sm text-slate-500">
+              <p className="text-sm text-slate-500">
                 Please select a date from the top right corner to view tracking data.
               </p>
             </div>
@@ -1114,7 +1119,7 @@ export default function App() {
               'dashboard' && (
               <main className="flex flex-1 flex-col overflow-auto p-4 md:p-6 lg:p-8">
                 <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
-                  <div className="flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+                  <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
                     <p className="mb-2 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
                       <TruckIcon className="h-3.5 w-3.5" />
                       Total Truck
@@ -1125,7 +1130,7 @@ export default function App() {
                     </h3>
                   </div>
 
-                  <div className="flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+                  <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
                     <p className="mb-2 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
                       <Package className="h-3.5 w-3.5 text-purple-500" />
                       Unloading
@@ -1136,7 +1141,7 @@ export default function App() {
                     </h3>
                   </div>
 
-                  <div className="flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+                  <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
                     <p className="mb-2 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
                       <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
                       Complete
@@ -1147,7 +1152,7 @@ export default function App() {
                     </h3>
                   </div>
 
-                  <div className="flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+                  <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
                     <p className="mb-2 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
                       <Clock className="h-3.5 w-3.5 text-amber-500" />
                       Remain
@@ -1160,7 +1165,7 @@ export default function App() {
                 </div>
 
                 <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-                  <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 p-4">
+                  <div className="border-b border-slate-200 bg-slate-50 p-4">
                     <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
                       <input
                         type="checkbox"
@@ -1222,7 +1227,7 @@ export default function App() {
                         </tr>
                       </thead>
 
-                      <tbody className="divide-y divide-slate-100 text-sm">
+                      <tbody className="divide-y divide-slate-100">
                         {paginatedTrucks.length ===
                         0 ? (
                           <tr>
@@ -1273,10 +1278,8 @@ export default function App() {
                                 </td>
 
                                 <td className="px-2 py-1 font-mono text-sm text-slate-600">
-                                  {
-                                    truck.planEta ||
-                                    '-'
-                                  }
+                                  {truck.planEta ||
+                                    '-'}
                                 </td>
 
                                 <td className="px-2 py-1 font-mono text-sm">
@@ -1532,7 +1535,7 @@ export default function App() {
             </span>
 
             <span className="hidden sm:inline">
-              System running smoothly. All services operational.
+              System running. Check the warning banner for the latest connection status.
             </span>
           </div>
 
