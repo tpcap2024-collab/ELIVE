@@ -66,10 +66,15 @@ export interface MasterPlanResponse {
   };
 }
 
+export type PlanSource = 'master-plan' | 'uploaded-file';
+
 export interface PlanPeriodRequest {
   startDate: string;
   endDate: string;
   workingDays: number[];
+  source?: PlanSource;
+  templateRows?: MasterPlanRow[];
+  fileName?: string;
 }
 
 export interface PlanPeriodPreview {
@@ -298,7 +303,25 @@ function validatePlanPeriodRequest(
     throw new Error('Select at least one working day.');
   }
 
-  return { startDate, endDate, workingDays };
+  const source: PlanSource =
+    request.source === 'uploaded-file' ? 'uploaded-file' : 'master-plan';
+
+  const templateRows = source === 'uploaded-file'
+    ? (Array.isArray(request.templateRows) ? request.templateRows : [])
+    : undefined;
+
+  if (source === 'uploaded-file' && (!templateRows || templateRows.length === 0)) {
+    throw new Error('Uploaded Plan file has no valid rows.');
+  }
+
+  return {
+    startDate,
+    endDate,
+    workingDays,
+    source,
+    templateRows,
+    fileName: request.fileName ? String(request.fileName) : undefined,
+  };
 }
 
 export async function fetchMasterPlan(
