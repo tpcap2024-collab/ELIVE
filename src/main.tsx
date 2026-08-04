@@ -5,74 +5,85 @@ import App from './App';
 
 import './index.css';
 
-function setupFavicon(): void {
-  const iconPath =
-    '/elive-icon.png';
+function setupBrowserIcon(): void {
+  const iconUrl =
+    '/elive-icon-v2.png?v=2';
 
-  const existingIcon =
-    document.querySelector<HTMLLinkElement>(
-      'link[rel="icon"]'
+  const oldIcons =
+    document.head.querySelectorAll(
+      'link[rel="icon"], link[rel="shortcut icon"], link[rel="apple-touch-icon"]'
     );
 
-  if (existingIcon) {
-    existingIcon.href =
-      iconPath;
+  oldIcons.forEach(
+    icon => {
+      icon.remove();
+    }
+  );
 
-    existingIcon.type =
-      'image/png';
-  } else {
-    const favicon =
-      document.createElement(
-        'link'
-      );
-
-    favicon.rel =
-      'icon';
-
-    favicon.type =
-      'image/png';
-
-    favicon.href =
-      iconPath;
-
-    document.head.appendChild(
-      favicon
-    );
-  }
-
-  const existingAppleIcon =
-    document.querySelector<HTMLLinkElement>(
-      'link[rel="apple-touch-icon"]'
+  const favicon =
+    document.createElement(
+      'link'
     );
 
-  if (existingAppleIcon) {
-    existingAppleIcon.href =
-      iconPath;
-  } else {
-    const appleIcon =
-      document.createElement(
-        'link'
-      );
+  favicon.rel =
+    'icon';
 
-    appleIcon.rel =
-      'apple-touch-icon';
+  favicon.type =
+    'image/png';
 
-    appleIcon.href =
-      iconPath;
+  favicon.sizes =
+    'any';
 
-    document.head.appendChild(
-      appleIcon
+  favicon.href =
+    iconUrl;
+
+  document.head.appendChild(
+    favicon
+  );
+
+  const shortcutIcon =
+    document.createElement(
+      'link'
     );
-  }
+
+  shortcutIcon.rel =
+    'shortcut icon';
+
+  shortcutIcon.type =
+    'image/png';
+
+  shortcutIcon.href =
+    iconUrl;
+
+  document.head.appendChild(
+    shortcutIcon
+  );
+
+  const appleTouchIcon =
+    document.createElement(
+      'link'
+    );
+
+  appleTouchIcon.rel =
+    'apple-touch-icon';
+
+  appleTouchIcon.href =
+    iconUrl;
+
+  document.head.appendChild(
+    appleTouchIcon
+  );
 
   const existingThemeColor =
-    document.querySelector<HTMLMetaElement>(
+    document.head.querySelector(
       'meta[name="theme-color"]'
     );
 
   if (existingThemeColor) {
-    existingThemeColor.content =
-      '#2563eb';
+    existingThemeColor.setAttribute(
+      'content',
+      '#2563eb'
+    );
   } else {
     const themeColor =
       document.createElement(
@@ -94,7 +105,7 @@ function setupFavicon(): void {
     'ELIVE Dashboard';
 }
 
-setupFavicon();
+setupBrowserIcon();
 
 const rootElement =
   document.getElementById(
