@@ -1,8 +1,8 @@
 import {
+  GpsLocation,
+  PerformanceStatus,
   Truck,
   TruckStatus,
-  PerformanceStatus,
-  GpsLocation,
 } from '../types';
 
 import {
@@ -45,21 +45,128 @@ export interface EliveDashboardData {
   gpsLocations: GpsLocation[];
 }
 
+export interface MasterPlanRow {
+  sheetRow?: number;
+  route: string;
+  company: string;
+  truckName: string;
+  truckType: string;
+  driverName: string;
+  telDriver: string;
+  project: string;
+  dropPoint: string;
+  planEta: string;
+  planEtd: string;
+}
+
+export interface MasterPlanValidationError {
+  sheetRow: number;
+  errors: string[];
+}
+
+export interface MasterPlanResponse {
+  success: boolean;
+  status: string;
+  action?: string;
+  source: string;
+  sheetName: string;
+  rowCount: number;
+  rows: MasterPlanRow[];
+  validationErrors: MasterPlanValidationError[];
+  timestamp?: string;
+
+  meta?: {
+    source?: string;
+    cacheAgeSeconds?: number;
+    serverTime?: string;
+  };
+}
+
+export interface PlanPeriodRequest {
+  startDate: string;
+  endDate: string;
+  workingDays: number[];
+}
+
+export interface PlanPeriodPreview {
+  success: boolean;
+
+  startDate: string;
+  endDate: string;
+
+  calendarDayCount: number;
+  workingDateCount: number;
+
+  workingDays: number[];
+  workingDayLabels: string[];
+
+  masterPlanRowCount: number;
+
+  totalCandidateRows: number;
+  duplicateRowCount: number;
+  newRowCount: number;
+
+  currentMaximumCodeRun: string;
+  startCodeRun: string;
+  endCodeRun: string;
+
+  duplicateHandling?: string;
+  message: string;
+}
+
+export interface PlanCreationResult {
+  success: boolean;
+
+  startDate?: string;
+  endDate?: string;
+
+  workingDateCount?: number;
+  totalCandidateRows?: number;
+
+  createdRowCount: number;
+  duplicateRowCount: number;
+
+  firstOutputRow?: number | null;
+  lastOutputRow?: number | null;
+
+  startCodeRun: string;
+  endCodeRun: string;
+
+  durationMs: number;
+  message: string;
+}
+
+interface PlanApiResponse<T> {
+  success: boolean;
+  status: string;
+  action?: string;
+  result: T;
+  timestamp?: string;
+  error?: string;
+}
+
 const DEFAULT_API_URL =
   'https://elive-api.onrender.com';
 
 export const getAppsScriptUrl =
   (): string => {
-    const env =
+    const environment =
       (import.meta as any).env;
 
     const apiUrl =
-      env?.VITE_API_URL ||
+      environment?.VITE_API_URL ||
       DEFAULT_API_URL;
 
     return String(apiUrl)
       .trim()
-      .replace(/\/+$/, '');
+      .replace(
+        /^['"]|['"]$/g,
+        ''
+      )
+      .replace(
+        /\/+$/,
+        ''
+      );
   };
 
 function parseGoogleSheetsTime(
@@ -74,15 +181,23 @@ function parseGoogleSheetsTime(
   }
 
   const timeText =
-    String(timeValue).trim();
+    String(
+      timeValue
+    ).trim();
 
   if (!timeText) {
     return '';
   }
 
-  if (timeText.includes('T')) {
+  if (
+    timeText.includes(
+      'T'
+    )
+  ) {
     const date =
-      new Date(timeText);
+      new Date(
+        timeText
+      );
 
     if (
       !Number.isNaN(
@@ -145,7 +260,9 @@ function parseGoogleSheetsDate(
   }
 
   const dateText =
-    String(dateValue).trim();
+    String(
+      dateValue
+    ).trim();
 
   if (!dateText) {
     return '';
@@ -165,7 +282,9 @@ function parseGoogleSheetsDate(
   }
 
   const date =
-    new Date(dateText);
+    new Date(
+      dateText
+    );
 
   if (
     !Number.isNaN(
@@ -227,8 +346,10 @@ async function readJsonResponse(
   }
 }
 
-async function fetchEliveApiData():
-  Promise<any> {
+async function fetchApiRequest(
+  path: string,
+  options?: RequestInit
+): Promise<any> {
   const apiUrl =
     getAppsScriptUrl();
 
@@ -238,31 +359,37 @@ async function fetchEliveApiData():
     );
   }
 
-  const requestUrl =
-    `${apiUrl}/api/trucks?t=${Date.now()}`;
+  const normalizedPath =
+    path.startsWith('/')
+      ? path
+      : `/${path}`;
 
-  let response:
-    Response;
+  const requestUrl =
+    `${apiUrl}${normalizedPath}`;
+
+  let response: Response;
 
   try {
     response = await fetch(
       requestUrl,
       {
-        method:
-          'GET',
+        cache:
+          'no-store',
+
+        ...options,
 
         headers: {
           Accept:
             'application/json',
-        },
 
-        cache:
-          'no-store',
+          ...(options?.headers ||
+            {}),
+        },
       }
     );
   } catch (error) {
     console.error(
-      'Unable to connect to ELIVE Backend API:',
+      `Unable to connect to ELIVE API: ${normalizedPath}`,
       error
     );
 
@@ -274,7 +401,7 @@ async function fetchEliveApiData():
   const data =
     await readJsonResponse(
       response,
-      'The ELIVE Backend API returned invalid JSON.'
+      `ELIVE API returned invalid JSON from ${normalizedPath}.`
     );
 
   const apiError =
@@ -289,11 +416,33 @@ async function fetchEliveApiData():
     throw new Error(
       apiError ||
       (
-        `Failed to fetch ELIVE data ` +
+        `ELIVE API request failed ` +
         `(${response.status} ${response.statusText})`
       )
     );
   }
+
+  return data;
+}
+
+async function fetchEliveApiData():
+  Promise<any> {
+  const query =
+    new URLSearchParams({
+      t:
+        String(
+          Date.now()
+        ),
+    });
+
+  const data =
+    await fetchApiRequest(
+      `/api/trucks?${query.toString()}`,
+      {
+        method:
+          'GET',
+      }
+    );
 
   if (
     data.status !==
@@ -307,12 +456,689 @@ async function fetchEliveApiData():
   return data;
 }
 
+function validateDateText(
+  value: string,
+  fieldName: string
+): string {
+  const normalizedValue =
+    String(
+      value || ''
+    ).trim();
+
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(
+      normalizedValue
+    )
+  ) {
+    throw new Error(
+      `${fieldName} must use yyyy-MM-dd format.`
+    );
+  }
+
+  const date =
+    new Date(
+      `${normalizedValue}T00:00:00+07:00`
+    );
+
+  if (
+    Number.isNaN(
+      date.getTime()
+    )
+  ) {
+    throw new Error(
+      `${fieldName} is invalid.`
+    );
+  }
+
+  return normalizedValue;
+}
+
+function normalizePlanWorkingDays(
+  workingDays: number[]
+): number[] {
+  if (
+    !Array.isArray(
+      workingDays
+    )
+  ) {
+    return [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+    ];
+  }
+
+  const uniqueDays =
+    new Set<number>();
+
+  for (
+    const value of workingDays
+  ) {
+    const dayNumber =
+      Number(
+        value
+      );
+
+    if (
+      Number.isInteger(
+        dayNumber
+      ) &&
+      dayNumber >= 1 &&
+      dayNumber <= 7
+    ) {
+      uniqueDays.add(
+        dayNumber
+      );
+    }
+  }
+
+  return Array.from(
+    uniqueDays
+  ).sort(
+    (
+      first,
+      second
+    ) =>
+      first -
+      second
+  );
+}
+
+function validatePlanPeriodRequest(
+  request: PlanPeriodRequest
+): PlanPeriodRequest {
+  if (
+    !request ||
+    typeof request !==
+      'object'
+  ) {
+    throw new Error(
+      'Plan period request is required.'
+    );
+  }
+
+  const startDate =
+    validateDateText(
+      request.startDate,
+      'Start Date'
+    );
+
+  const endDate =
+    validateDateText(
+      request.endDate,
+      'End Date'
+    );
+
+  if (
+    endDate <
+    startDate
+  ) {
+    throw new Error(
+      'End Date must not be earlier than Start Date.'
+    );
+  }
+
+  const workingDays =
+    normalizePlanWorkingDays(
+      request.workingDays
+    );
+
+  if (
+    workingDays.length ===
+    0
+  ) {
+    throw new Error(
+      'Select at least one working day.'
+    );
+  }
+
+  return {
+    startDate,
+    endDate,
+    workingDays,
+  };
+}
+
+export async function fetchMasterPlan(
+  forceRefresh = false
+): Promise<MasterPlanResponse> {
+  const query =
+    new URLSearchParams({
+      refresh:
+        forceRefresh
+          ? 'true'
+          : 'false',
+
+      t:
+        String(
+          Date.now()
+        ),
+    });
+
+  const data =
+    await fetchApiRequest(
+      `/api/master-plan?${query.toString()}`,
+      {
+        method:
+          'GET',
+      }
+    );
+
+  if (
+    data.success !==
+    true
+  ) {
+    throw new Error(
+      'The server did not return Master Plan successfully.'
+    );
+  }
+
+  const rawRows =
+    Array.isArray(
+      data.rows
+    )
+      ? data.rows
+      : [];
+
+  const rows:
+    MasterPlanRow[] =
+      rawRows.map(
+        (
+          row: any
+        ) => {
+          return {
+            sheetRow:
+              Number.isFinite(
+                Number(
+                  row.sheetRow
+                )
+              )
+                ? Number(
+                    row.sheetRow
+                  )
+                : undefined,
+
+            route:
+              String(
+                row.route ||
+                ''
+              ).trim(),
+
+            company:
+              String(
+                row.company ||
+                ''
+              ).trim(),
+
+            truckName:
+              String(
+                row.truckName ||
+                ''
+              ).trim(),
+
+            truckType:
+              String(
+                row.truckType ||
+                ''
+              ).trim(),
+
+            driverName:
+              String(
+                row.driverName ||
+                ''
+              ).trim(),
+
+            telDriver:
+              String(
+                row.telDriver ||
+                ''
+              ).trim(),
+
+            project:
+              String(
+                row.project ||
+                ''
+              ).trim(),
+
+            dropPoint:
+              String(
+                row.dropPoint ||
+                ''
+              ).trim(),
+
+            planEta:
+              parseGoogleSheetsTime(
+                row.planEta
+              ),
+
+            planEtd:
+              parseGoogleSheetsTime(
+                row.planEtd
+              ),
+          };
+        }
+      );
+
+  const validationErrors:
+    MasterPlanValidationError[] =
+      Array.isArray(
+        data.validationErrors
+      )
+        ? data.validationErrors.map(
+            (
+              item: any
+            ) => {
+              return {
+                sheetRow:
+                  Number(
+                    item.sheetRow ||
+                    0
+                  ),
+
+                errors:
+                  Array.isArray(
+                    item.errors
+                  )
+                    ? item.errors.map(
+                        (
+                          error: unknown
+                        ) =>
+                          String(
+                            error
+                          )
+                      )
+                    : [],
+              };
+            }
+          )
+        : [];
+
+  return {
+    success:
+      true,
+
+    status:
+      String(
+        data.status ||
+        'success'
+      ),
+
+    action:
+      data.action
+        ? String(
+            data.action
+          )
+        : undefined,
+
+    source:
+      String(
+        data.source ||
+        'master-plan'
+      ),
+
+    sheetName:
+      String(
+        data.sheetName ||
+        'Master Plan'
+      ),
+
+    rowCount:
+      Number.isFinite(
+        Number(
+          data.rowCount
+        )
+      )
+        ? Number(
+            data.rowCount
+          )
+        : rows.length,
+
+    rows,
+
+    validationErrors,
+
+    timestamp:
+      data.timestamp
+        ? String(
+            data.timestamp
+          )
+        : undefined,
+
+    meta:
+      data.meta &&
+      typeof data.meta ===
+        'object'
+        ? {
+            source:
+              data.meta.source
+                ? String(
+                    data.meta.source
+                  )
+                : undefined,
+
+            cacheAgeSeconds:
+              Number.isFinite(
+                Number(
+                  data.meta
+                    .cacheAgeSeconds
+                )
+              )
+                ? Number(
+                    data.meta
+                      .cacheAgeSeconds
+                  )
+                : undefined,
+
+            serverTime:
+              data.meta.serverTime
+                ? String(
+                    data.meta
+                      .serverTime
+                  )
+                : undefined,
+          }
+        : undefined,
+  };
+}
+
+export async function previewPlanPeriod(
+  request: PlanPeriodRequest
+): Promise<PlanPeriodPreview> {
+  const validRequest =
+    validatePlanPeriodRequest(
+      request
+    );
+
+  const data:
+    PlanApiResponse<PlanPeriodPreview> =
+      await fetchApiRequest(
+        '/api/plans/preview',
+        {
+          method:
+            'POST',
+
+          headers: {
+            'Content-Type':
+              'application/json',
+          },
+
+          body:
+            JSON.stringify(
+              validRequest
+            ),
+        }
+      );
+
+  if (
+    data.success !==
+      true ||
+    !data.result
+  ) {
+    throw new Error(
+      data.error ||
+      'The server did not return Plan preview successfully.'
+    );
+  }
+
+  const result =
+    data.result;
+
+  return {
+    success:
+      true,
+
+    startDate:
+      String(
+        result.startDate ||
+        validRequest.startDate
+      ),
+
+    endDate:
+      String(
+        result.endDate ||
+        validRequest.endDate
+      ),
+
+    calendarDayCount:
+      Number(
+        result.calendarDayCount ||
+        0
+      ),
+
+    workingDateCount:
+      Number(
+        result.workingDateCount ||
+        0
+      ),
+
+    workingDays:
+      Array.isArray(
+        result.workingDays
+      )
+        ? result.workingDays.map(
+            Number
+          )
+        : validRequest
+            .workingDays,
+
+    workingDayLabels:
+      Array.isArray(
+        result.workingDayLabels
+      )
+        ? result
+            .workingDayLabels
+            .map(
+              String
+            )
+        : [],
+
+    masterPlanRowCount:
+      Number(
+        result.masterPlanRowCount ||
+        0
+      ),
+
+    totalCandidateRows:
+      Number(
+        result.totalCandidateRows ||
+        0
+      ),
+
+    duplicateRowCount:
+      Number(
+        result.duplicateRowCount ||
+        0
+      ),
+
+    newRowCount:
+      Number(
+        result.newRowCount ||
+        0
+      ),
+
+    currentMaximumCodeRun:
+      String(
+        result.currentMaximumCodeRun ||
+        '-'
+      ),
+
+    startCodeRun:
+      String(
+        result.startCodeRun ||
+        '-'
+      ),
+
+    endCodeRun:
+      String(
+        result.endCodeRun ||
+        '-'
+      ),
+
+    duplicateHandling:
+      result.duplicateHandling
+        ? String(
+            result.duplicateHandling
+          )
+        : 'SKIP',
+
+    message:
+      String(
+        result.message ||
+        'Preview completed.'
+      ),
+  };
+}
+
+export async function createPlanPeriod(
+  request: PlanPeriodRequest
+): Promise<PlanCreationResult> {
+  const validRequest =
+    validatePlanPeriodRequest(
+      request
+    );
+
+  const data:
+    PlanApiResponse<PlanCreationResult> =
+      await fetchApiRequest(
+        '/api/plans/create',
+        {
+          method:
+            'POST',
+
+          headers: {
+            'Content-Type':
+              'application/json',
+          },
+
+          body:
+            JSON.stringify(
+              validRequest
+            ),
+        }
+      );
+
+  if (
+    data.success !==
+      true ||
+    !data.result
+  ) {
+    throw new Error(
+      data.error ||
+      'The server did not confirm Plan creation.'
+    );
+  }
+
+  const result =
+    data.result;
+
+  return {
+    success:
+      true,
+
+    startDate:
+      result.startDate
+        ? String(
+            result.startDate
+          )
+        : validRequest.startDate,
+
+    endDate:
+      result.endDate
+        ? String(
+            result.endDate
+          )
+        : validRequest.endDate,
+
+    workingDateCount:
+      Number.isFinite(
+        Number(
+          result.workingDateCount
+        )
+      )
+        ? Number(
+            result.workingDateCount
+          )
+        : undefined,
+
+    totalCandidateRows:
+      Number.isFinite(
+        Number(
+          result.totalCandidateRows
+        )
+      )
+        ? Number(
+            result.totalCandidateRows
+          )
+        : undefined,
+
+    createdRowCount:
+      Number(
+        result.createdRowCount ||
+        0
+      ),
+
+    duplicateRowCount:
+      Number(
+        result.duplicateRowCount ||
+        0
+      ),
+
+    firstOutputRow:
+      result.firstOutputRow ===
+        null ||
+      result.firstOutputRow ===
+        undefined
+        ? null
+        : Number(
+            result.firstOutputRow
+          ),
+
+    lastOutputRow:
+      result.lastOutputRow ===
+        null ||
+      result.lastOutputRow ===
+        undefined
+        ? null
+        : Number(
+            result.lastOutputRow
+          ),
+
+    startCodeRun:
+      String(
+        result.startCodeRun ||
+        '-'
+      ),
+
+    endCodeRun:
+      String(
+        result.endCodeRun ||
+        '-'
+      ),
+
+    durationMs:
+      Number(
+        result.durationMs ||
+        0
+      ),
+
+    message:
+      String(
+        result.message ||
+        'Plan created successfully.'
+      ),
+  };
+}
+
 function mapTruckStatus(
   currentStatus: string
 ): TruckStatus {
   const normalizedStatus =
     String(
-      currentStatus || ''
+      currentStatus ||
+      ''
     )
       .trim()
       .toLowerCase();
@@ -406,7 +1232,8 @@ function mapPerformanceStatus(
 ): PerformanceStatus {
   const normalizedPerformance =
     String(
-      efficiencyStatus || ''
+      efficiencyStatus ||
+      ''
     )
       .trim()
       .toLowerCase();
@@ -505,7 +1332,8 @@ export async function fetchTrucksFromSheets(
 
     const codeRun =
       String(
-        row[0] || ''
+        row[0] ||
+        ''
       ).trim();
 
     if (codeRun) {
@@ -532,7 +1360,8 @@ export async function fetchTrucksFromSheets(
 
     const codeRun =
       String(
-        row[0] || ''
+        row[0] ||
+        ''
       ).trim();
 
     if (!codeRun) {
@@ -551,15 +1380,12 @@ export async function fetchTrucksFromSheets(
 
     const planEta =
       parseGoogleSheetsTime(
-        row[10]
-      );
-
-    const planEtd =
+        row[1 planEta =
+GoogleSheetsTimeEtd =
       parseGoogleSheetsTime(
-        row[11]
-      );
-
-    let currentStatus =
+        row[10 planEtd =
+GoogleSheetsTime(
+atus =
       'TRAVELING';
 
     let efficiencyStatus =
@@ -586,8 +1412,8 @@ export async function fetchTrucksFromSheets(
     if (actualRow) {
       currentStatus =
         String(
-          actualRow[1] ||
-          'TRAVELING'
+          actual[11 currentStatus =
+TRAVELINGG'
         );
 
       efficiencyStatus =
@@ -608,22 +1434,27 @@ export async function fetchTrucksFromSheets(
 
       actionProblem =
         String(
-          actualRow[6] || ''
+          actual[5Problem =
+(
+Row   ''
         );
 
       actionCountermeasure =
         String(
-          actualRow[7] || ''
+          actualRow[7] ||
+          ''
         );
 
       actionResponsible =
         String(
-          actualRow[8] || ''
+          actualRow[8] ||
+          ''
         );
 
       actionStatus =
         String(
-          actualRow[9] || ''
+          actualRow[9] ||
+          ''
         );
     }
 
@@ -658,37 +1489,44 @@ export async function fetchTrucksFromSheets(
 
       route:
         String(
-          row[2] || ''
+          row[2] ||
+          ''
         ),
 
       supplierName:
         String(
-          row[3] || ''
+          row[3] ||
+          ''
         ),
 
       licensePlate:
         String(
-          row[4] || ''
+          row[4] ||
+          ''
         ),
 
       truckType:
         String(
-          row[5] || ''
+          row[5] ||
+          ''
         ),
 
       driverName:
         String(
-          row[6] || ''
+          row[6] ||
+          ''
         ),
 
       phone:
         String(
-          row[7] || ''
+          row[7] ||
+          ''
         ),
 
       dropPoint:
         String(
-          row[9] || ''
+          row[9] ||
+          ''
         ),
 
       planEta,
@@ -744,15 +1582,6 @@ export async function updateTruckInSheets(
   updates: Partial<Truck>,
   currentTruck: Truck
 ): Promise<void> {
-  const apiUrl =
-    getAppsScriptUrl();
-
-  if (!apiUrl) {
-    throw new Error(
-      'Render Backend API URL is not configured.'
-    );
-  }
-
   if (!truckId) {
     throw new Error(
       'Truck ID is required.'
@@ -813,21 +1642,11 @@ export async function updateTruckInSheets(
 
   const newRow = [
     truckId,
-
-    currentStatus ||
-    '',
-
-    efficiencyStatus ||
-    '',
-
-    currentTruck.planEta ||
-    '',
-
-    stampEta ||
-    '',
-
-    stampEtd ||
-    '',
+    currentStatus || '',
+    efficiencyStatus || '',
+    currentTruck.planEta || '',
+    stampEta || '',
+    stampEtd || '',
 
     updates.actionProblem !==
     undefined
@@ -860,25 +1679,18 @@ export async function updateTruckInSheets(
         '',
 
     'System User',
-
     datetimeUpdate,
   ];
 
-  let response:
-    Response;
-
-  try {
-    response = await fetch(
-      `${apiUrl}/api/trucks/update`,
+  const result =
+    await fetchApiRequest(
+      '/api/trucks/update',
       {
         method:
           'POST',
 
         headers: {
           'Content-Type':
-            'application/json',
-
-          Accept:
             'application/json',
         },
 
@@ -889,43 +1701,10 @@ export async function updateTruckInSheets(
           }),
       }
     );
-  } catch (error) {
-    console.error(
-      'Unable to update Google Sheets:',
-      error
-    );
-
-    throw new Error(
-      'Unable to connect to ELIVE API while updating.'
-    );
-  }
-
-  const result =
-    await readJsonResponse(
-      response,
-      'ELIVE API returned an invalid update response.'
-    );
-
-  const apiError =
-    getApiError(
-      result
-    );
 
   if (
-    !response.ok ||
-    apiError
-  ) {
-    throw new Error(
-      apiError ||
-      (
-        `Failed to update Google Sheet ` +
-        `(${response.status} ${response.statusText})`
-      )
-    );
-  }
-
-  if (
-    result.success !== true
+    result.success !==
+    true
   ) {
     throw new Error(
       'The server did not confirm the update.'
@@ -937,7 +1716,8 @@ function normalizeGpsHeader(
   value: unknown
 ): string {
   return String(
-    value || ''
+    value ||
+    ''
   )
     .trim()
     .toLowerCase()
@@ -969,7 +1749,8 @@ function parseGpsNumber(
 ): number {
   const text =
     String(
-      value ?? ''
+      value ??
+      ''
     )
       .trim()
       .replace(
@@ -1141,13 +1922,10 @@ export async function fetchGpsLocations(
   const locations:
     GpsLocation[] = [];
 
-  const gpsRows =
-    gpsData.slice(
-      1
-    );
-
   for (
-    const row of gpsRows
+    const row of gpsData.slice(
+      1
+    )
   ) {
     if (
       !Array.isArray(
@@ -1208,13 +1986,10 @@ export async function fetchGpsLocations(
       continue;
     }
 
-    const fallbackGpsId =
-      `${latitude},${longitude}`;
-
     locations.push({
       gpsId:
         gpsId ||
-        fallbackGpsId,
+        `${latitude},${longitude}`,
 
       licensePlate,
 
@@ -1293,15 +2068,6 @@ export async function fetchRouteToTpcap(
     );
   }
 
-  const apiUrl =
-    getAppsScriptUrl();
-
-  if (!apiUrl) {
-    throw new Error(
-      'Render Backend API URL is not configured.'
-    );
-  }
-
   const query =
     new URLSearchParams({
       lat:
@@ -1320,62 +2086,18 @@ export async function fetchRouteToTpcap(
         ),
     });
 
-  const requestUrl =
-    `${apiUrl}/api/route-to-tpcap?${query.toString()}`;
-
-  let response:
-    Response;
-
-  try {
-    response = await fetch(
-      requestUrl,
+  const data =
+    await fetchApiRequest(
+      `/api/route-to-tpcap?${query.toString()}`,
       {
         method:
           'GET',
-
-        headers: {
-          Accept:
-            'application/json',
-        },
-
-        cache:
-          'no-store',
       }
     );
-  } catch (error) {
-    console.error(
-      'Unable to connect to route API:',
-      error
-    );
-
-    throw new Error(
-      'ไม่สามารถเชื่อมต่อระบบคำนวณเส้นทางได้'
-    );
-  }
-
-  const data =
-    await readJsonResponse(
-      response,
-      'ระบบคำนวณเส้นทางส่งข้อมูลไม่ถูกต้อง'
-    );
-
-  const apiError =
-    getApiError(
-      data
-    );
 
   if (
-    !response.ok ||
-    apiError
-  ) {
-    throw new Error(
-      apiError ||
-      `Route API request failed with status ${response.status}`
-    );
-  }
-
-  if (
-    data.success !== true
+    data.success !==
+    true
   ) {
     throw new Error(
       'ระบบไม่สามารถยืนยันผลการคำนวณเส้นทางได้'
@@ -1438,32 +2160,29 @@ export async function fetchRouteToTpcap(
   }
 
   const validCoordinates:
-    number[][] =
-      geometry.coordinates
+    number[headingIndex 0;
+
+ (
+!Numbernates
         .filter(
           (
             coordinate: unknown
-          ): coordinate is unknown[] => {
-            return (
-              Array.isArray(
-                coordinate
-              ) &&
-              coordinate.length >= 2
-            );
-          }
+          ): coordinate is unknown[] =>
+            Array.isArray(
+              coordinate
+            ) &&
+            coordinate.length >= 2
         )
         .map(
-          coordinate => {
-            return [
-              Number(
-                coordinate[0]
-              ),
+          coordinate => [
+            Number(
+              coordinate[0]
+            ),
 
-              Number(
-                coordinate[1]
-              ),
-            ];
-          }
+            Number(
+              coordinate[1]
+            ),
+          ]
         )
         .filter(
           coordinate => {
@@ -1562,11 +2281,8 @@ export async function fetchRouteToTpcap(
     },
 
     distanceMeters,
-
     distanceKilometers,
-
     durationSeconds,
-
     durationMinutes,
 
     estimatedArrival:
