@@ -7,7 +7,7 @@ import './index.css';
 
 function setupBrowserIcon(): void {
   const iconUrl =
-    '/elive-icon-v2.png?v=2';
+    '/elive-favicon-v3.png?v=3';
 
   const oldIcons =
     document.head.querySelectorAll(
