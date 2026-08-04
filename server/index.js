@@ -1,13 +1,34 @@
 import express from 'express';
 import cors from 'cors';
 
-const app = express();
+const app =
+  express();
 
 const PORT =
-  process.env.PORT || 10000;
+  process.env.PORT ||
+  10000;
+
+const RAW_APPS_SCRIPT_URL =
+  process.env.APPS_SCRIPT_URL ||
+  '';
 
 const APPS_SCRIPT_URL =
-  process.env.APPS_SCRIPT_URL;
+  String(
+    RAW_APPS_SCRIPT_URL
+  )
+    .trim()
+    .replace(
+      /^['"]|['"];?$/g,
+      ''
+    )
+    .replace(
+      /[;\s]+$/g,
+      ''
+    )
+    .replace(
+      /\/+$/,
+      ''
+    );
 
 const TPCAP_LATITUDE =
   13.623729606202758;
@@ -18,20 +39,71 @@ const TPCAP_LONGITUDE =
 const OSRM_BASE_URL =
   'https://router.project-osrm.org';
 
+const FRESH_CACHE_DURATION_MS =
+  60000;
+
+const STALE_CACHE_DURATION_MS =
+  1800000;
+
+const APPS_SCRIPT_TIMEOUT_MS =
+  30000;
+
+const APPS_SCRIPT_MAX_ATTEMPTS =
+  3;
+
+const RETRYABLE_STATUS_CODES =
+  new Set([
+    404,
+    408,
+    425,
+    429,
+    500,
+    502,
+    503,
+    504,
+  ]);
+
 const allowedOrigins = [
   'https://elive.onrender.com',
   'http://localhost:5173',
   'http://localhost:3000',
 ];
 
+let truckDataCache =
+  null;
+
+let truckDataCacheTime =
+  0;
+
+let truckDataRequestPromise =
+  null;
+
+let lastAppsScriptSuccessTime =
+  null;
+
+let lastAppsScriptErrorTime =
+  null;
+
+let lastAppsScriptError =
+  null;
+
 app.use(
   cors({
-    origin(origin, callback) {
+    origin(
+      origin,
+      callback
+    ) {
       if (
         !origin ||
-        allowedOrigins.includes(origin)
+        allowedOrigins.includes(
+          origin
+        )
       ) {
-        callback(null, true);
+        callback(
+          null,
+          true
+        );
+
         return;
       }
 
@@ -72,7 +144,9 @@ function isValidLatitude(
   value
 ) {
   return (
-    Number.isFinite(value) &&
+    Number.isFinite(
+      value
+    ) &&
     value >= -90 &&
     value <= 90
   );
@@ -82,13 +156,506 @@ function isValidLongitude(
   value
 ) {
   return (
-    Number.isFinite(value) &&
+    Number.isFinite(
+      value
+    ) &&
     value >= -180 &&
     value <= 180
   );
 }
 
-async function parseJsonResponse(
+function wait(
+  milliseconds
+) {
+  return new Promise(
+    resolve => {
+      setTimeout(
+        resolve,
+        milliseconds
+      );
+    }
+  );
+}
+
+function getCacheAgeMs() {
+  if (
+    !truckDataCache ||
+    truckDataCacheTime <= 0
+  ) {
+    return null;
+  }
+
+  return (
+    Date.now() -
+    truckDataCacheTime
+  );
+}
+
+function hasFreshTruckCache() {
+  const cacheAgeMs =
+    getCacheAgeMs();
+
+  return (
+    cacheAgeMs !== null &&
+    cacheAgeMs <=
+      FRESH_CACHE_DURATION_MS
+  );
+}
+
+function hasUsableStaleCache() {
+  const cacheAgeMs =
+    getCacheAgeMs();
+
+  return (
+    cacheAgeMs !== null &&
+    cacheAgeMs <=
+      STALE_CACHE_DURATION_MS
+  );
+}
+
+function createCacheResponse(
+  data,
+  cacheStatus
+) {
+  const cacheAgeMs =
+    getCacheAgeMs();
+
+  return {
+    ...data,
+
+    meta: {
+      source:
+        cacheStatus,
+
+      cacheAgeSeconds:
+        cacheAgeMs === null
+          ? 0
+          : Math.max(
+              0,
+              Math.round(
+                cacheAgeMs /
+                1000
+              )
+            ),
+
+      serverTime:
+        new Date()
+          .toISOString(),
+
+      lastAppsScriptSuccessTime,
+
+      lastAppsScriptErrorTime,
+    },
+  };
+}
+
+function getMaskedAppsScriptUrl() {
+  if (!APPS_SCRIPT_URL) {
+    return 'NOT_CONFIGURED';
+  }
+
+  if (
+    APPS_SCRIPT_URL.length <=
+    40
+  ) {
+    return 'CONFIGURED';
+  }
+
+  return (
+    `${APPS_SCRIPT_URL.slice(
+      0,
+      34
+    )}` +
+    `...` +
+    `${APPS_SCRIPT_URL.slice(
+      -12
+    )}`
+  );
+}
+
+function validateAppsScriptUrl() {
+  if (!APPS_SCRIPT_URL) {
+    throw new Error(
+      'APPS_SCRIPT_URL is not configured on Render.'
+    );
+  }
+
+  if (
+    !APPS_SCRIPT_URL.startsWith(
+      'https://script.google.com/macros/s/'
+    )
+  ) {
+    throw new Error(
+      'APPS_SCRIPT_URL must start with https://script.google.com/macros/s/'
+    );
+  }
+
+  if (
+    !APPS_SCRIPT_URL.endsWith(
+      '/exec'
+    )
+  ) {
+    throw new Error(
+      'APPS_SCRIPT_URL must end with /exec'
+    );
+  }
+
+  if (
+    APPS_SCRIPT_URL.includes(
+      'script.googleusercontent.com'
+    )
+  ) {
+    throw new Error(
+      'APPS_SCRIPT_URL must use the permanent script.google.com deployment URL.'
+    );
+  }
+}
+
+async function parseJsonText(
+  responseText,
+  errorMessage
+) {
+  try {
+    return JSON.parse(
+      responseText
+    );
+  } catch {
+    throw new Error(
+      errorMessage
+    );
+  }
+}
+
+async function fetchWithTimeout(
+  url,
+  options,
+  timeoutMilliseconds
+) {
+  const controller =
+    new AbortController();
+
+  const timeoutId =
+    setTimeout(
+      () => {
+        controller.abort();
+      },
+      timeoutMilliseconds
+    );
+
+  try {
+    return await fetch(
+      url,
+      {
+        ...options,
+        signal:
+          controller.signal,
+      }
+    );
+  } finally {
+    clearTimeout(
+      timeoutId
+    );
+  }
+}
+
+async function requestAppsScriptTruckData() {
+  validateAppsScriptUrl();
+
+  const googleUrl =
+    `${APPS_SCRIPT_URL}?action=getTrucks`;
+
+  let finalError =
+    null;
+
+  for (
+    let attempt = 1;
+    attempt <=
+      APPS_SCRIPT_MAX_ATTEMPTS;
+    attempt += 1
+  ) {
+    try {
+      console.log(
+        `Calling Google Apps Script, attempt ${attempt} of ${APPS_SCRIPT_MAX_ATTEMPTS}`
+      );
+
+      const googleResponse =
+        await fetchWithTimeout(
+          googleUrl,
+          {
+            method:
+              'GET',
+
+            redirect:
+              'follow',
+
+            headers: {
+              Accept:
+                'application/json',
+
+              'User-Agent':
+                'ELIVE-API/1.0',
+            },
+          },
+          APPS_SCRIPT_TIMEOUT_MS
+        );
+
+      const responseText =
+        await googleResponse.text();
+
+      if (
+        googleResponse.ok
+      ) {
+        const data =
+          await parseJsonText(
+            responseText,
+            'Google Apps Script returned invalid JSON.'
+          );
+
+        if (
+          data &&
+          data.error
+        ) {
+          throw new Error(
+            String(
+              data.error
+            )
+          );
+        }
+
+        if (
+          !data ||
+          data.status !==
+            'success'
+        ) {
+          throw new Error(
+            'Google Apps Script did not return success status.'
+          );
+        }
+
+        truckDataCache =
+          data;
+
+        truckDataCacheTime =
+          Date.now();
+
+        lastAppsScriptSuccessTime =
+          new Date()
+            .toISOString();
+
+        lastAppsScriptErrorTime =
+          null;
+
+        lastAppsScriptError =
+          null;
+
+        console.log(
+          'Google Apps Script data loaded successfully.'
+        );
+
+        return data;
+      }
+
+      const responsePreview =
+        responseText
+          .replace(
+            /\s+/g,
+            ' '
+          )
+          .trim()
+          .slice(
+            0,
+            300
+          );
+
+      const statusError =
+        new Error(
+          `Google Apps Script returned HTTP ${googleResponse.status}.`
+        );
+
+      statusError.statusCode =
+        googleResponse.status;
+
+      statusError.responsePreview =
+        responsePreview;
+
+      finalError =
+        statusError;
+
+      console.error(
+        'Google Apps Script request failed:',
+        {
+          attempt,
+          status:
+            googleResponse.status,
+          finalHost:
+            (() => {
+              try {
+                return new URL(
+                  googleResponse.url
+                ).host;
+              } catch {
+                return 'unknown';
+              }
+            })(),
+          responsePreview,
+        }
+      );
+
+      if (
+        !RETRYABLE_STATUS_CODES.has(
+          googleResponse.status
+        )
+      ) {
+        break;
+      }
+    } catch (error) {
+      finalError =
+        error;
+
+      const errorName =
+        error instanceof Error
+          ? error.name
+          : 'UnknownError';
+
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : String(
+              error
+            );
+
+      console.error(
+        'Google Apps Script connection error:',
+        {
+          attempt,
+          errorName,
+          errorMessage,
+        }
+      );
+    }
+
+    if (
+      attempt <
+      APPS_SCRIPT_MAX_ATTEMPTS
+    ) {
+      const retryDelayMs =
+        attempt === 1
+          ? 1000
+          : 2500;
+
+      console.log(
+        `Retrying Google Apps Script in ${retryDelayMs} ms.`
+      );
+
+      await wait(
+        retryDelayMs
+      );
+    }
+  }
+
+  const finalMessage =
+    finalError instanceof Error
+      ? finalError.message
+      : 'Google Apps Script request failed.';
+
+  lastAppsScriptError =
+    finalMessage;
+
+  lastAppsScriptErrorTime =
+    new Date()
+      .toISOString();
+
+  throw new Error(
+    finalMessage
+  );
+}
+
+async function getTruckDataWithCache(
+  forceRefresh = false
+) {
+  if (
+    !forceRefresh &&
+    hasFreshTruckCache()
+  ) {
+    return {
+      data:
+        truckDataCache,
+
+      source:
+        'fresh-cache',
+    };
+  }
+
+  if (
+    truckDataRequestPromise
+  ) {
+    console.log(
+      'Waiting for the active Google Apps Script request.'
+    );
+
+    try {
+      const data =
+        await truckDataRequestPromise;
+
+      return {
+        data,
+        source:
+          'shared-request',
+      };
+    } catch (error) {
+      if (
+        hasUsableStaleCache()
+      ) {
+        return {
+          data:
+            truckDataCache,
+
+          source:
+            'stale-cache',
+        };
+      }
+
+      throw error;
+    }
+  }
+
+  truckDataRequestPromise =
+    requestAppsScriptTruckData();
+
+  try {
+    const data =
+      await truckDataRequestPromise;
+
+    return {
+      data,
+      source:
+        'google-apps-script',
+    };
+  } catch (error) {
+    if (
+      hasUsableStaleCache()
+    ) {
+      console.warn(
+        'Using stale truck cache because Google Apps Script is temporarily unavailable.'
+      );
+
+      return {
+        data:
+          truckDataCache,
+
+        source:
+          'stale-cache',
+      };
+    }
+
+    throw error;
+  } finally {
+    truckDataRequestPromise =
+      null;
+  }
+}
+
+async function parseUpstreamJson(
   response
 ) {
   const responseText =
@@ -111,22 +678,41 @@ async function parseJsonResponse(
 
 app.get(
   '/',
-  (req, res) => {
+  (
+    req,
+    res
+  ) => {
     res.json({
-      status: 'success',
-      service: 'ELIVE API',
+      status:
+        'success',
+
+      service:
+        'ELIVE API',
+
       message:
         'Backend proxy is running.',
+
+      appsScriptUrl:
+        getMaskedAppsScriptUrl(),
     });
   }
 );
 
 app.get(
   '/health',
-  (req, res) => {
+  (
+    req,
+    res
+  ) => {
+    const cacheAgeMs =
+      getCacheAgeMs();
+
     res.json({
-      status: 'ok',
-      version: '3',
+      status:
+        'ok',
+
+      version:
+        '4',
 
       routes: [
         '/health',
@@ -135,157 +721,142 @@ app.get(
         '/api/route-to-tpcap',
       ],
 
+      appsScript: {
+        configured:
+          Boolean(
+            APPS_SCRIPT_URL
+          ),
+
+        validFormat:
+          Boolean(
+            APPS_SCRIPT_URL &&
+            APPS_SCRIPT_URL.startsWith(
+              'https://script.google.com/macros/s/'
+            ) &&
+            APPS_SCRIPT_URL.endsWith(
+              '/exec'
+            )
+          ),
+
+        lastSuccess:
+          lastAppsScriptSuccessTime,
+
+        lastError:
+          lastAppsScriptErrorTime,
+
+        lastErrorMessage:
+          lastAppsScriptError,
+      },
+
+      cache: {
+        available:
+          Boolean(
+            truckDataCache
+          ),
+
+        ageSeconds:
+          cacheAgeMs === null
+            ? null
+            : Math.max(
+                0,
+                Math.round(
+                  cacheAgeMs /
+                  1000
+                )
+              ),
+
+        freshDurationSeconds:
+          Math.round(
+            FRESH_CACHE_DURATION_MS /
+            1000
+          ),
+
+        staleDurationSeconds:
+          Math.round(
+            STALE_CACHE_DURATION_MS /
+            1000
+          ),
+      },
+
       destination: {
-        name: 'TPCAP',
+        name:
+          'TPCAP',
+
         latitude:
           TPCAP_LATITUDE,
+
         longitude:
           TPCAP_LONGITUDE,
       },
 
       timestamp:
-        new Date().toISOString(),
+        new Date()
+          .toISOString(),
     });
   }
 );
 
 app.get(
   '/api/trucks',
-  async (req, res) => {
+  async (
+    req,
+    res
+  ) => {
     try {
-      if (!APPS_SCRIPT_URL) {
-        return res
-          .status(500)
-          .json({
-            error:
-              'APPS_SCRIPT_URL is not configured on Render.',
-          });
-      }
+      const forceRefresh =
+        String(
+          req.query.refresh ||
+          ''
+        ).toLowerCase() ===
+          'true';
 
-      const separator =
-        APPS_SCRIPT_URL.includes('?')
-          ? '&'
-          : '?';
-
-      const googleUrl =
-        `${APPS_SCRIPT_URL}${separator}` +
-        `action=getTrucks`;
-
-      const googleResponse =
-        await fetch(
-          googleUrl,
-          {
-            method: 'GET',
-            redirect: 'follow',
-
-            headers: {
-              Accept:
-                'application/json',
-            },
-          }
+      const result =
+        await getTruckDataWithCache(
+          forceRefresh
         );
-
-      const responseText =
-        await googleResponse.text();
-
-      if (!googleResponse.ok) {
-        console.error(
-          'Google Apps Script GET error:',
-          googleResponse.status,
-          responseText
-        );
-
-        return res
-          .status(502)
-          .json({
-            error:
-              'Google Apps Script request failed.',
-
-            upstreamStatus:
-              googleResponse.status,
-          });
-      }
-
-      let data;
-
-      try {
-        data =
-          JSON.parse(
-            responseText
-          );
-      } catch {
-        const contentType =
-          googleResponse
-            .headers
-            .get('content-type') || '';
-
-        const responsePreview =
-          responseText
-            .slice(0, 1000)
-            .replace(/\s+/g, ' ')
-            .trim();
-
-        console.error(
-          'Apps Script returned invalid JSON:',
-          {
-            status:
-              googleResponse.status,
-
-            finalUrl:
-              googleResponse.url,
-
-            contentType,
-
-            responsePreview,
-          }
-        );
-
-        return res
-          .status(502)
-          .json({
-            error:
-              'Google Apps Script returned invalid JSON.',
-
-            upstreamStatus:
-              googleResponse.status,
-
-            finalUrl:
-              googleResponse.url,
-
-            contentType,
-
-            responsePreview,
-          });
-      }
-
-      if (data.error) {
-        return res
-          .status(502)
-          .json({
-            error:
-              data.error,
-          });
-      }
 
       res.setHeader(
         'Cache-Control',
         'no-store'
       );
 
-      return res.json(data);
-    } catch (error) {
-      console.error(
-        'GET /api/trucks failed:',
-        error
+      res.setHeader(
+        'X-ELIVE-Data-Source',
+        result.source
       );
 
       return res
-        .status(500)
+        .status(200)
+        .json(
+          createCacheResponse(
+            result.data,
+            result.source
+          )
+        );
+    } catch (error) {
+      console.error(
+        'GET /api/trucks failed:',
+        error instanceof Error
+          ? error.message
+          : error
+      );
+
+      return res
+        .status(502)
         .json({
           error:
             error instanceof Error
               ? error.message
               : 'Unable to retrieve truck data.',
+
+          timestamp:
+            new Date()
+              .toISOString(),
+
+          cacheAvailable:
+            Boolean(
+              truckDataCache
+            ),
         });
     }
   }
@@ -293,16 +864,12 @@ app.get(
 
 app.post(
   '/api/trucks/update',
-  async (req, res) => {
+  async (
+    req,
+    res
+  ) => {
     try {
-      if (!APPS_SCRIPT_URL) {
-        return res
-          .status(500)
-          .json({
-            error:
-              'APPS_SCRIPT_URL is not configured on Render.',
-          });
-      }
+      validateAppsScriptUrl();
 
       let requestData =
         req.body;
@@ -339,7 +906,13 @@ app.post(
           });
       }
 
-      if (!requestData.truckId) {
+      const truckId =
+        String(
+          requestData.truckId ||
+          ''
+        ).trim();
+
+      if (!truckId) {
         return res
           .status(400)
           .json({
@@ -362,11 +935,14 @@ app.post(
       }
 
       const googleResponse =
-        await fetch(
+        await fetchWithTimeout(
           APPS_SCRIPT_URL,
           {
-            method: 'POST',
-            redirect: 'follow',
+            method:
+              'POST',
+
+            redirect:
+              'follow',
 
             headers: {
               'Content-Type':
@@ -374,6 +950,9 @@ app.post(
 
               Accept:
                 'application/json',
+
+              'User-Agent':
+                'ELIVE-API/1.0',
             },
 
             body:
@@ -381,47 +960,46 @@ app.post(
                 action:
                   'updateTruck',
 
-                truckId:
-                  requestData.truckId,
+                truckId,
 
                 newRow:
                   requestData.newRow,
               }),
-          }
+          },
+          APPS_SCRIPT_TIMEOUT_MS
         );
 
       const responseText =
         await googleResponse.text();
 
-      if (!googleResponse.ok) {
-        console.error(
-          'Google Apps Script POST error:',
-          googleResponse.status,
-          responseText
-        );
-
-        return res
-          .status(502)
-          .json({
-            error:
-              'Google Apps Script update failed.',
-
-            upstreamStatus:
-              googleResponse.status,
-          });
-      }
-
-      let data;
+      let result;
 
       try {
-        data =
+        result =
           JSON.parse(
             responseText
           );
       } catch {
-        console.error(
-          'Invalid update JSON from Google Apps Script:',
+        const responsePreview =
           responseText
+            .replace(
+              /\s+/g,
+              ' '
+            )
+            .trim()
+            .slice(
+              0,
+              300
+            );
+
+        console.error(
+          'Google Apps Script update returned invalid JSON:',
+          {
+            status:
+              googleResponse.status,
+
+            responsePreview,
+          }
         );
 
         return res
@@ -432,16 +1010,52 @@ app.post(
           });
       }
 
-      if (data.error) {
+      if (
+        !googleResponse.ok
+      ) {
         return res
           .status(502)
           .json({
             error:
-              data.error,
+              result.error ||
+              `Google Apps Script update failed with HTTP ${googleResponse.status}.`,
           });
       }
 
-      return res.json(data);
+      if (
+        result.error
+      ) {
+        return res
+          .status(502)
+          .json({
+            error:
+              String(
+                result.error
+              ),
+          });
+      }
+
+      if (
+        result.success !==
+        true
+      ) {
+        return res
+          .status(502)
+          .json({
+            error:
+              'Google Apps Script did not confirm the update.',
+          });
+      }
+
+      truckDataCache =
+        null;
+
+      truckDataCacheTime =
+        0;
+
+      return res
+        .status(200)
+        .json(result);
     } catch (error) {
       console.error(
         'POST /api/trucks/update failed:',
@@ -462,7 +1076,10 @@ app.post(
 
 app.get(
   '/api/route-to-tpcap',
-  async (req, res) => {
+  async (
+    req,
+    res
+  ) => {
     try {
       const latitude =
         Number(
@@ -502,53 +1119,32 @@ app.get(
         `&geometries=geojson` +
         `&steps=false`;
 
-      const controller =
-        new AbortController();
+      const routeResponse =
+        await fetchWithTimeout(
+          routeUrl,
+          {
+            method:
+              'GET',
 
-      const timeoutId =
-        setTimeout(
-          () => {
-            controller.abort();
+            headers: {
+              Accept:
+                'application/json',
+
+              'User-Agent':
+                'ELIVE-API/1.0',
+            },
           },
           15000
         );
 
-      let routeResponse;
-
-      try {
-        routeResponse =
-          await fetch(
-            routeUrl,
-            {
-              method: 'GET',
-
-              headers: {
-                Accept:
-                  'application/json',
-              },
-
-              signal:
-                controller.signal,
-            }
-          );
-      } finally {
-        clearTimeout(
-          timeoutId
-        );
-      }
-
       const routeData =
-        await parseJsonResponse(
+        await parseUpstreamJson(
           routeResponse
         );
 
-      if (!routeResponse.ok) {
-        console.error(
-          'OSRM request failed:',
-          routeResponse.status,
-          routeData
-        );
-
+      if (
+        !routeResponse.ok
+      ) {
         return res
           .status(502)
           .json({
@@ -559,7 +1155,8 @@ app.get(
       }
 
       if (
-        routeData.code !== 'Ok'
+        routeData.code !==
+        'Ok'
       ) {
         return res
           .status(404)
@@ -619,14 +1216,18 @@ app.get(
         Math.max(
           1,
           Math.round(
-            durationSeconds / 60
+            durationSeconds /
+            60
           )
         );
 
       const estimatedArrivalDate =
         new Date(
           Date.now() +
-          durationSeconds * 1000
+          Math.round(
+            durationSeconds *
+            1000
+          )
         );
 
       const estimatedArrivalBangkok =
@@ -668,7 +1269,8 @@ app.get(
       return res
         .status(200)
         .json({
-          success: true,
+          success:
+            true,
 
           origin: {
             latitude,
@@ -676,7 +1278,8 @@ app.get(
           },
 
           destination: {
-            name: 'TPCAP',
+            name:
+              'TPCAP',
 
             latitude:
               TPCAP_LATITUDE,
@@ -692,7 +1295,9 @@ app.get(
               (
                 distanceMeters /
                 1000
-              ).toFixed(1)
+              ).toFixed(
+                1
+              )
             ),
 
           durationSeconds,
@@ -740,7 +1345,10 @@ app.get(
 );
 
 app.use(
-  (req, res) => {
+  (
+    req,
+    res
+  ) => {
     res
       .status(404)
       .json({
@@ -772,6 +1380,22 @@ app.use(
       });
   }
 );
+
+try {
+  validateAppsScriptUrl();
+
+  console.log(
+    'Apps Script URL validated:',
+    getMaskedAppsScriptUrl()
+  );
+} catch (error) {
+  console.error(
+    'Apps Script configuration warning:',
+    error instanceof Error
+      ? error.message
+      : error
+  );
+}
 
 app.listen(
   PORT,
