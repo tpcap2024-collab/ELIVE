@@ -43,6 +43,8 @@ export interface MasterPlanRow {
   planEtd: string;
 }
 
+export type EditableMasterPlanRow = Omit<MasterPlanRow, 'sheetRow'>;
+
 export interface MasterPlanValidationError {
   sheetRow: number;
   errors: string[];
@@ -63,6 +65,20 @@ export interface MasterPlanResponse {
     cacheAgeSeconds?: number;
     serverTime?: string;
   };
+}
+
+export interface MasterPlanMutationResult {
+  success: boolean;
+  message: string;
+  action:
+    | 'createMasterPlanRow'
+    | 'updateMasterPlanRow'
+    | 'deleteMasterPlanRow';
+  sheetRow?: number;
+  row?: MasterPlanRow;
+  previousRow?: MasterPlanRow;
+  deletedRow?: MasterPlanRow;
+  rowCount?: number;
 }
 
 export type PlanSource = 'master-plan' | 'uploaded-file';
@@ -189,7 +205,7 @@ function parseGoogleSheetsTime(value: unknown): string {
   if (value === null || value === undefined || value === '') return '';
 
   if (typeof value === 'number' && Number.isFinite(value)) {
-    const totalMinutes = Math.round(value * 24 * 60) % 1440;
+    const totalMinutes = ((Math.round(value * 1440) % 1440) + 1440) % 1440;
     return `${String(Math.floor(totalMinutes / 60)).padStart(2, '0')}:${String(
       totalMinutes % 60
     ).padStart(2, '0')}`;
@@ -212,9 +228,11 @@ function parseGoogleSheetsTime(value: unknown): string {
 
   const match = text.match(/^(\d{1,2}):(\d{2})/);
   if (!match) return '';
+
   const hour = Number(match[1]);
   const minute = Number(match[2]);
   if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return '';
+
   return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 }
 
@@ -345,7 +363,7 @@ function validatePlanTime(value: string, fieldName: string): string {
 function normalizePlanWorkingDays(value: number[]): number[] {
   const input = Array.isArray(value) ? value : [1, 2, 3, 4, 5, 6];
   return [...new Set(input.map(Number))]
-    .filter((day) => Number.isInteger(day) && day >= 1 && day <= 7)
+    .filter(day => Number.isInteger(day) && day >= 1 && day <= 7)
     .sort((first, second) => first - second);
 }
 
@@ -416,10 +434,64 @@ function validateEditablePlan(plan: EditablePlan): EditablePlan {
   return validPlan;
 }
 
+function validateMasterPlanRow(row: EditableMasterPlanRow): EditableMasterPlanRow {
+  if (!row || typeof row !== 'object') {
+    throw new Error('Master Plan data is required.');
+  }
+
+  const validRow: EditableMasterPlanRow = {
+    route: String(row.route || '').trim(),
+    company: String(row.company || '').trim(),
+    truckName: String(row.truckName || '').trim(),
+    truckType: String(row.truckType || '').trim(),
+    driverName: String(row.driverName || '').trim(),
+    telDriver: String(row.telDriver || '').trim(),
+    project: String(row.project || '').trim(),
+    dropPoint: String(row.dropPoint || '').trim(),
+    planEta: validatePlanTime(row.planEta, 'Plan ETA'),
+    planEtd: validatePlanTime(row.planEtd, 'Plan ETD'),
+  };
+
+  if (!validRow.route) throw new Error('Route is required.');
+  if (!validRow.company) throw new Error('Company is required.');
+  if (!validRow.truckName) throw new Error('Truck Name is required.');
+  if (!validRow.truckType) throw new Error('Truck Type is required.');
+  if (!validRow.project) throw new Error('Project is required.');
+  if (!validRow.dropPoint) throw new Error('Drop Point is required.');
+
+  return validRow;
+}
+
+function validateMasterPlanSheetRow(value: number): number {
+  const sheetRow = Number(value);
+  if (!Number.isInteger(sheetRow) || sheetRow < 2) {
+    throw new Error('Master Plan sheet row is invalid.');
+  }
+  return sheetRow;
+}
+
 function normalizeCodeRun(value: string): string {
   const codeRun = String(value || '').trim().toUpperCase();
   if (!/^A\d+$/.test(codeRun)) throw new Error('Code run format is invalid.');
   return codeRun;
+}
+
+function mapMasterPlanRow(value: any): MasterPlanRow {
+  return {
+    sheetRow: Number.isFinite(Number(value?.sheetRow))
+      ? Number(value.sheetRow)
+      : undefined,
+    route: String(value?.route || '').trim(),
+    company: String(value?.company || '').trim(),
+    truckName: String(value?.truckName || '').trim(),
+    truckType: String(value?.truckType || '').trim(),
+    driverName: String(value?.driverName || '').trim(),
+    telDriver: String(value?.telDriver || '').trim(),
+    project: String(value?.project || '').trim(),
+    dropPoint: String(value?.dropPoint || '').trim(),
+    planEta: parseGoogleSheetsTime(value?.planEta),
+    planEtd: parseGoogleSheetsTime(value?.planEtd),
+  };
 }
 
 function mapDailyPlan(value: any): DailyPlan {
@@ -459,21 +531,7 @@ export async function fetchMasterPlan(
   }
 
   const rows: MasterPlanRow[] = (Array.isArray(data.rows) ? data.rows : []).map(
-    (row: any) => ({
-      sheetRow: Number.isFinite(Number(row.sheetRow))
-        ? Number(row.sheetRow)
-        : undefined,
-      route: String(row.route || '').trim(),
-      company: String(row.company || '').trim(),
-      truckName: String(row.truckName || '').trim(),
-      truckType: String(row.truckType || '').trim(),
-      driverName: String(row.driverName || '').trim(),
-      telDriver: String(row.telDriver || '').trim(),
-      project: String(row.project || '').trim(),
-      dropPoint: String(row.dropPoint || '').trim(),
-      planEta: parseGoogleSheetsTime(row.planEta),
-      planEtd: parseGoogleSheetsTime(row.planEtd),
-    })
+    mapMasterPlanRow
   );
 
   const validationErrors: MasterPlanValidationError[] = Array.isArray(
@@ -511,6 +569,111 @@ export async function fetchMasterPlan(
               : undefined,
           }
         : undefined,
+  };
+}
+
+export async function createMasterPlanRow(
+  row: EditableMasterPlanRow
+): Promise<MasterPlanMutationResult> {
+  const validRow = validateMasterPlanRow(row);
+  const data: PlanApiResponse<MasterPlanMutationResult> = await fetchApiRequest(
+    '/api/master-plan/rows',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ row: validRow }),
+    }
+  );
+
+  if (data.success !== true || !data.result) {
+    throw new Error(
+      data.error || 'The server did not confirm Master Plan creation.'
+    );
+  }
+
+  const result = data.result;
+  return {
+    success: true,
+    action: 'createMasterPlanRow',
+    message: String(result.message || 'เพิ่ม Master Plan สำเร็จ'),
+    sheetRow: Number.isFinite(Number(result.sheetRow))
+      ? Number(result.sheetRow)
+      : result.row?.sheetRow,
+    row: result.row ? mapMasterPlanRow(result.row) : undefined,
+  };
+}
+
+export async function updateMasterPlanRow(
+  sheetRow: number,
+  row: EditableMasterPlanRow
+): Promise<MasterPlanMutationResult> {
+  const validSheetRow = validateMasterPlanSheetRow(sheetRow);
+  const validRow = validateMasterPlanRow(row);
+  const data: PlanApiResponse<MasterPlanMutationResult> = await fetchApiRequest(
+    `/api/master-plan/rows/${encodeURIComponent(String(validSheetRow))}`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ row: validRow }),
+    }
+  );
+
+  if (data.success !== true || !data.result) {
+    throw new Error(
+      data.error || 'The server did not confirm Master Plan update.'
+    );
+  }
+
+  const result = data.result;
+  return {
+    success: true,
+    action: 'updateMasterPlanRow',
+    message: String(
+      result.message || `แก้ไข Master Plan แถว ${validSheetRow} สำเร็จ`
+    ),
+    sheetRow: Number.isFinite(Number(result.sheetRow))
+      ? Number(result.sheetRow)
+      : validSheetRow,
+    previousRow: result.previousRow
+      ? mapMasterPlanRow(result.previousRow)
+      : undefined,
+    row: result.row
+      ? mapMasterPlanRow(result.row)
+      : { sheetRow: validSheetRow, ...validRow },
+  };
+}
+
+export async function deleteMasterPlanRow(
+  sheetRow: number
+): Promise<MasterPlanMutationResult> {
+  const validSheetRow = validateMasterPlanSheetRow(sheetRow);
+  const data: PlanApiResponse<MasterPlanMutationResult> = await fetchApiRequest(
+    `/api/master-plan/rows/${encodeURIComponent(String(validSheetRow))}`,
+    { method: 'DELETE' }
+  );
+
+  if (data.success !== true || !data.result) {
+    throw new Error(
+      data.error || 'The server did not confirm Master Plan deletion.'
+    );
+  }
+
+  const result = data.result;
+  return {
+    success: true,
+    action: 'deleteMasterPlanRow',
+    message: String(
+      result.message || `ลบ Master Plan แถว ${validSheetRow} สำเร็จ`
+    ),
+    sheetRow: Number.isFinite(Number(result.sheetRow))
+      ? Number(result.sheetRow)
+      : validSheetRow,
+    deletedRow: result.deletedRow
+      ? mapMasterPlanRow(result.deletedRow)
+      : undefined,
+    rowCount: Number.isFinite(Number(result.rowCount))
+      ? Number(result.rowCount)
+      : undefined,
   };
 }
 
@@ -631,18 +794,17 @@ export async function fetchDailyPlans(date: string): Promise<DailyPlansResult> {
     date: String(data.result.date || validDate),
     rowCount: Number(data.result.rowCount ?? rows.length),
     activeCount: Number(
-      data.result.activeCount ?? rows.filter((row) => row.remark !== 'CANCEL').length
+      data.result.activeCount ?? rows.filter(row => row.remark !== 'CANCEL').length
     ),
     regularCount: Number(
       data.result.regularCount ??
-        rows.filter((row) => row.remark === 'REGULAR').length
+        rows.filter(row => row.remark === 'REGULAR').length
     ),
     extraCount: Number(
-      data.result.extraCount ?? rows.filter((row) => row.remark === 'EXTRA').length
+      data.result.extraCount ?? rows.filter(row => row.remark === 'EXTRA').length
     ),
     cancelCount: Number(
-      data.result.cancelCount ??
-        rows.filter((row) => row.remark === 'CANCEL').length
+      data.result.cancelCount ?? rows.filter(row => row.remark === 'CANCEL').length
     ),
     rows,
   };
@@ -774,24 +936,21 @@ function mapTruckStatus(currentStatus: string): TruckStatus {
     value.includes('complete') ||
     value.includes('completed') ||
     value.includes('เสร็จ')
-  )
-    return 'COMPLETED';
+  ) return 'COMPLETED';
   if (value.includes('truck out') || value.includes('ออก')) return 'TRUCK_OUT';
   if (
     value.includes('unloading at tpcap') ||
     value.includes('arrive') ||
     value.includes('arrived') ||
     value.includes('ถึง')
-  )
-    return 'UNLOADING_AT_TPCAP';
+  ) return 'UNLOADING_AT_TPCAP';
   if (value.includes('dock in')) return 'DOCK_IN';
   if (
     value.includes('กำลังลงงาน') ||
     value.includes('dock') ||
     value.includes('unloading') ||
     value.includes('unload at tpcap')
-  )
-    return 'UNLOADING';
+  ) return 'UNLOADING';
   if (value.includes('wait') || value.includes('waiting') || value.includes('รอ'))
     return 'WAITING_AREA';
   return 'TRAVELING';
@@ -944,7 +1103,10 @@ export async function updateTruckInSheets(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ truckId, newRow }),
   });
-  if (result.success !== true) throw new Error('The server did not confirm the update.');
+
+  if (result.success !== true) {
+    throw new Error('The server did not confirm the update.');
+  }
 }
 
 function normalizeGpsHeader(value: unknown): string {
@@ -952,8 +1114,8 @@ function normalizeGpsHeader(value: unknown): string {
 }
 
 function findGpsColumn(headers: string[], possibleNames: string[]): number {
-  return headers.findIndex((header) =>
-    possibleNames.some((name) => header.includes(normalizeGpsHeader(name)))
+  return headers.findIndex(header =>
+    possibleNames.some(name => header.includes(normalizeGpsHeader(name)))
   );
 }
 
@@ -999,6 +1161,7 @@ export async function fetchGpsLocations(sourceData?: any): Promise<GpsLocation[]
   const locations: GpsLocation[] = [];
   for (const row of gpsData.slice(1)) {
     if (!Array.isArray(row)) continue;
+
     const latitude = parseGpsNumber(row[latIndex]);
     const longitude = parseGpsNumber(row[lngIndex]);
     if (
@@ -1008,11 +1171,11 @@ export async function fetchGpsLocations(sourceData?: any): Promise<GpsLocation[]
       latitude > 90 ||
       longitude < -180 ||
       longitude > 180
-    )
-      continue;
+    ) continue;
 
     const speed = speedIndex >= 0 ? parseGpsNumber(row[speedIndex]) : 0;
     const heading = headingIndex >= 0 ? parseGpsNumber(row[headingIndex]) : 0;
+
     locations.push({
       gpsId: readGpsCell(row, gpsIdIndex) || `${latitude},${longitude}`,
       licensePlate: readGpsCell(row, plateIndex),
@@ -1026,6 +1189,7 @@ export async function fetchGpsLocations(sourceData?: any): Promise<GpsLocation[]
       receivedAt: readGpsCell(row, receivedIndex),
     });
   }
+
   return locations;
 }
 
@@ -1048,6 +1212,7 @@ export async function fetchRouteToTpcap(
   const data = await fetchApiRequest(`/api/route-to-tpcap?${query.toString()}`, {
     method: 'GET',
   });
+
   if (data.success !== true) {
     throw new Error('ระบบไม่สามารถยืนยันผลการคำนวณเส้นทางได้');
   }
@@ -1056,6 +1221,7 @@ export async function fetchRouteToTpcap(
   const distanceKilometers = Number(data.distanceKilometers);
   const durationSeconds = Number(data.durationSeconds);
   const durationMinutes = Number(data.durationMinutes);
+
   if (
     !Number.isFinite(distanceMeters) ||
     !Number.isFinite(distanceKilometers) ||
@@ -1075,9 +1241,9 @@ export async function fetchRouteToTpcap(
       (coordinate: unknown): coordinate is unknown[] =>
         Array.isArray(coordinate) && coordinate.length >= 2
     )
-    .map((coordinate) => [Number(coordinate[0]), Number(coordinate[1])])
+    .map((coordinate: unknown[]) => [Number(coordinate[0]), Number(coordinate[1])])
     .filter(
-      ([lng, lat]) =>
+      ([lng, lat]: number[]) =>
         Number.isFinite(lng) &&
         Number.isFinite(lat) &&
         lng >= -180 &&
@@ -1085,6 +1251,7 @@ export async function fetchRouteToTpcap(
         lat >= -90 &&
         lat <= 90
     );
+
   if (validCoordinates.length < 2) {
     throw new Error('ข้อมูลเส้นทางมีจำนวนพิกัดไม่เพียงพอ');
   }
