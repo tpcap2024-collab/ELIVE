@@ -290,240 +290,113 @@ function findColumn(
   );
 }
 
-function parseTemplateRows(
-  rawRows: unknown[][]
-): {
+function parseTemplateRows(rawRows: unknown[][]): {
   rows: MasterPlanRow[];
   validationErrors: MasterPlanValidationError[];
 } {
-  if (
-    rawRows.length < 2
-  ) {
+  if (rawRows.length < 2) {
     throw new Error(
       'ไฟล์ต้องมีหัวตารางและข้อมูลอย่างน้อย 1 แถว'
     );
   }
 
-  const headers =
-    rawRows[0].map(
-      cleanHeader
-    );
+  const headers = rawRows[0].map(cleanHeader);
 
-  const indexes =
-    Object.fromEntries(
-      Object.entries(
-        HEADER_ALIASES
-      ).map(
-        ([key, aliases]) => [
-          key,
-          findColumn(
-            headers,
-            aliases
-          ),
-        ]
-      )
-    ) as Record<
-      keyof Omit<
-        MasterPlanRow,
-        'sheetRow'
-      >,
-      number
-    >;
+  const indexes = Object.fromEntries(
+    Object.entries(HEADER_ALIASES).map(([key, aliases]) => [
+      key,
+      findColumn(headers, aliases),
+    ])
+  ) as Record<
+    keyof Omit<MasterPlanRow, 'sheetRow'>,
+    number
+  >;
 
-  const missing =
-    Object.entries(indexes)
-      .filter(
-        ([[
-,
-Column(
-,
+  const missing = Object.entries(indexes)
+    .filter(([, columnIndex]) => columnIndex < 0)
+    .map(([key]) => key);
 
- as Record<
- Omit<
-     )
-      .map(
-        ([key]) => key
-      );
-
-  if (missing.length) {
+  if (missing.length > 0) {
     throw new Error(
       `ไม่พบคอลัมน์ที่จำเป็น: ${missing.join(', ')}`
     );
   }
 
-  const rows: MasterPlanRow[] =
-    [];
+  const rows: MasterPlanRow[] = [];
+  const validationErrors: MasterPlanValidationError[] = [];
 
-  const validationErrors:
-    MasterPlanValidationError[] =
-    [];
+  rawRows.slice(1, 501).forEach((rawRow, index) => {
+    const sheetRow = index + 2;
 
-  rawRows
-    .slice(1, 501)
-    .forEach(
-      (
-        rawRow,
-        index
-      ) => {
-        const sheetRow =
-          index + 2;
+    const row: MasterPlanRow = {
+      sheetRow,
+      route: cleanCell(rawRow[indexes.route]),
+      company: cleanCell(rawRow[indexes.company]),
+      truckName: cleanCell(rawRow[indexes.truckName]),
+      truckType: cleanCell(rawRow[indexes.truckType]),
+      driverName: cleanCell(rawRow[indexes.driverName]),
+      telDriver: cleanCell(rawRow[indexes.telDriver]),
+      project: cleanCell(rawRow[indexes.project]),
+      dropPoint: cleanCell(rawRow[indexes.dropPoint]),
+      planEta: normalizeTime(rawRow[indexes.planEta]),
+      planEtd: normalizeTime(rawRow[indexes.planEtd]),
+    };
 
-        const row:
-          MasterPlanRow = {
-          sheetRow,
-
-          route:
-            cleanCell(
-              rawRow[
-                indexes.route
-              ]
-            ),
-
-          company:
-            cleanCell(
-              rawRow[
-                indexes.company
-              ]
-            ),
-
-          truckName:
-            cleanCell(
-              rawRow[
-                indexes.truckName
-              ]
-            ),
-
-          truckType:
-            cleanCell(
-              rawRow[
-                indexes.truckType
-              ]
-            ),
-
-          driverName:
-            cleanCell(
-              rawRow[
-                indexes.driverName
-              ]
-            ),
-
-          telDriver:
-            cleanCell(
-              raw[
-.driverName
-Driver:
-Cell(
-RowlDriver
-              ]
-            ),
-
-          project:
-            cleanCell(
-              rawRow[
-                indexes.project
-              ]
-            ),
-
-          dropPoint:
-            cleanCell(
-              rawRow[
-                indexes.dropPoint
-              ]
-            ),
-
-          planEta:
-            normalizeTime(
-              rawRow[
-                indexes.planEta
-              ]
-            ),
-
-          planEtd:
-            normalizeTime(
-              rawRow[
-                indexes.planEtd
-              ]
-            ),
-        };
-
-        const isEmpty =
-          Object.entries(row)
-            .every(
-              ([[
-.planEtd
- isEmpty =
-.entries( key ===
-                  'sheetRow' ||
-                value === ''
-            );
-
-        if (isEmpty) {
-          return;
-        }
-
-        const errors:
-          string[] = [];
-
-        if (!row.route) {
-          errors.push(
-            'Route ว่าง'
-          );
-        }
-
-        if (!row.company) {
-          errors.push(
-            'Company ว่าง'
-          );
-        }
-
-        if (!row.truckName) {
-          errors.push(
-            'Truck Name ว่าง'
-          );
-        }
-
-        if (!row.truckType) {
-          errors.push(
-            'Truck Type ว่าง'
-          );
-        }
-
-        if (!row.project) {
-          errors.push(
-            'Project ว่าง'
-          );
-        }
-
-        if (!row.dropPoint) {
-          errors.push(
-            'Drop Point ว่าง'
-          );
-        }
-
-        if (!row.planEta) {
-          errors.push(
-            'Plan ETA ไม่ถูกต้อง'
-          );
-        }
-
-        if (!row.planEtd) {
-          errors.push(
-            'Plan ETD ไม่ถูกต้อง'
-          );
-        }
-
-        if (errors.length) {
-          validationErrors.push({
-            sheetRow,
-            errors,
-          });
-        }
-
-        rows.push(row);
-      }
+    const isEmpty = Object.entries(row).every(
+      ([key, value]) =>
+        key === 'sheetRow' ||
+        value === ''
     );
 
-  if (!rows.length) {
+    if (isEmpty) {
+      return;
+    }
+
+    const errors: string[] = [];
+
+    if (!row.route) {
+      errors.push('Route ว่าง');
+    }
+
+    if (!row.company) {
+      errors.push('Company ว่าง');
+    }
+
+    if (!row.truckName) {
+      errors.push('Truck Name ว่าง');
+    }
+
+    if (!row.truckType) {
+      errors.push('Truck Type ว่าง');
+    }
+
+    if (!row.project) {
+      errors.push('Project ว่าง');
+    }
+
+    if (!row.dropPoint) {
+      errors.push('Drop Point ว่าง');
+    }
+
+    if (!row.planEta) {
+      errors.push('Plan ETA ไม่ถูกต้อง');
+    }
+
+    if (!row.planEtd) {
+      errors.push('Plan ETD ไม่ถูกต้อง');
+    }
+
+    if (errors.length > 0) {
+      validationErrors.push({
+        sheetRow,
+        errors,
+      });
+    }
+
+    rows.push(row);
+  });
+
+  if (rows.length === 0) {
     throw new Error(
       'ไม่พบข้อมูล Plan ในไฟล์'
     );
