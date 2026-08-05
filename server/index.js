@@ -3,74 +3,43 @@ import cors from 'cors';
 
 const app = express();
 
-const PORT = Number(
-  process.env.PORT ||
-  10000
-);
+const PORT = Number(process.env.PORT || 10000);
 
 const RAW_APPS_SCRIPT_URL =
-  process.env.APPS_SCRIPT_URL ||
-  '';
+  process.env.APPS_SCRIPT_URL || '';
 
-const APPS_SCRIPT_URL =
-  String(
-    RAW_APPS_SCRIPT_URL
-  )
-    .trim()
-    .replace(
-      /^['"]|['"];?$/g,
-      ''
-    )
-    .replace(
-      /[;\s]+$/g,
-      ''
-    )
-    .replace(
-      /\/+$/,
-      ''
-    );
+const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
+  .trim()
+  .replace(/^['"]|['"];?$/g, '')
+  .replace(/[;\s]+$/g, '')
+  .replace(/\/+$/, '');
 
-const TPCAP_LATITUDE =
-  13.623729606202758;
-
-const TPCAP_LONGITUDE =
-  101.01501162061923;
+const TPCAP_LATITUDE = 13.623729606202758;
+const TPCAP_LONGITUDE = 101.01501162061923;
 
 const OSRM_BASE_URL =
   'https://router.project-osrm.org';
 
-const FRESH_CACHE_DURATION_MS =
-  60000;
+const FRESH_CACHE_DURATION_MS = 60000;
+const STALE_CACHE_DURATION_MS = 1800000;
+const MASTER_PLAN_CACHE_DURATION_MS = 60000;
 
-const STALE_CACHE_DURATION_MS =
-  1800000;
+const APPS_SCRIPT_TIMEOUT_MS = 60000;
+const ROUTE_TIMEOUT_MS = 15000;
 
-const MASTER_PLAN_CACHE_DURATION_MS =
-  60000;
+const APPS_SCRIPT_MAX_ATTEMPTS = 3;
+const MAX_UPLOAD_ROWS = 500;
 
-const APPS_SCRIPT_TIMEOUT_MS =
-  60000;
-
-const ROUTE_TIMEOUT_MS =
-  15000;
-
-const APPS_SCRIPT_MAX_ATTEMPTS =
-  3;
-
-const MAX_UPLOAD_ROWS =
-  500;
-
-const RETRYABLE_STATUS_CODES =
-  new Set([
-    404,
-    408,
-    425,
-    429,
-    500,
-    502,
-    503,
-    504,
-  ]);
+const RETRYABLE_STATUS_CODES = new Set([
+  404,
+  408,
+  425,
+  429,
+  500,
+  502,
+  503,
+  504,
+]);
 
 const allowedOrigins = [
   'https://elive.onrender.com',
@@ -78,50 +47,26 @@ const allowedOrigins = [
   'http://localhost:3000',
 ];
 
-let truckDataCache =
-  null;
+let truckDataCache = null;
+let truckDataCacheTime = 0;
+let truckDataRequestPromise = null;
 
-let truckDataCacheTime =
-  0;
+let masterPlanCache = null;
+let masterPlanCacheTime = 0;
+let masterPlanRequestPromise = null;
 
-let truckDataRequestPromise =
-  null;
-
-let masterPlanCache =
-  null;
-
-let masterPlanCacheTime =
-  0;
-
-let masterPlanRequestPromise =
-  null;
-
-let lastAppsScriptSuccessTime =
-  null;
-
-let lastAppsScriptErrorTime =
-  null;
-
-let lastAppsScriptError =
-  null;
+let lastAppsScriptSuccessTime = null;
+let lastAppsScriptErrorTime = null;
+let lastAppsScriptError = null;
 
 app.use(
   cors({
-    origin(
-      origin,
-      callback
-    ) {
+    origin(origin, callback) {
       if (
         !origin ||
-        allowedOrigins.includes(
-          origin
-        )
+        allowedOrigins.includes(origin)
       ) {
-        callback(
-          null,
-          true
-        );
-
+        callback(null, true);
         return;
       }
 
@@ -149,27 +94,20 @@ app.use(
 
 app.use(
   express.json({
-    limit:
-      '10mb',
+    limit: '10mb',
   })
 );
 
-function wait(
-  milliseconds
-) {
-  return new Promise(
-    resolve => {
-      setTimeout(
-        resolve,
-        milliseconds
-      );
-    }
-  );
+function wait(milliseconds) {
+  return new Promise(resolve => {
+    setTimeout(
+      resolve,
+      milliseconds
+    );
+  });
 }
 
-function getErrorMessage(
-  error
-) {
+function getErrorMessage(error) {
   if (
     error instanceof Error &&
     error.message
@@ -184,9 +122,7 @@ function getErrorMessage(
 }
 
 function validateAppsScriptUrl() {
-  if (
-    !APPS_SCRIPT_URL
-  ) {
+  if (!APPS_SCRIPT_URL) {
     throw new Error(
       'APPS_SCRIPT_URL is not configured on Render.'
     );
@@ -224,15 +160,12 @@ function validateAppsScriptUrl() {
 }
 
 function getMaskedAppsScriptUrl() {
-  if (
-    !APPS_SCRIPT_URL
-  ) {
+  if (!APPS_SCRIPT_URL) {
     return 'NOT_CONFIGURED';
   }
 
   if (
-    APPS_SCRIPT_URL.length <=
-    45
+    APPS_SCRIPT_URL.length <= 45
   ) {
     return 'CONFIGURED';
   }
@@ -322,27 +255,18 @@ function hasUsableStaleMasterPlanCache() {
 }
 
 function clearTruckCache() {
-  truckDataCache =
-    null;
-
-  truckDataCacheTime =
-    0;
+  truckDataCache = null;
+  truckDataCacheTime = 0;
 }
 
 function clearMasterPlanCache() {
-  masterPlanCache =
-    null;
-
-  masterPlanCacheTime =
-    0;
+  masterPlanCache = null;
+  masterPlanCacheTime = 0;
 }
 
-function getResponsePreview(
-  responseText
-) {
+function getResponsePreview(responseText) {
   return String(
-    responseText ||
-    ''
+    responseText || ''
   )
     .replace(
       /\s+/g,
@@ -391,7 +315,6 @@ async function fetchWithTimeout(
       url,
       {
         ...options,
-
         signal:
           controller.signal,
       }
@@ -417,9 +340,7 @@ function validateAppsScriptResponse(
     );
   }
 
-  if (
-    data.error
-  ) {
+  if (data.error) {
     throw new Error(
       String(
         data.error
@@ -428,8 +349,7 @@ function validateAppsScriptResponse(
   }
 
   if (
-    data.success ===
-    false
+    data.success === false
   ) {
     throw new Error(
       String(
@@ -467,9 +387,7 @@ function recordAppsScriptSuccess() {
     null;
 }
 
-function recordAppsScriptError(
-  error
-) {
+function recordAppsScriptError(error) {
   lastAppsScriptError =
     getErrorMessage(
       error
@@ -562,9 +480,7 @@ async function requestAppsScriptGet(
       const responseText =
         await response.text();
 
-      if (
-        response.ok
-      ) {
+      if (response.ok) {
         const data =
           parseJsonText(
             responseText,
@@ -650,148 +566,97 @@ async function requestAppsScriptGet(
   throw error;
 }
 
+/*
+ * POST จะส่งไปยัง Google Apps Script เพียงครั้งเดียว
+ *
+ * ห้าม Retry เพราะคำขอรอบแรกอาจเขียนข้อมูลลง Google Sheets
+ * สำเร็จแล้ว แต่ Response สูญหายหรือหมดเวลา หากส่งซ้ำอาจทำให้
+ * เกิด Plan ซ้ำหรือ Duplicate Code run
+ */
 async function requestAppsScriptPost(
   action,
   payload = {}
 ) {
   validateAppsScriptUrl();
 
-  let finalError =
-    null;
-
-  for (
-    let attempt = 1;
-    attempt <=
-      APPS_SCRIPT_MAX_ATTEMPTS;
-    attempt += 1
-  ) {
-    try {
-      console.log(
-        `Calling Apps Script POST ${action}, attempt ${attempt}`
-      );
-
-      const response =
-        await fetchWithTimeout(
-          APPS_SCRIPT_URL,
-          {
-            method:
-              'POST',
-
-            redirect:
-              'follow',
-
-            headers: {
-              'Content-Type':
-                'text/plain;charset=utf-8',
-
-              Accept:
-                'application/json',
-
-              'User-Agent':
-                'ELIVE-API/7.0',
-            },
-
-            body:
-              JSON.stringify({
-                action,
-                ...payload,
-              }),
-
-            cache:
-              'no-store',
-          },
-          APPS_SCRIPT_TIMEOUT_MS
-        );
-
-      const responseText =
-        await response.text();
-
-      if (
-        response.ok
-      ) {
-        const data =
-          parseJsonText(
-            responseText,
-            `Google Apps Script ${action} returned invalid JSON.`
-          );
-
-        validateAppsScriptResponse(
-          data,
-          action
-        );
-
-        recordAppsScriptSuccess();
-
-        return data;
-      }
-
-      finalError =
-        new Error(
-          `Google Apps Script returned HTTP ${response.status}.`
-        );
-
-      console.error(
-        `Apps Script POST ${action} failed:`,
-        {
-          attempt,
-
-          status:
-            response.status,
-
-          responsePreview:
-            getResponsePreview(
-              responseText
-            ),
-        }
-      );
-
-      if (
-        !RETRYABLE_STATUS_CODES.has(
-          response.status
-        )
-      ) {
-        break;
-      }
-    } catch (error) {
-      finalError =
-        error;
-
-      console.error(
-        `Apps Script POST ${action} connection error:`,
-        {
-          attempt,
-
-          error:
-            getErrorMessage(
-              error
-            ),
-        }
-      );
-    }
-
-    if (
-      attempt <
-      APPS_SCRIPT_MAX_ATTEMPTS
-    ) {
-      await wait(
-        attempt === 1
-          ? 1000
-          : 2500
-      );
-    }
-  }
-
-  const error =
-    finalError ||
-    new Error(
-      `${action} request failed.`
+  try {
+    console.log(
+      `Calling Apps Script POST ${action}, single attempt`
     );
 
-  recordAppsScriptError(
-    error
-  );
+    const response =
+      await fetchWithTimeout(
+        APPS_SCRIPT_URL,
+        {
+          method:
+            'POST',
 
-  throw error;
+          redirect:
+            'follow',
+
+          headers: {
+            'Content-Type':
+              'text/plain;charset=utf-8',
+
+            Accept:
+              'application/json',
+
+            'User-Agent':
+              'ELIVE-API/7.0',
+          },
+
+          body:
+            JSON.stringify({
+              action,
+              ...payload,
+            }),
+
+          cache:
+            'no-store',
+        },
+        APPS_SCRIPT_TIMEOUT_MS
+      );
+
+    const responseText =
+      await response.text();
+
+    if (!response.ok) {
+      throw new Error(
+        `Google Apps Script returned HTTP ${response.status}. Response: ${getResponsePreview(responseText)}`
+      );
+    }
+
+    const data =
+      parseJsonText(
+        responseText,
+        `Google Apps Script ${action} returned invalid JSON.`
+      );
+
+    validateAppsScriptResponse(
+      data,
+      action
+    );
+
+    recordAppsScriptSuccess();
+
+    return data;
+  } catch (error) {
+    console.error(
+      `Apps Script POST ${action} failed without retry:`,
+      {
+        error:
+          getErrorMessage(
+            error
+          ),
+      }
+    );
+
+    recordAppsScriptError(
+      error
+    );
+
+    throw error;
+  }
 }
 
 function validateDateText(
@@ -800,8 +665,7 @@ function validateDateText(
 ) {
   const dateText =
     String(
-      value ||
-      ''
+      value || ''
     ).trim();
 
   if (
@@ -819,12 +683,8 @@ function validateDateText(
     month,
     day,
   ] = dateText
-    .split(
-      '-'
-    )
-    .map(
-      Number
-    );
+    .split('-')
+    .map(Number);
 
   const date =
     new Date(
@@ -849,13 +709,9 @@ function validateDateText(
   return dateText;
 }
 
-function normalizeWorkingDays(
-  value
-) {
+function normalizeWorkingDays(value) {
   const input =
-    Array.isArray(
-      value
-    )
+    Array.isArray(value)
       ? value
       : [
           1,
@@ -873,27 +729,19 @@ function normalizeWorkingDays(
     const item of input
   ) {
     const day =
-      Number(
-        item
-      );
+      Number(item);
 
     if (
-      Number.isInteger(
-        day
-      ) &&
+      Number.isInteger(day) &&
       day >= 1 &&
       day <= 7
     ) {
-      uniqueDays.add(
-        day
-      );
+      uniqueDays.add(day);
     }
   }
 
   return Array
-    .from(
-      uniqueDays
-    )
+    .from(uniqueDays)
     .sort(
       (
         first,
@@ -904,13 +752,9 @@ function normalizeWorkingDays(
     );
 }
 
-function normalizeTemplateRows(
-  value
-) {
+function normalizeTemplateRows(value) {
   if (
-    !Array.isArray(
-      value
-    )
+    !Array.isArray(value)
   ) {
     return [];
   }
@@ -991,27 +835,20 @@ function normalizeTemplateRows(
     .filter(
       row =>
         Object
-          .values(
-            row
-          )
+          .values(row)
           .some(
-            value =>
-              value !==
-              ''
+            item =>
+              item !== ''
           )
     );
 }
 
-function validatePlanPeriodRequest(
-  body
-) {
+function validatePlanPeriodRequest(body) {
   if (
     !body ||
     typeof body !==
       'object' ||
-    Array.isArray(
-      body
-    )
+    Array.isArray(body)
   ) {
     throw new Error(
       'Request body is required.'
@@ -1045,8 +882,7 @@ function validatePlanPeriodRequest(
     );
 
   if (
-    workingDays.length ===
-    0
+    workingDays.length === 0
   ) {
     throw new Error(
       'At least one working day is required.'
@@ -1094,9 +930,7 @@ function validatePlanPeriodRequest(
   };
 }
 
-function normalizeEditablePlan(
-  body
-) {
+function normalizeEditablePlan(body) {
   const source =
     body?.plan &&
     typeof body.plan ===
@@ -1108,9 +942,7 @@ function normalizeEditablePlan(
     !source ||
     typeof source !==
       'object' ||
-    Array.isArray(
-      source
-    )
+    Array.isArray(source)
   ) {
     throw new Error(
       'Plan data is required.'
@@ -1196,13 +1028,10 @@ function normalizeEditablePlan(
   };
 }
 
-function normalizeCodeRun(
-  value
-) {
+function normalizeCodeRun(value) {
   const codeRun =
     String(
-      value ||
-      ''
+      value || ''
     )
       .trim()
       .toUpperCase();
@@ -1408,9 +1237,7 @@ function sendRouteError(
   );
 
   return res
-    .status(
-      statusCode
-    )
+    .status(statusCode)
     .json({
       success:
         false,
@@ -1590,9 +1417,7 @@ app.get(
       );
 
       return res
-        .status(
-          200
-        )
+        .status(200)
         .json({
           ...result.data,
 
@@ -1660,9 +1485,7 @@ app.get(
       );
 
       return res
-        .status(
-          200
-        )
+        .status(200)
         .json({
           ...result.data,
 
@@ -1716,12 +1539,8 @@ app.post(
         );
 
       return res
-        .status(
-          200
-        )
-        .json(
-          result
-        );
+        .status(200)
+        .json(result);
     } catch (error) {
       return sendRouteError(
         res,
@@ -1753,12 +1572,8 @@ app.post(
       clearTruckCache();
 
       return res
-        .status(
-          200
-        )
-        .json(
-          result
-        );
+        .status(200)
+        .json(result);
     } catch (error) {
       return sendRouteError(
         res,
@@ -1796,12 +1611,8 @@ app.get(
       );
 
       return res
-        .status(
-          200
-        )
-        .json(
-          result
-        );
+        .status(200)
+        .json(result);
     } catch (error) {
       return sendRouteError(
         res,
@@ -1835,12 +1646,8 @@ app.post(
       clearTruckCache();
 
       return res
-        .status(
-          200
-        )
-        .json(
-          result
-        );
+        .status(200)
+        .json(result);
     } catch (error) {
       return sendRouteError(
         res,
@@ -1882,12 +1689,8 @@ app.put(
       clearTruckCache();
 
       return res
-        .status(
-          200
-        )
-        .json(
-          result
-        );
+        .status(200)
+        .json(result);
     } catch (error) {
       return sendRouteError(
         res,
@@ -1921,12 +1724,8 @@ app.post(
       clearTruckCache();
 
       return res
-        .status(
-          200
-        )
-        .json(
-          result
-        );
+        .status(200)
+        .json(result);
     } catch (error) {
       return sendRouteError(
         res,
@@ -1980,12 +1779,8 @@ app.post(
       clearTruckCache();
 
       return res
-        .status(
-          200
-        )
-        .json(
-          result
-        );
+        .status(200)
+        .json(result);
     } catch (error) {
       return sendRouteError(
         res,
@@ -2040,12 +1835,8 @@ app.post(
       clearTruckCache();
 
       return res
-        .status(
-          200
-        )
-        .json(
-          result
-        );
+        .status(200)
+        .json(result);
     } catch (error) {
       return sendRouteError(
         res,
@@ -2179,9 +1970,7 @@ app.get(
       );
 
       return res
-        .status(
-          200
-        )
+        .status(200)
         .json({
           success:
             true,
@@ -2209,9 +1998,7 @@ app.get(
               (
                 distanceMeters /
                 1000
-              ).toFixed(
-                1
-              )
+              ).toFixed(1)
             ),
 
           durationSeconds,
@@ -2285,9 +2072,7 @@ app.use(
     res
   ) => {
     return res
-      .status(
-        404
-      )
+      .status(404)
       .json({
         success:
           false,
@@ -2314,9 +2099,7 @@ app.use(
     );
 
     return res
-      .status(
-        500
-      )
+      .status(500)
       .json({
         success:
           false,
