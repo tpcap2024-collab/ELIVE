@@ -60,42 +60,21 @@ type PlanManagementProps = {
   ) => void | Promise<void>;
 };
 
+type FormField = {
+  field: keyof EditablePlan;
+  label: string;
+  type: 'text' | 'date' | 'time';
+  required: boolean;
+};
+
 const WORKING_DAYS = [
-  {
-    value: 1,
-    short: 'จ.',
-    full: 'จันทร์',
-  },
-  {
-    value: 2,
-    short: 'อ.',
-    full: 'อังคาร',
-  },
-  {
-    value: 3,
-    short: 'พ.',
-    full: 'พุธ',
-  },
-  {
-    value: 4,
-    short: 'พฤ.',
-    full: 'พฤหัสบดี',
-  },
-  {
-    value: 5,
-    short: 'ศ.',
-    full: 'ศุกร์',
-  },
-  {
-    value: 6,
-    short: 'ส.',
-    full: 'เสาร์',
-  },
-  {
-    value: 7,
-    short: 'อา.',
-    full: 'อาทิตย์',
-  },
+  { value: 1, short: 'จ.', full: 'จันทร์' },
+  { value: 2, short: 'อ.', full: 'อังคาร' },
+  { value: 3, short: 'พ.', full: 'พุธ' },
+  { value: 4, short: 'พฤ.', full: 'พฤหัสบดี' },
+  { value: 5, short: 'ศ.', full: 'ศุกร์' },
+  { value: 6, short: 'ส.', full: 'เสาร์' },
+  { value: 7, short: 'อา.', full: 'อาทิตย์' },
 ];
 
 const EMPTY_PLAN: EditablePlan = {
@@ -113,6 +92,75 @@ const EMPTY_PLAN: EditablePlan = {
   remark: 'EXTRA',
 };
 
+const FORM_FIELDS: FormField[] = [
+  {
+    field: 'date',
+    label: 'Date',
+    type: 'date',
+    required: true,
+  },
+  {
+    field: 'route',
+    label: 'Route',
+    type: 'text',
+    required: true,
+  },
+  {
+    field: 'company',
+    label: 'Company',
+    type: 'text',
+    required: true,
+  },
+  {
+    field: 'truckName',
+    label: 'Truck Name',
+    type: 'text',
+    required: true,
+  },
+  {
+    field: 'truckType',
+    label: 'Truck Type',
+    type: 'text',
+    required: true,
+  },
+  {
+    field: 'driverName',
+    label: 'Driver Name',
+    type: 'text',
+    required: false,
+  },
+  {
+    field: 'telDriver',
+    label: 'Tel Driver',
+    type: 'text',
+    required: false,
+  },
+  {
+    field: 'project',
+    label: 'Project',
+    type: 'text',
+    required: true,
+  },
+  {
+    field: 'dropPoint',
+    label: 'Drop Point',
+    type: 'text',
+    required: true,
+  },
+  {
+    field: 'planEta',
+    label: 'Plan ETA',
+    type: 'time',
+    required: true,
+  },
+  {
+    field: 'planEtd',
+    label: 'Plan ETD',
+    type: 'time',
+    required: true,
+  },
+];
+
 const HEADER_ALIASES: Record<
   keyof Omit<MasterPlanRow, 'sheetRow'>,
   string[]
@@ -122,24 +170,21 @@ const HEADER_ALIASES: Record<
     'รหัสเส้นทาง',
     'เส้นทาง',
   ],
-  company[
-route',
-รหัสเส้นทาง',
-เส้นทาง',
-:    'suppliername',
+  company: [
+    'company',
+    'supplier',
+    'suppliername',
     'บริษัท',
   ],
-  truck[
-company',
-supplier',
-suppliernameseplate',
+  truckName: [
+    'truckname',
+    'licenseplate',
     'plate',
     'ทะเบียนรถ',
   ],
-  truck[
-truckname',
-licenseplate',
-plate'ททรัค',
+  truckType: [
+    'trucktype',
+    'ประเภททรัค',
     'ประเภทรถ',
   ],
   driverName: [
@@ -179,102 +224,76 @@ plate'ททรัค',
 };
 
 function bangkokDate(): string {
-  return new Intl.DateTimeFormat(
-    'en-CA',
-    {
-      timeZone: 'Asia/Bangkok',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    }
-  ).format(new Date());
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Bangkok',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
 }
 
-function getError(
-  error: unknown
-): string {
-  return error instanceof Error
-    ? error.message
-    : String(
-        error ||
-        'เกิดข้อผิดพลาด'
-      );
-}
+function getError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
 
-function cleanHeader(
-  value: unknown
-): string {
   return String(
-    value ?? ''
-  )
+    error ||
+    'เกิดข้อผิดพลาด'
+  );
+}
+
+function cleanHeader(value: unknown): string {
+  return String(value ?? '')
     .trim()
     .toLowerCase()
-    .replace(
-      /[
+    .[
 planetd',
 etd',
 เวลาออก',
 kokDate(): string {
- new Intl.DateTimeFormat): string {
-  return String(
-    value ?? ''
-  ).trim();
+ new Intl.DateTimeFormating {
+  return String(value ?? '').trim();
 }
 
-function normalizeTime(
-  value: unknown
-): string {
+function normalizeTime(value: unknown): string {
   if (
     typeof value === 'number' &&
     Number.isFinite(value)
   ) {
     const minutes =
-      Math.round(
-        value * 1440
-      ) % 1440;
+      Math.round(value * 1440) % 1440;
 
-    return (
-      `${String(
-        Math.floor(
-          minutes / 60
-        )
-      ).padStart(2, '0')}:` +
-      String(
-        minutes % 60
-      ).padStart(2, '0')
-    );
+    const hour =
+      Math.floor(minutes / 60);
+
+    const minute =
+      minutes % 60;
+
+    return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
   }
 
-  const match =
-    String(
-      value ?? ''
-    )
-      .trim()
-      .match(
-        /^(\d{1,2}):(\d{2})/
-      );
+  const match = String(value ?? '')
+    .trim()
+    .match(/^(\d{1,2}):(\d{2})/);
 
   if (!match) {
     return '';
   }
 
-  const hour =
-    Number(match[1]);
-
-  const minute =
-    Number(match[2]);
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
 
   if (
+    hour < 0 ||
     hour > 23 ||
+    minute < 0 ||
     minute > 59
   ) {
     return '';
   }
 
-  return (
-    `${String(hour).padStart(2, '0')}:` +
-    String(minute).padStart(2, '0')
-  );
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 }
 
 function findColumn(
@@ -290,9 +309,11 @@ function findColumn(
   );
 }
 
-function parseTemplateRows(rawRows: unknown[][]): {
-  rows: MasterPlanRow[];
-  validationErrors: MasterPlanValidationError[];
+function parseTemplateRows(
+  rawRows: unknown[][]
+): {
+  rows[: MasterPlanRow[];
+ validationErrors: MasterPlanValidationError[];
 } {
   if (rawRows.length < 2) {
     throw new Error(
@@ -300,21 +321,27 @@ function parseTemplateRows(rawRows: unknown[][]): {
     );
   }
 
-  const headers = rawRows[0].map(cleanHeader);
+  const headers =
+    rawRows[0].map(cleanHeader);
 
   const indexes = Object.fromEntries(
-    Object.entries(HEADER_ALIASES).map(([key, aliases]) => [
-      key,
-      findColumn(headers, aliases),
-    ])
+    Object.entries(HEADER_ALIASES).map(
+      ([key, aliases]) => [
+        key,
+        findColumn(headers, aliases),
+      ]
+    )
   ) as Record<
     keyof Omit<MasterPlanRow, 'sheetRow'>,
     number
   >;
 
   const missing = Object.entries(indexes)
-    .filter(([, columnIndex]) => columnIndex < 0)
-    .map(([key]) => key);
+    .[
+,
+Column(headers, aliases),
+ as Record<
+ Omit<MasterPlanRow, ' key);
 
   if (missing.length > 0) {
     throw new Error(
@@ -323,78 +350,93 @@ function parseTemplateRows(rawRows: unknown[][]): {
   }
 
   const rows: MasterPlanRow[] = [];
-  const validationErrors: MasterPlanValidationError[] = [];
+  const validationErrors:
+    MasterPlanValidationError[] = [];
 
-  rawRows.slice(1, 501).forEach((rawRow, index) => {
-    const sheetRow = index + 2;
+  rawRows
+    .slice(1, 501)
+    .forEach((rawRow, index) => {
+      const sheetRow =
+        index + 2;
 
-    const row: MasterPlanRow = {
-      sheetRow,
-      route: cleanCell(rawRow[indexes.route]),
-      company: cleanCell(rawRow[indexes.company]),
-      truckName: cleanCell(rawRow[indexes.truckName]),
-      truckType: cleanCell(rawRow[indexes.truckType]),
-      driverName: cleanCell(rawRow[indexes.driverName]),
-      telDriver: cleanCell(rawRow[indexes.telDriver]),
-      project: cleanCell(rawRow[indexes.project]),
-      dropPoint: cleanCell(rawRow[indexes.dropPoint]),
-      planEta: normalizeTime(rawRow[indexes.planEta]),
-      planEtd: normalizeTime(rawRow[indexes.planEtd]),
-    };
-
-    const isEmpty = Object.entries(row).every(
-      ([key, value]) =>
-        key === 'sheetRow' ||
-        value === ''
-    );
-
-    if (isEmpty) {
-      return;
-    }
-
-    const errors: string[] = [];
-
-    if (!row.route) {
-      errors.push('Route ว่าง');
-    }
-
-    if (!row.company) {
-      errors.push('Company ว่าง');
-    }
-
-    if (!row.truckName) {
-      errors.push('Truck Name ว่าง');
-    }
-
-    if (!row.truckType) {
-      errors.push('Truck Type ว่าง');
-    }
-
-    if (!row.project) {
-      errors.push('Project ว่าง');
-    }
-
-    if (!row.dropPoint) {
-      errors.push('Drop Point ว่าง');
-    }
-
-    if (!row.planEta) {
-      errors.push('Plan ETA ไม่ถูกต้อง');
-    }
-
-    if (!row.planEtd) {
-      errors.push('Plan ETD ไม่ถูกต้อง');
-    }
-
-    if (errors.length > 0) {
-      validationErrors.push({
+      const row: MasterPlanRow = {
         sheetRow,
-        errors,
-      });
-    }
+        route:
+          cleanCell(rawRow[indexes.route]),
+        company:
+          cleanCell(rawRow[indexes.company]),
+        truckName:
+          cleanCell(rawRow[indexes.truckName]),
+        truckType:
+          cleanCell(rawRow[indexes.truckType]),
+        driverName:
+          cleanCell(rawRow[indexes.driverName]),
+        telDriver:
+          cleanCell(rawRow[indexes.telDriver]),
+        project:
+          cleanCell(rawRow[indexes.project]),
+        dropPoint:
+          cleanCell(rawRow[indexes.dropPoint]),
+        planEta:
+          normalizeTime(rawRow[indexes.planEta]),
+        planEtd:
+          normalizeTime(rawRow[indexes.planEtd]),
+      };
 
-    rows.push(row);
-  });
+      const isEmpty =
+        Object.entries(row).every(
+          ([key, value]) =>
+            key === 'sheetRow' ||
+            value === ''
+        );
+
+      if (isEmpty) {
+        return;
+      }
+
+      const errors: string[] = [];
+
+      if (!row.route) {
+        errors.push('Route ว่าง');
+      }
+
+      if (!row.company) {
+        errors.push('Company ว่าง');
+      }
+
+      if (!row.truckName) {
+        errors.push('Truck Name ว่าง');
+      }
+
+      if (!row.truckType) {
+        errors.push('Truck Type ว่าง');
+      }
+
+      if (!row.project) {
+        errors.push('Project ว่าง');
+      }
+
+      if (!row.dropPoint) {
+        errors.push('Drop Point ว่าง');
+      }
+
+      if (!row.planEta) {
+        errors.push('Plan ETA ไม่ถูกต้อง');
+      }
+
+      if (!row.planEtd) {
+        errors.push('Plan ETD ไม่ถูกต้อง');
+      }
+
+      if (errors.length > 0) {
+        validationErrors.push({
+          sheetRow,
+          errors,
+        });
+      }
+
+      rows.push(row);
+    });
 
   if (rows.length === 0) {
     throw new Error(
@@ -411,19 +453,14 @@ function parseTemplateRows(rawRows: unknown[][]): {
 async function readPlanFile(
   file: File
 ): Promise<unknown[][]> {
-  const extension =
-    file.name
-      .split('.')
-      .pop()
-      ?.toLowerCase();
+  const extension = file.name
+    .split('.')
+    .pop()
+    ?.toLowerCase();
 
   if (
     !extension ||
-    ![
-      'xlsx',
-      'xls',
-      'csv',
-    ].includes(extension)
+    !['xlsx', 'xls', 'csv'].includes(extension)
   ) {
     throw new Error(
       'รองรับเฉพาะไฟล์ .xlsx, .xls และ .csv'
@@ -439,13 +476,13 @@ async function readPlanFile(
     );
   }
 
+  const fileBuffer =
+    await file.arrayBuffer();
+
   const workbook =
-    XLSX.read(
-      await file.arrayBuffer(),
-      {
-        type: 'array',
-      }
-    );
+    XLSX.read(fileBuffer, {
+      type: 'array',
+    });
 
   const firstSheet =
     workbook.SheetNames[0];
@@ -456,18 +493,15 @@ async function readPlanFile(
     );
   }
 
-  return XLSX.utils
-    .sheet_to_json<unknown[]>(
-      workbook.Sheets[
-        firstSheet
-      ],
-      {
-        header: 1,
-        raw: true,
-        defval: '',
-        blankrows: false,
-      }
-    );
+  return XLSX.utils.sheet_to_json<unknown[]>(
+    workbook.S[heets[firstSheet],
+   {
+      header: 1,
+      raw: true,
+      defval: '',
+      blankrows: false,
+    }
+  );
 }
 
 function StatCard({
@@ -488,36 +522,23 @@ function StatCard({
   const tones = {
     default:
       'border-slate-200 bg-white text-slate-900',
-
     blue:
       'border-blue-200 bg-blue-50 text-blue-800',
-
     green:
       'border-emerald-200 bg-emerald-50 text-emerald-800',
-
     amber:
       'border-amber-200 bg-amber-50 text-amber-800',
-
     red:
       'border-red-200 bg-red-50 text-red-800',
-
     purple:
       'border-purple-200 bg-purple-50 text-purple-800',
   };
 
   return (
     <div
-      class[
-Sheet
-: 1,
-: true,
-val: '',
-rows: false,
-Card({
-,
-,
- = 'default',
-:  className="text-xs font-semibold uppercase tracking-wide opacity-70">
+      className={`rounded-xl border p-4 shadow-sm ${tones[tone]}`}
+    >
+      <p className="text-xs font-semibold uppercase tracking-wide opacity-70">
         {label}
       </p>
 
@@ -536,10 +557,8 @@ function RemarkBadge({
   const classes = {
     REGULAR:
       'bg-blue-100 text-blue-700',
-
     EXTRA:
       'bg-purple-100 text-purple-700',
-
     CANCEL:
       'bg-red-100 text-red-700',
   };
@@ -557,198 +576,166 @@ export default function PlanManagement({
   onPlanCreated,
 }: PlanManagementProps) {
   const today =
-    useMemo(
-      bangkokDate,
-      []
-    );
+    useMemo(bangkokDate, []);
 
   const fileInputRef =
-    useRef<HTMLInputElement>(
-      null
-    );
+    useRef<HTMLInputElement>(null);
 
-  const [
-    tab,
-    setTab,
-  ] = useState<MainTab>(
-    'create'
-  );
+  const [tab, setTab] =
+    useState<MainTab>('create');
 
-  const [
-    notice,
-    setNotice,
-  ] = useState<NoticeState | null>(
-    null
-  );
+  const [notice, setNotice] =
+    useState<NoticeState | null>(null);
 
-  const [
-    source,
-    setSource,
-  ] = useState<PlanSource | null>(
-    null
-  );
+  const [source, setSource] =
+    useState<PlanSource | null>(null);
 
-  const [
-    templateRows,
-    setTemplateRows,
-  ] = useState<MasterPlanRow[]>(
-    []
-  );
+  const [templateRows, setTemplateRows] =
+    useState<MasterPlanRow[]>([]);
 
   const [
     validationErrors,
     setValidationErrors,
-  ] = useState<
+  [
+Errors,
+te<
     MasterPlanValidationError[]
   >([]);
 
-  const [
-    fileName,
-    setFileName,
-  ] = useState('');
+  const [fileName, setFileName] =
+    useState('');
 
-  const [
-    startDate,
-    setStartDate,
-  ] = useState(today);
+  const [startDate, setStartDate] =
+    useState(today);
 
-  const [
-    endDate,
-    setEndDate,
-  ] = useState(today);
+  const [endDate, setEndDate] =
+    useState(today);
 
-  const [
-    workingDays,
-    setWorkingDays,
-  ] = useState<number[]>([
-    1,
-    2,
-    3,
-    4,
-    5,
-    6,
-  ]);
+  const [workingDays, setWorkingDays] =
+    useState<number[]>([
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+    ]);
 
-  const [
-    preview,
-    setPreview,
-  ] = useState<
-    PlanPeriodPreview | null
-  >(null);
+  const[
+1,
+2,
+3,
+4,
+5,
+6,
+ ] =
+    useState<PlanPeriodPreview | null>(
+      null
+    );
 
   const [
     creationResult,
     setCreationResult,
-  ] = useState<
-    PlanCreationResult | null
+  [
+Result,
+CreationResult,
+] =nResult | null
   >(null);
 
   const [
     templateSearch,
     setTemplateSearch,
-  ] = useState('');
-
-  const [
-    isLoadingSource,
+  [
+Search,
+TemplateSearch,
+] =    isLoadingSource,
     setIsLoadingSource,
-  ] = useState(false);
-
-  const [
-    isPreviewing,
+  [
+LoadingSource,
+IsLoadingSource,
+  isPreviewing,
     setIsPreviewing,
-  ] = useState(false);
+  [
+Previewing,
+IsPreviewing,
+] = useState(false);
 
-  const [
-    isCreating,
-    setIsCreating,
-  ] = useState(false);
-
-  const [
-    isDragging,
+  setIsCreating,
+  [
+Creating,
+IsCreating,
+] = useStateisDragging,
     setIsDragging,
-  ] = useState(false);
-
-  const [
-    showCreateConfirmation,
+  [
+Dragging,
+IsDragging,
+] = useStateshowCreateConfirmation,
     setShowCreateConfirmation,
-  ] = useState(false);
+  [
+CreateConfirmation,
+ShowCreateConfirmationtDailyDate] =
+    useState(today);
 
-  const [
-    dailyDate,
-    setDailyDate,
-  ] = useState(today);
+  const [dailyResult, setDailyResult] =
+    useState<DailyPlansResult | null>(
+      null
+    );
 
-  const [
-    dailyResult,
-    setDailyResult,
-  ] = useState<
-    DailyPlansResult | null
-  >(null);
+  const [dailySearch, setDailySearch] =
+    useState('');
 
-  const [
-    dailySearch,
-    setDailySearch,
-  ] = useState('');
-
-  const [
-    dailyFilter,
-    setDailyFilter,
-  ] = useState<DailyFilter>(
-    'ALL'
-  );
+  const [dailyFilter, setDailyFilter] =
+    useState<DailyFilter>('ALL');
 
   const [
     isLoadingDaily,
     setIsLoadingDaily,
-  ] = useState(false);
-
-  const [
-    planDialogMode,
+  [
+LoadingDaily,
+IsLoadingDaily,
+] = planDialogMode,
     setPlanDialogMode,
-  ] = useState<
-    PlanDialogMode | null
+  [
+DialogMode,
+PlanDialogMode,
+] =| null
   >(null);
 
   const [
     editingCodeRun,
     setEditingCodeRun,
-  ] = useState('');
-
-  const [
-    planForm,
-    setPlanForm,
-  ] = useState<EditablePlan>({
-    ...EMPTY_PLAN,
-    date: today,
-  });
+  [
+CodeRun,
+EditingCodeRun,
+] =anForm, setPlanForm] =
+    useState<EditablePlan>({
+      ...EMPTY_PLAN,
+      date: today,
+    });
 
   const [
     isSavingPlan,
     setIsSavingPlan,
-  ] = useState(false);
-
-  const [
-    cancelTarget,
+  [
+SavingPlan,
+IsSavingPlan,
+] = useState(falseet,
     setCancelTarget,
-  ] = useState<
-    DailyPlan | null
-  >(null);
+  [
+Target,
+CancelTarget,
+] = useState<DailyPlan | null>(
 
-  const [
     restoreTarget,
     setRestoreTarget,
-  ] = useState<
-    DailyPlan | null
-  >(null);
-
-  const selectedWorkingDays =
+  [
+Target,
+RestoreTarget,
+] = useState<DailyPlan | null>(
+lectedWorkingDays =
     useMemo(
       () =>
-        [
-          ...new Set(
-            workingDays
-          ),
-        ].sort(
+        [...new Set(workingDays)].sort(
           (first, second) =>
             first - second
         ),
@@ -756,101 +743,90 @@ export default function PlanManagement({
     );
 
   const filteredTemplateRows =
-    useMemo(
-      () => {
-        const query =
-          templateSearch
-            .trim()
-            .toLowerCase();
+    useMemo(() => {
+      const query =
+        templateSearch
+          .trim()
+          .toLowerCase();
 
-        if (!query) {
-          return templateRows;
-        }
+      if (!query) {
+        return templateRows;
+      }
 
-        return templateRows
-          .filter(
-            row =>
-              [
-                row.route,
-                row.company,
-                row.truckName,
-                row.driverName,
-                row.project,
-                row.dropPoint,
-              ]
-                .join(' ')
-                .toLowerCase()
-                .includes(query)
-          );
-      },
-      [
-        templateRows,
-        templateSearch,
-      ]
-    );
+      return templateRows.filter(
+        row =>
+          [
+            row.route,
+            row.company,
+            row.truckName,
+            row.driverName,
+            row.project,
+            row.dropPoint,
+          ]
+            .join(' ')
+            .toLowerCase()
+            .includes(query)
+      );
+    }, [
+      templateRows,
+      templateSearch,
+    ]);
 
   const filteredDailyRows =
-    useMemo(
-      () => {
-        const query =
-          dailySearch
-            .trim()
-            .toLowerCase();
+    useMemo(() => {
+      const query =
+        dailySearch
+          .trim()
+          .toLowerCase();
+
+      return (
+        daily[
+Rows,
+Search,
+ filteredDailyRows ow => {
+        const matchesFilter =
+          dailyFilter === 'ALL' ||
+          row.remark === dailyFilter;
+
+        const matchesSearch =
+          !query ||
+          [
+            row.codeRun,
+            row.route,
+            row.company,
+            row.truckName,
+            row.driverName,
+            row.dropPoint,
+          ]
+            .join(' ')
+            .toLowerCase()
+            .includes(query);
 
         return (
-          dailyResult?.rows ||
-          []
-        ).filter(
-          row => {
-            const matchesFilter =
-              dailyFilter ===
-                'ALL' ||
-              row.remark ===
-                dailyFilter;
-
-            const matchesSearch =
-              !query ||
-              [
-                row.codeRun,
-                row.route,
-                row.company,
-                row.truckName,
-                row.driverName,
-                row.dropPoint,
-              ]
-                .join(' ')
-                .toLowerCase()
-                .includes(query);
-
-            return (
-              matchesFilter &&
-              matchesSearch
-            );
-          }
+          matchesFilter &&
+          matchesSearch
         );
-      },
-      [
-        dailyResult,
-        dailyFilter,
-        dailySearch,
-      ]
-    );
+      });
+    }, [
+      dailyResult,
+      dailyFilter,
+      dailySearch,
+    ]);
 
   const createBusy =
     isLoadingSource ||
     isPreviewing ||
     isCreating;
 
-  const canPreview =
-    Boolean(
-      source &&
-      templateRows.length &&
-      !validationErrors.length &&
-      startDate &&
-      endDate &&
-      selectedWorkingDays.length &&
-      !createBusy
-    );
+  const canPreview = Boolean(
+    source &&
+    templateRows.length > 0 &&
+    validationErrors.length === 0 &&
+    startDate &&
+    endDate &&
+    selectedWorkingDays.length > 0 &&
+    !createBusy
+  );
 
   const resetCreateResult =
     () => {
@@ -864,16 +840,18 @@ export default function PlanManagement({
   const clearSource =
     () => {
       setSource(null);
-      setTemplateRows([]);
-      setValidationErrors([]);
+      set[
+Result,
+Filter,
+Search,
+ createBusyErrors([]);
       setFileName('');
       setTemplateSearch('');
       setNotice(null);
+
       resetCreateResult();
 
-      if (
-        fileInputRef.current
-      ) {
+      if (fileInputRef.current) {
         fileInputRef.current.value =
           '';
       }
@@ -883,105 +861,72 @@ export default function PlanManagement({
     async () => {
       setIsLoadingSource(true);
       setNotice(null);
+
       resetCreateResult();
 
       try {
         const result =
-          await fetchMasterPlan(
-            true
-          );
+          await fetchMasterPlan(true);
 
-        setSource(
-          'master-plan'
-        );
-
-        setTemplateRows(
-          result.rows
-        );
-
+        setSource('master-plan');
+        setTemplateRows(result.rows);
         setValidationErrors(
           result.validationErrors
         );
-
-        setFileName(
-          'Master Plan'
-        );
+        setFileName('Master Plan');
 
         setNotice({
           type:
-            result
-              .validationErrors
-              .length
+            result.validationErrors
+              .length > 0
               ? 'error'
               : 'success',
-
           message:
-            result
-              .validationErrors
-              .length
+            result.validationErrors
+              .length > 0
               ? `Master Plan มีข้อมูลที่ต้องแก้ไข ${result.validationErrors.length} แถว`
               : `โหลด Master Plan สำเร็จ ${result.rows.length} เที่ยวต่อวัน`,
         });
       } catch (error) {
         setNotice({
           type: 'error',
-          message:
-            getError(error),
+          message: getError(error),
         });
       } finally {
-        setIsLoadingSource(
-          false
-        );
+        setIsLoadingSource(false);
       }
     };
 
   const handleFile =
-    async (
-      file: File
-    ) => {
+    async (file: File) => {
       setIsLoadingSource(true);
       setNotice(null);
+
       resetCreateResult();
 
       try {
         const rawRows =
-          await readPlanFile(
-            file
-          );
+          await readPlanFile(file);
 
         const parsed =
-          parseTemplateRows(
-            rawRows
-          );
+          parseTemplateRows(rawRows);
 
-        setSource(
-          'uploaded-file'
-        );
-
-        setTemplateRows(
-          parsed.rows
-        );
-
+        setSource('uploaded-file');
+        setTemplateRows(parsed.rows);
         setValidationErrors(
           parsed.validationErrors
         );
-
-        setFileName(
-          file.name
-        );
+        setFileName(file.name);
 
         setNotice({
           type:
-            parsed
-              .validationErrors
-              .length
+            parsed.validationErrors
+              .length > 0
               ? 'error'
               : 'success',
-
           message:
-            parsed
-              .validationErrors
-              .length
+            parsed.validationErrors
+              .length > 0
               ? `ไฟล์มีข้อมูลที่ต้องแก้ไข ${parsed.validationErrors.length} แถว`
               : `อ่านไฟล์สำเร็จ ${parsed.rows.length} เที่ยวต่อวัน`,
         });
@@ -990,13 +935,10 @@ export default function PlanManagement({
 
         setNotice({
           type: 'error',
-          message:
-            getError(error),
+          message: getError(error),
         });
       } finally {
-        setIsLoadingSource(
-          false
-        );
+        setIsLoadingSource(false);
       }
     };
 
@@ -1006,13 +948,10 @@ export default function PlanManagement({
         ChangeEvent<HTMLInputElement>
     ) => {
       const file =
-        event.target
-          .files?.[0];
+        event.target.files?.[0];
 
       if (file) {
-        void handleFile(
-          file
-        );
+        void handleFile(file);
       }
     };
 
@@ -1026,38 +965,25 @@ export default function PlanManagement({
       setIsDragging(false);
 
       const file =
-        event.dataTransfer
-          .files?.[0];
+        event.dataTransfer.files?.[0];
 
       if (file) {
-        void handleFile(
-          file
-        );
+        void handleFile(file);
       }
     };
 
   const toggleWorkingDay =
-    (
-      day: number
-    ) => {
-      setWorkingDays(
-        current =>
-          current.includes(day)
-            ? current.filter(
-                value =>
-                  value !== day
-              )
-            : [
-                ...current,
-                day,
-              ].sort(
-                (
-                  first,
-                  second
-                ) =>
-                  first -
-                  second
-              )
+    (day: number) => {
+      setWorkingDays(current =>
+        current.includes(day)
+          ? current.filter(
+              value =>
+                value !== day
+            )
+          : [...current, day].sort(
+              (first, second) =>
+                first - second
+            )
       );
 
       resetCreateResult();
@@ -1067,23 +993,16 @@ export default function PlanManagement({
     () => ({
       startDate,
       endDate,
-
       workingDays:
         selectedWorkingDays,
-
       source:
-        source ||
-        'master-plan',
-
+        source || 'master-plan',
       templateRows:
-        source ===
-        'uploaded-file'
+        source === 'uploaded-file'
           ? templateRows
           : undefined,
-
       fileName:
-        source ===
-        'uploaded-file'
+        source === 'uploaded-file'
           ? fileName
           : undefined,
     });
@@ -1108,12 +1027,11 @@ export default function PlanManagement({
 
         setNotice({
           type:
-            result.newRowCount
+            result.newRowCount > 0
               ? 'success'
               : 'info',
-
           message:
-            result.newRowCount
+            result.newRowCount > 0
               ? `Preview สำเร็จ พบรายการใหม่ ${result.newRowCount} รายการ`
               : 'ไม่มีรายการใหม่ รายการทั้งหมดมีอยู่ใน Plan แล้ว',
         });
@@ -1122,20 +1040,18 @@ export default function PlanManagement({
 
         setNotice({
           type: 'error',
-          message:
-            getError(error),
+          message: getError(error),
         });
       } finally {
-        setIsPreviewing(
-          false
-        );
+        setIsPreviewing(false);
       }
     };
 
   const handleCreatePeriod =
     async () => {
       if (
-        !preview?.newRowCount
+        !preview ||
+        preview.newRowCount <= 0
       ) {
         return;
       }
@@ -1153,9 +1069,7 @@ export default function PlanManagement({
             buildPeriodRequest()
           );
 
-        setCreationResult(
-          result
-        );
+        setCreationResult(result);
 
         const refreshedPreview =
           await previewPlanPeriod(
@@ -1173,29 +1087,18 @@ export default function PlanManagement({
         });
 
         if (onPlanCreated) {
-          await onPlanCreated(
-            result
-          );
+          await onPlanCreated(result);
         }
       } catch (error) {
         setNotice({
           type: 'error',
-          message:
-            getError(error),
+          message: getError(error),
         });
       } finally {
         setIsCreating(false);
       }
     };
 
-  /*
-   * showMessage = true:
-   * ใช้เมื่อผู้ใช้กดโหลดแผนประจำวันเอง
-   *
-   * showMessage = false:
-   * ใช้สำหรับ Refresh หลังเพิ่ม แก้ไข ยกเลิก หรือคืนค่า
-   * เพื่อไม่ให้ข้อความโหลดแผนเขียนทับข้อความผลการทำรายการ
-   */
   const loadDailyPlans =
     async (
       date = dailyDate,
@@ -1209,13 +1112,9 @@ export default function PlanManagement({
 
       try {
         const result =
-          await fetchDailyPlans(
-            date
-          );
+          await fetchDailyPlans(date);
 
-        setDailyResult(
-          result
-        );
+        setDailyResult(result);
 
         if (showMessage) {
           setNotice({
@@ -1232,25 +1131,23 @@ export default function PlanManagement({
 
           setNotice({
             type: 'error',
-            message:
-              getError(error),
+            message: getError(error),
           });
         }
 
         throw error;
       } finally {
-        setIsLoadingDaily(
-          false
-        );
+        setIsLoadingDaily(false);
       }
     };
 
   const openExtraDialog =
     () => {
-      setPlanDialogMode(
-        'extra'
-      );
+      if (isSavingPlan) {
+        return;
+      }
 
+      setPlanDialogMode('extra');
       setEditingCodeRun('');
 
       setPlanForm({
@@ -1261,13 +1158,12 @@ export default function PlanManagement({
     };
 
   const openEditDialog =
-    (
-      plan: DailyPlan
-    ) => {
-      setPlanDialogMode(
-        'edit'
-      );
+    (plan: DailyPlan) => {
+      if (isSavingPlan) {
+        return;
+      }
 
+      setPlanDialogMode('edit');
       setEditingCodeRun(
         plan.codeRun
       );
@@ -1303,17 +1199,13 @@ export default function PlanManagement({
         return;
       }
 
-      setPlanDialogMode(
-        null
-      );
-
+      setPlanDialogMode(null);
       setEditingCodeRun('');
     };
 
   const handleSavePlan =
     async (
-      event:
-        FormEvent
+      event: FormEvent
     ) => {
       event.preventDefault();
 
@@ -1330,7 +1222,8 @@ export default function PlanManagement({
       const currentCodeRun =
         editingCodeRun;
 
-      const submittedPlan = {
+      const submittedPlan:
+        EditablePlan = {
         ...planForm,
       };
 
@@ -1338,8 +1231,7 @@ export default function PlanManagement({
       setNotice(null);
 
       if (
-        currentMode ===
-        'extra'
+        currentMode === 'extra'
       ) {
         try {
           const result =
@@ -1352,10 +1244,7 @@ export default function PlanManagement({
             submittedPlan.date
           );
 
-          setPlanDialogMode(
-            null
-          );
-
+          setPlanDialogMode(null);
           setEditingCodeRun('');
 
           try {
@@ -1378,13 +1267,6 @@ export default function PlanManagement({
               `เพิ่มเที่ยว Extra เรียบร้อยแล้ว Code run: ${result.codeRun}`,
           });
         } catch (error) {
-          /*
-           * Mutation อาจเขียนข้อมูลลง Google Sheets สำเร็จแล้ว
-           * แต่ Response กลับมาล้มเหลว เช่น HTTP 404 หรือ timeout
-           *
-           * จึง Refresh ตารางทันทีเพื่อตรวจสอบข้อมูลจริง
-           * และห้ามส่งคำขอ createExtraPlan ซ้ำอัตโนมัติ
-           */
           let refreshed = false;
 
           try {
@@ -1407,10 +1289,7 @@ export default function PlanManagement({
             );
           }
 
-          setPlanDialogMode(
-            null
-          );
-
+          setPlanDialogMode(null);
           setEditingCodeRun('');
 
           setNotice({
@@ -1418,16 +1297,13 @@ export default function PlanManagement({
               refreshed
                 ? 'info'
                 : 'error',
-
             message:
               refreshed
-                ? `ไม่ได้รับการยืนยันจากเซิร์ฟเวอร์ แต่ระบบโหลดข้อมูลล่าสุดแล้ว กรุณาตรวจสอบรายการ Extra ในตารางก่อนเพิ่มใหม่ รายละเอียด: ${getError(error)}`
-                : `ไม่ได้รับการยืนยันจากเซิร์ฟเวอร์และไม่สามารถโหลดข้อมูลล่าสุดได้ กรุณากดโหลดแผนประจำวันเพื่อตรวจสอบก่อนเพิ่มใหม่ รายละเอียด: ${getError(error)}`,
+                ? 'ไม่ได้รับการยืนยันจากเซิร์ฟเวอร์ แต่ระบบโหลดข้อมูลล่าสุดแล้ว กรุณาตรวจสอบรายการ Extra ในตารางก่อนเพิ่มใหม่'
+                : `ไม่ได้รับการยืนยันจากเซิร์ฟเวอร์และไม่สามารถโหลดข้อมูลล่าสุดได้ กรุณากดโหลดแผนประจำวันก่อนเพิ่มใหม่ รายละเอียด: ${getError(error)}`,
           });
         } finally {
-          setIsSavingPlan(
-            false
-          );
+          setIsSavingPlan(false);
         }
 
         return;
@@ -1443,10 +1319,7 @@ export default function PlanManagement({
           submittedPlan.date
         );
 
-        setPlanDialogMode(
-          null
-        );
-
+        setPlanDialogMode(null);
         setEditingCodeRun('');
 
         await loadDailyPlans(
@@ -1476,8 +1349,7 @@ export default function PlanManagement({
 
         setNotice({
           type: 'error',
-          message:
-            getError(error),
+          message: getError(error),
         });
       } finally {
         setIsSavingPlan(false);
@@ -1533,8 +1405,7 @@ export default function PlanManagement({
 
         setNotice({
           type: 'error',
-          message:
-            getError(error),
+          message: getError(error),
         });
       } finally {
         setIsSavingPlan(false);
@@ -1595,8 +1466,7 @@ export default function PlanManagement({
 
         setNotice({
           type: 'error',
-          message:
-            getError(error),
+          message: getError(error),
         });
       } finally {
         setIsSavingPlan(false);
@@ -1609,12 +1479,9 @@ export default function PlanManagement({
         keyof EditablePlan,
       value: string
     ) => {
-      setPlanForm(
-        current => ({
-          ...current,
-          value,
-        })
-      );
+      setPlanForm(current => ({
+        ...current,
+        [field]:     }));
     };
 
   return (
@@ -1707,18 +1574,12 @@ export default function PlanManagement({
                   <div
                     onDragOver={event => {
                       event.preventDefault();
-                      setIsDragging(
-                        true
-                      );
+                      setIsDragging(true);
                     }}
                     onDragLeave={() =>
-                      setIsDragging(
-                        false
-                      )
+                      setIsDragging(false)
                     }
-                    onDrop={
-                      handleDrop
-                    }
+                    onDrop={handleDrop}
                     className={`rounded-2xl border-2 border-dashed p-7 ${
                       isDragging
                         ? 'border-emerald-500 bg-emerald-100'
@@ -1726,9 +1587,7 @@ export default function PlanManagement({
                     }`}
                   >
                     <input
-                      ref={
-                        fileInputRef
-                      }
+                      ref={fileInputRef}
                       type="file"
                       accept=".xlsx,.xls,.csv"
                       onChange={
@@ -1740,9 +1599,7 @@ export default function PlanManagement({
                     <button
                       type="button"
                       onClick={() =>
-                        fileInputRef
-                          .current
-                          ?.click()
+                        fileInputRef.current?.click()
                       }
                       className="flex w-full gap-4 text-left"
                     >
@@ -1769,14 +1626,12 @@ export default function PlanManagement({
                       <div className="flex min-w-0 items-center gap-3">
                         <div
                           className={`rounded-xl p-3 text-white ${
-                            source ===
-                            'master-plan'
+                            source === 'master-plan'
                               ? 'bg-blue-600'
                               : 'bg-emerald-600'
                           }`}
                         >
-                          {source ===
-                          'master-plan' ? (
+                          {source === 'master-plan' ? (
                             <Sheet className="h-6 w-6" />
                           ) : (
                             <FileSpreadsheet className="h-6 w-6" />
@@ -1785,8 +1640,7 @@ export default function PlanManagement({
 
                         <div className="min-w-0">
                           <p className="font-semibold">
-                            {source ===
-                            'master-plan'
+                            {source === 'master-plan'
                               ? 'Master Plan'
                               : 'Uploaded File'}
                           </p>
@@ -1799,12 +1653,8 @@ export default function PlanManagement({
 
                       <button
                         type="button"
-                        onClick={
-                          clearSource
-                        }
-                        disabled={
-                          createBusy
-                        }
+                        onClick={clearSource}
+                        disabled={createBusy}
                         className="rounded-lg p-2 text-slate-500 hover:bg-slate-200"
                       >
                         <X className="h-5 w-5" />
@@ -1814,21 +1664,19 @@ export default function PlanManagement({
                     <div className="mt-4 grid grid-cols-2 gap-3">
                       <StatCard
                         label="เที่ยวต่อวัน"
-                        value={
-                          templateRows.length
-                        }
+                        value={templateRows.length}
                         tone="blue"
                       />
 
                       <StatCard
                         label="Validation"
                         value={
-                          validationErrors.length
+                          validationErrors.length > 0
                             ? `${validationErrors.length} จุด`
                             : 'ผ่าน'
                         }
                         tone={
-                          validationErrors.length
+                          validationErrors.length > 0
                             ? 'amber'
                             : 'green'
                         }
@@ -1848,15 +1696,11 @@ export default function PlanManagement({
 
                         <input
                           type="date"
-                          value={
-                            startDate
-                          }
+                          value={startDate}
                           onChange={event => {
                             setStartDate(
-                              event.target
-                                .value
+                              event.target.value
                             );
-
                             resetCreateResult();
                           }}
                           className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5"
@@ -1868,18 +1712,12 @@ export default function PlanManagement({
 
                         <input
                           type="date"
-                          value={
-                            endDate
-                          }
-                          min={
-                            startDate
-                          }
+                          value={endDate}
+                          min={startDate}
                           onChange={event => {
                             setEndDate(
-                              event.target
-                                .value
+                              event.target.value
                             );
-
                             resetCreateResult();
                           }}
                           className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5"
@@ -1888,33 +1726,27 @@ export default function PlanManagement({
                     </div>
 
                     <div className="mt-4 grid grid-cols-4 gap-2 sm:grid-cols-7">
-                      {WORKING_DAYS.map(
-                        day => (
-                          <button
-                            key={
+                      {WORKING_DAYS.map(day => (
+                        <button
+                          key={day.value}
+                          type="button"
+                          title={day.full}
+                          onClick={() =>
+                            toggleWorkingDay(
                               day.value
-                            }
-                            type="button"
-                            title={
-                              day.full
-                            }
-                            onClick={() =>
-                              toggleWorkingDay(
-                                day.value
-                              )
-                            }
-                            className={`rounded-xl border px-2 py-2.5 text-sm font-semibold ${
-                              selectedWorkingDays.includes(
-                                day.value
-                              )
-                                ? 'border-blue-600 bg-blue-600 text-white'
-                                : 'border-slate-300'
-                            }`}
-                          >
-                            {day.short}
-                          </button>
-                        )
-                      )}
+                            )
+                          }
+                          className={`rounded-xl border px-2 py-2.5 text-sm font-semibold ${
+                            selectedWorkingDays.includes(
+                              day.value
+                            )
+                              ? 'border-blue-600 bg-blue-600 text-white'
+                              : 'border-slate-300'
+                          }`}
+                        >
+                          {day.short}
+                        </button>
+                      ))}
                     </div>
 
                     <div className="mt-5 flex justify-end">
@@ -1923,9 +1755,7 @@ export default function PlanManagement({
                         onClick={() =>
                           void handlePreview()
                         }
-                        disabled={
-                          !canPreview
-                        }
+                        disabled={!canPreview}
                         className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white disabled:bg-slate-300"
                       >
                         {isPreviewing ? (
@@ -1949,13 +1779,10 @@ export default function PlanManagement({
 
                   <input
                     type="date"
-                    value={
-                      dailyDate
-                    }
+                    value={dailyDate}
                     onChange={event =>
                       setDailyDate(
-                        event.target
-                          .value
+                        event.target.value
                       )
                     }
                     className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 lg:w-52"
@@ -1970,9 +1797,7 @@ export default function PlanManagement({
                       true
                     )
                   }
-                  disabled={
-                    isLoadingDaily
-                  }
+                  disabled={isLoadingDaily}
                   className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-60"
                 >
                   {isLoadingDaily ? (
@@ -1986,12 +1811,8 @@ export default function PlanManagement({
 
                 <button
                   type="button"
-                  onClick={
-                    openExtraDialog
-                  }
-                  disabled={
-                    isSavingPlan
-                  }
+                  onClick={openExtraDialog}
+                  disabled={isSavingPlan}
                   className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-60 lg:ml-auto"
                 >
                   <Plus className="h-4 w-4" />
@@ -2004,40 +1825,30 @@ export default function PlanManagement({
                   <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
                     <StatCard
                       label="ทั้งหมด"
-                      value={
-                        dailyResult.rowCount
-                      }
+                      value={dailyResult.rowCount}
                     />
 
                     <StatCard
                       label="ใช้งาน"
-                      value={
-                        dailyResult.activeCount
-                      }
+                      value={dailyResult.activeCount}
                       tone="green"
                     />
 
                     <StatCard
                       label="REGULAR"
-                      value={
-                        dailyResult.regularCount
-                      }
+                      value={dailyResult.regularCount}
                       tone="blue"
                     />
 
                     <StatCard
                       label="EXTRA"
-                      value={
-                        dailyResult.extraCount
-                      }
+                      value={dailyResult.extraCount}
                       tone="purple"
                     />
 
                     <StatCard
                       label="CANCEL"
-                      value={
-                        dailyResult.cancelCount
-                      }
+                      value={dailyResult.cancelCount}
                       tone="red"
                     />
                   </div>
@@ -2047,13 +1858,10 @@ export default function PlanManagement({
                       <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
 
                       <input
-                        value={
-                          dailySearch
-                        }
+                        value={dailySearch}
                         onChange={event =>
                           setDailySearch(
-                            event.target
-                              .value
+                            event.target.value
                           )
                         }
                         placeholder="ค้นหา Code run, Route, ทะเบียนรถ..."
@@ -2062,9 +1870,7 @@ export default function PlanManagement({
                     </div>
 
                     <select
-                      value={
-                        dailyFilter
-                      }
+                      value={dailyFilter}
                       onChange={event =>
                         setDailyFilter(
                           event.target
@@ -2076,15 +1882,12 @@ export default function PlanManagement({
                       <option value="ALL">
                         ทุกประเภท
                       </option>
-
                       <option value="REGULAR">
                         REGULAR
                       </option>
-
                       <option value="EXTRA">
                         EXTRA
                       </option>
-
                       <option value="CANCEL">
                         CANCEL
                       </option>
@@ -2105,142 +1908,116 @@ export default function PlanManagement({
                             'ETA',
                             'ETD',
                             'Action',
-                          ].map(
-                            heading => (
-                              <th
-                                key={
-                                  heading
-                                }
-                                className="px-4 py-3"
-                              >
-                                {heading}
-                              </th>
-                            )
-                          )}
+                          ].map(heading => (
+                            <th
+                              key={heading}
+                              className="px-4 py-3"
+                            >
+                              {heading}
+                            </th>
+                          ))}
                         </tr>
                       </thead>
 
                       <tbody className="divide-y divide-slate-100 bg-white">
-                        {!filteredDailyRows.length ? (
+                        {filteredDailyRows.length === 0 ? (
                           <tr>
                             <td
-                              colSpan={
-                                9
-                              }
+                              colSpan={9}
                               className="px-4 py-10 text-center text-slate-500"
                             >
                               ไม่พบแผนในวันที่เลือก
                             </td>
                           </tr>
                         ) : (
-                          filteredDailyRows.map(
-                            plan => (
-                              <tr
-                                key={
-                                  plan.codeRun
-                                }
-                                className={
-                                  plan.remark ===
-                                  'CANCEL'
-                                    ? 'bg-red-50/50 text-slate-500'
-                                    : 'hover:bg-blue-50/40'
-                                }
-                              >
-                                <td className="whitespace-nowrap px-4 py-3 font-bold text-slate-900">
-                                  {plan.codeRun}
-                                </td>
+                          filteredDailyRows.map(plan => (
+                            <tr
+                              key={plan.codeRun}
+                              className={
+                                plan.remark === 'CANCEL'
+                                  ? 'bg-red-50/50 text-slate-500'
+                                  : 'hover:bg-blue-50/40'
+                              }
+                            >
+                              <td className="whitespace-nowrap px-4 py-3 font-bold text-slate-900">
+                                {plan.codeRun}
+                              </td>
 
-                                <td className="whitespace-nowrap px-4 py-3">
-                                  <RemarkBadge
-                                    remark={
-                                      plan.remark
-                                    }
-                                  />
-                                </td>
+                              <td className="whitespace-nowrap px-4 py-3">
+                                <RemarkBadge
+                                  remark={plan.remark}
+                                />
+                              </td>
 
-                                <td className="whitespace-nowrap px-4 py-3">
-                                  {plan.route}
-                                </td>
+                              <td className="whitespace-nowrap px-4 py-3">
+                                {plan.route}
+                              </td>
 
-                                <td className="whitespace-nowrap px-4 py-3">
-                                  {plan.company}
-                                </td>
+                              <td className="whitespace-nowrap px-4 py-3">
+                                {plan.company}
+                              </td>
 
-                                <td className="whitespace-nowrap px-4 py-3 font-medium">
-                                  {plan.truckName}
-                                </td>
+                              <td className="whitespace-nowrap px-4 py-3 font-medium">
+                                {plan.truckName}
+                              </td>
 
-                                <td className="whitespace-nowrap px-4 py-3">
-                                  {plan.dropPoint}
-                                </td>
+                              <td className="whitespace-nowrap px-4 py-3">
+                                {plan.dropPoint}
+                              </td>
 
-                                <td className="whitespace-nowrap px-4 py-3 font-mono">
-                                  {plan.planEta}
-                                </td>
+                              <td className="whitespace-nowrap px-4 py-3 font-mono">
+                                {plan.planEta}
+                              </td>
 
-                                <td className="whitespace-nowrap px-4 py-3 font-mono">
-                                  {plan.planEtd}
-                                </td>
+                              <td className="whitespace-nowrap px-4 py-3 font-mono">
+                                {plan.planEtd}
+                              </td>
 
-                                <td className="whitespace-nowrap px-4 py-3">
-                                  <div className="flex gap-2">
-                                    {plan.remark !==
-                                    'CANCEL' ? (
-                                      <>
-                                        <button
-                                          type="button"
-                                          onClick={() =>
-                                            openEditDialog(
-                                              plan
-                                            )
-                                          }
-                                          disabled={
-                                            isSavingPlan
-                                          }
-                                          className="rounded-lg bg-blue-50 p-2 text-blue-600 disabled:opacity-50"
-                                          title="แก้ไข"
-                                        >
-                                          <Edit3 className="h-4 w-4" />
-                                        </button>
-
-                                        <button
-                                          type="button"
-                                          onClick={() =>
-                                            setCancelTarget(
-                                              plan
-                                            )
-                                          }
-                                          disabled={
-                                            isSavingPlan
-                                          }
-                                          className="rounded-lg bg-red-50 p-2 text-red-600 disabled:opacity-50"
-                                          title="ยกเลิก"
-                                        >
-                                          <Trash2 className="h-4 w-4" />
-                                        </button>
-                                      </>
-                                    ) : (
+                              <td className="whitespace-nowrap px-4 py-3">
+                                <div className="flex gap-2">
+                                  {plan.remark !== 'CANCEL' ? (
+                                    <>
                                       <button
                                         type="button"
                                         onClick={() =>
-                                          setRestoreTarget(
-                                            plan
-                                          )
+                                          openEditDialog(plan)
                                         }
-                                        disabled={
-                                          isSavingPlan
-                                        }
-                                        className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 disabled:opacity-50"
+                                        disabled={isSavingPlan}
+                                        className="rounded-lg bg-blue-50 p-2 text-blue-600 disabled:opacity-50"
+                                        title="แก้ไข"
                                       >
-                                        <RotateCcw className="h-4 w-4" />
-                                        คืนค่า
+                                        <Edit3 className="h-4 w-4" />
                                       </button>
-                                    )}
-                                  </div>
-                                </td>
-                              </tr>
-                            )
-                          )
+
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setCancelTarget(plan)
+                                        }
+                                        disabled={isSavingPlan}
+                                        className="rounded-lg bg-red-50 p-2 text-red-600 disabled:opacity-50"
+                                        title="ยกเลิก"
+                                      >
+                                        <Trash2 className="h-4 w-4" />
+                                      </button>
+                                    </>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setRestoreTarget(plan)
+                                      }
+                                      disabled={isSavingPlan}
+                                      className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 disabled:opacity-50"
+                                    >
+                                      <RotateCcw className="h-4 w-4" />
+                                      คืนค่า
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          ))
                         )}
                       </tbody>
                     </table>
@@ -2254,20 +2031,16 @@ export default function PlanManagement({
         {notice && (
           <div
             className={`flex items-start gap-3 rounded-xl border p-4 text-sm ${
-              notice.type ===
-              'success'
+              notice.type === 'success'
                 ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-                : notice.type ===
-                  'error'
+                : notice.type === 'error'
                   ? 'border-red-200 bg-red-50 text-red-800'
                   : 'border-blue-200 bg-blue-50 text-blue-800'
             }`}
           >
-            {notice.type ===
-            'success' ? (
+            {notice.type === 'success' ? (
               <CheckCircle2 className="h-5 w-5 shrink-0" />
-            ) : notice.type ===
-              'error' ? (
+            ) : notice.type === 'error' ? (
               <XCircle className="h-5 w-5 shrink-0" />
             ) : (
               <RefreshCw className="h-5 w-5 shrink-0" />
@@ -2280,8 +2053,7 @@ export default function PlanManagement({
         )}
 
         {tab === 'create' &&
-          validationErrors.length >
-            0 && (
+          validationErrors.length > 0 && (
             <section className="rounded-2xl border border-red-200 bg-red-50 p-5">
               <div className="flex items-center gap-2 font-semibold text-red-800">
                 <AlertTriangle className="h-5 w-5" />
@@ -2289,21 +2061,14 @@ export default function PlanManagement({
               </div>
 
               <div className="mt-3 max-h-56 space-y-2 overflow-auto">
-                {validationErrors.map(
-                  item => (
-                    <div
-                      key={
-                        item.sheetRow
-                      }
-                      className="rounded-lg bg-white px-3 py-2 text-sm text-red-700"
-                    >
-                      แถว {item.sheetRow}:{' '}
-                      {item.errors.join(
-                        ', '
-                      )}
-                    </div>
-                  )
-                )}
+                {validationErrors.map(item => (
+                  <div
+                    key={item.sheetRow}
+                    className="rounded-lg bg-white px-3 py-2 text-sm text-red-700"
+                  >
+                    แถว {item.sheetRow}: {item.errors.join(', ')}
+                  </div>
+                ))}
               </div>
             </section>
           )}
@@ -2318,32 +2083,24 @@ export default function PlanManagement({
               <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <StatCard
                   label="วันทำงาน"
-                  value={
-                    preview.workingDateCount
-                  }
+                  value={preview.workingDateCount}
                   tone="blue"
                 />
 
                 <StatCard
                   label="รายการทั้งหมด"
-                  value={
-                    preview.totalCandidateRows
-                  }
+                  value={preview.totalCandidateRows}
                 />
 
                 <StatCard
                   label="รายการใหม่"
-                  value={
-                    preview.newRowCount
-                  }
+                  value={preview.newRowCount}
                   tone="green"
                 />
 
                 <StatCard
                   label="รายการซ้ำ"
-                  value={
-                    preview.duplicateRowCount
-                  }
+                  value={preview.duplicateRowCount}
                   tone="amber"
                 />
               </div>
@@ -2353,7 +2110,6 @@ export default function PlanManagement({
                   <p className="text-xs text-slate-500">
                     Code run สูงสุด
                   </p>
-
                   <b>
                     {preview.currentMaximumCodeRun}
                   </b>
@@ -2363,7 +2119,6 @@ export default function PlanManagement({
                   <p className="text-xs text-slate-500">
                     เริ่มต้น
                   </p>
-
                   <b className="text-blue-700">
                     {preview.startCodeRun}
                   </b>
@@ -2373,7 +2128,6 @@ export default function PlanManagement({
                   <p className="text-xs text-slate-500">
                     สุดท้าย
                   </p>
-
                   <b className="text-blue-700">
                     {preview.endCodeRun}
                   </b>
@@ -2384,12 +2138,10 @@ export default function PlanManagement({
                 <button
                   type="button"
                   onClick={() =>
-                    setShowCreateConfirmation(
-                      true
-                    )
+                    setShowCreateConfirmation(true)
                   }
                   disabled={
-                    !preview.newRowCount ||
+                    preview.newRowCount <= 0 ||
                     createBusy
                   }
                   className="rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white disabled:bg-slate-300"
@@ -2408,15 +2160,9 @@ export default function PlanManagement({
               </h2>
 
               <p className="mt-1 text-sm">
-                สร้าง{' '}
-                {
-                  creationResult.createdRowCount
-                }{' '}
-                รายการ ข้ามรายการซ้ำ{' '}
-                {
-                  creationResult.duplicateRowCount
-                }{' '}
-                รายการ
+                สร้าง {creationResult.createdRowCount} รายการ
+                {' '}
+                ข้ามรายการซ้ำ {creationResult.duplicateRowCount} รายการ
               </p>
             </section>
           )}
@@ -2431,25 +2177,15 @@ export default function PlanManagement({
                   </h2>
 
                   <p className="text-sm text-slate-500">
-                    แสดง{' '}
-                    {
-                      filteredTemplateRows.length
-                    }{' '}
-                    จาก{' '}
-                    {
-                      templateRows.length
-                    }
+                    แสดง {filteredTemplateRows.length} จาก {templateRows.length}
                   </p>
                 </div>
 
                 <input
-                  value={
-                    templateSearch
-                  }
+                  value={templateSearch}
                   onChange={event =>
                     setTemplateSearch(
-                      event.target
-                        .value
+                      event.target.value
                     )
                   }
                   placeholder="ค้นหาข้อมูลต้นแบบ..."
@@ -2471,63 +2207,47 @@ export default function PlanManagement({
                         'Drop Point',
                         'ETA',
                         'ETD',
-                      ].map(
-                        heading => (
-                          <th
-                            key={
-                              heading
-                            }
-                            className="px-4 py-3"
-                          >
-                            {heading}
-                          </th>
-                        )
-                      )}
+                      ].map(heading => (
+                        <th
+                          key={heading}
+                          className="px-4 py-3"
+                        >
+                          {heading}
+                        </th>
+                      ))}
                     </tr>
                   </thead>
 
                   <tbody className="divide-y divide-slate-100">
                     {filteredTemplateRows.map(
-                      (
-                        row,
-                        index
-                      ) => (
+                      (row, index) => (
                         <tr
                           key={`${row.sheetRow || index}-${row.route}-${row.truckName}`}
                         >
                           <td className="px-4 py-3">
                             {row.route}
                           </td>
-
                           <td className="px-4 py-3">
                             {row.company}
                           </td>
-
                           <td className="px-4 py-3 font-medium text-blue-700">
                             {row.truckName}
                           </td>
-
                           <td className="px-4 py-3">
                             {row.truckType}
                           </td>
-
                           <td className="px-4 py-3">
-                            {row.driverName ||
-                              '-'}
+                            {row.driverName || '-'}
                           </td>
-
                           <td className="px-4 py-3">
                             {row.project}
                           </td>
-
                           <td className="px-4 py-3">
                             {row.dropPoint}
                           </td>
-
                           <td className="px-4 py-3 font-mono">
                             {row.planEta}
                           </td>
-
                           <td className="px-4 py-3 font-mono">
                             {row.planEtd}
                           </td>
@@ -2550,22 +2270,17 @@ export default function PlanManagement({
               </h2>
 
               <p className="mt-2 text-sm text-slate-500">
-                ระบบจะเขียน{' '}
-                {
-                  preview.newRowCount
-                }{' '}
-                รายการลงชีต Plan
+                ระบบจะเขียน {preview.newRowCount} รายการลงชีต Plan
               </p>
 
               <div className="mt-6 flex justify-end gap-3">
                 <button
                   type="button"
                   onClick={() =>
-                    setShowCreateConfirmation(
-                      false
-                    )
+                    setShowCreateConfirmation(false)
                   }
-                  className="rounded-xl border px-5 py-2.5"
+                  disabled={isCreating}
+                  className="rounded-xl border px-5 py-2.5 disabled:opacity-50"
                 >
                   ยกเลิก
                 </button>
@@ -2575,15 +2290,12 @@ export default function PlanManagement({
                   onClick={() =>
                     void handleCreatePeriod()
                   }
-                  disabled={
-                    isCreating
-                  }
+                  disabled={isCreating}
                   className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-white disabled:opacity-60"
                 >
                   {isCreating && (
                     <Loader2 className="h-4 w-4 animate-spin" />
                   )}
-
                   ยืนยันสร้าง
                 </button>
               </div>
@@ -2594,16 +2306,13 @@ export default function PlanManagement({
       {planDialogMode && (
         <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-slate-950/60 p-4">
           <form
-            onSubmit={
-              handleSavePlan
-            }
+            onSubmit={handleSavePlan}
             className="max-h-[92vh] w-full max-w-3xl overflow-auto rounded-2xl bg-white p-6 shadow-2xl"
           >
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-xl font-bold">
-                  {planDialogMode ===
-                  'extra'
+                  {planDialogMode === 'extra'
                     ? 'เพิ่ม Extra Plan'
                     : `แก้ไข ${editingCodeRun}`}
                 </h2>
@@ -2615,12 +2324,8 @@ export default function PlanManagement({
 
               <button
                 type="button"
-                onClick={
-                  closePlanDialog
-                }
-                disabled={
-                  isSavingPlan
-                }
+                onClick={closePlanDialog}
+                disabled={isSavingPlan}
                 className="rounded-lg p-2 hover:bg-slate-100 disabled:opacity-50"
               >
                 <X className="h-5 w-5" />
@@ -2628,118 +2333,32 @@ export default function PlanManagement({
             </div>
 
             <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {(
-                [
-                  [
-                    'date',
-                    'Date',
-                    'date',
-                  ],
-                  [
-                    'route',
-                    'Route',
-                    'text',
-                  ],
-                  [
-                    'company',
-                    'Company',
-                    'text',
-                  ],
-                  [
-                    'truckName',
-                    'Truck Name',
-                    'text',
-                  ],
-                  [
-                    'truckType',
-                    'Truck Type',
-                    'text',
-                  ],
-                  [
-                    'driverName',
-                    'Driver Name',
-                    'text',
-                  ],
-                  [
-                    'telDriver',
-                    'Tel Driver',
-                    'text',
-                  ],
-                  [
-                    'project',
-                    'Project',
-                    'text',
-                  ],
-                  [
-                    'dropPoint',
-                    'Drop Point',
-                    'text',
-                  ],
-                  [
-                    'planEta',
-                    'Plan ETA',
-                    'time',
-                  ],
-                  [
-                    'planEtd',
-                    'Plan ETD',
-                    'time',
-                  ],
-                ] as const
-              ).map(
-                ([
-                  field,
-                  label,
-                  type,
-                ]) => (
-                  <label
-                    key={
-                      field
+              {FORM_FIELDS.map(item => (
+                <label
+                  key={item.field}
+                  className="text-sm font-medium text-slate-700"
+                >
+                  {item.label}
+
+                  <input
+                    type={item.type}
+                    value={String(
+                      planForm[item.field] || ''
+                    )}
+                    onChange={event =>
+                      setFormField(
+                        item.field,
+                        event.target.value
+                      )
                     }
-                    className="text-sm font-medium text-slate-700"
-                  >
-                    {label}
+                    required={item.required}
+                    disabled={isSavingPlan}
+                    className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 disabled:bg-slate-100"
+                  />
+                </label>
+              ))}
 
-                    <input
-                      type={
-                        type
-                      }
-                      value={String(
-                        planForm[
-                          field
-                        ] || ''
-                      )}
-                      onChange={event =>
-                        setFormField(
-                          field,
-                          event.target
-                            .value
-                        )
-                      }
-                      required={[
-                        'date',
-                        'route',
-                        'company',
-                        'truckName',
-                        'truckType',
-                        'project',
-                        'dropPoint',
-                        'planEta',
-                        'planEtd',
-                      ].includes(
-                        field
-                      )}
-                      disabled={
-                        isSavingPlan
-                      }
-                      className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 disabled:bg-slate-100"
-                    />
-                  </label>
-                )
-              )}
-
-              {planDialogMode ===
-                'edit' && (
+              {planDialogMode === 'edit' && (
                 <label className="text-sm font-medium text-slate-700">
                   Remark
 
@@ -2751,19 +2370,15 @@ export default function PlanManagement({
                     onChange={event =>
                       setFormField(
                         'remark',
-                        event.target
-                          .value
+                        event.target.value
                       )
                     }
-                    disabled={
-                      isSavingPlan
-                    }
+                    disabled={isSavingPlan}
                     className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 disabled:bg-slate-100"
                   >
                     <option value="REGULAR">
                       REGULAR
                     </option>
-
                     <option value="EXTRA">
                       EXTRA
                     </option>
@@ -2775,12 +2390,8 @@ export default function PlanManagement({
             <div className="mt-6 flex justify-end gap-3">
               <button
                 type="button"
-                onClick={
-                  closePlanDialog
-                }
-                disabled={
-                  isSavingPlan
-                }
+                onClick={closePlanDialog}
+                disabled={isSavingPlan}
                 className="rounded-xl border px-5 py-2.5 disabled:opacity-50"
               >
                 ยกเลิก
@@ -2788,9 +2399,7 @@ export default function PlanManagement({
 
               <button
                 type="submit"
-                disabled={
-                  isSavingPlan
-                }
+                disabled={isSavingPlan}
                 className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 font-semibold text-white disabled:opacity-60"
               >
                 {isSavingPlan && (
@@ -2820,13 +2429,7 @@ export default function PlanManagement({
                 </h2>
 
                 <p className="mt-1 text-sm text-slate-500">
-                  {
-                    cancelTarget.codeRun
-                  }{' '}
-                  |{' '}
-                  {
-                    cancelTarget.truckName
-                  }
+                  {cancelTarget.codeRun} | {cancelTarget.truckName}
                 </p>
               </div>
             </div>
@@ -2839,13 +2442,9 @@ export default function PlanManagement({
               <button
                 type="button"
                 onClick={() =>
-                  setCancelTarget(
-                    null
-                  )
+                  setCancelTarget(null)
                 }
-                disabled={
-                  isSavingPlan
-                }
+                disabled={isSavingPlan}
                 className="rounded-xl border px-5 py-2.5 disabled:opacity-50"
               >
                 กลับ
@@ -2856,15 +2455,12 @@ export default function PlanManagement({
                 onClick={() =>
                   void handleCancelPlan()
                 }
-                disabled={
-                  isSavingPlan
-                }
+                disabled={isSavingPlan}
                 className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-5 py-2.5 font-semibold text-white disabled:opacity-60"
               >
                 {isSavingPlan && (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 )}
-
                 ยืนยันยกเลิก
               </button>
             </div>
@@ -2876,10 +2472,7 @@ export default function PlanManagement({
         <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-slate-950/60 p-4">
           <div className="w-full max-w-md rounded-2xl bg-white p-6">
             <h2 className="text-lg font-bold">
-              คืนค่า{' '}
-              {
-                restoreTarget.codeRun
-              }
+              คืนค่า {restoreTarget.codeRun}
             </h2>
 
             <p className="mt-2 text-sm text-slate-500">
@@ -2894,15 +2487,12 @@ export default function PlanManagement({
                     'REGULAR'
                   )
                 }
-                disabled={
-                  isSavingPlan
-                }
+                disabled={isSavingPlan}
                 className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 font-semibold text-white disabled:opacity-60"
               >
                 {isSavingPlan && (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 )}
-
                 REGULAR
               </button>
 
@@ -2913,15 +2503,12 @@ export default function PlanManagement({
                     'EXTRA'
                   )
                 }
-                disabled={
-                  isSavingPlan
-                }
+                disabled={isSavingPlan}
                 className="inline-flex items-center justify-center gap-2 rounded-xl bg-purple-600 px-4 py-3 font-semibold text-white disabled:opacity-60"
               >
                 {isSavingPlan && (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 )}
-
                 EXTRA
               </button>
             </div>
@@ -2929,13 +2516,9 @@ export default function PlanManagement({
             <button
               type="button"
               onClick={() =>
-                setRestoreTarget(
-                  null
-                )
+                setRestoreTarget(null)
               }
-              disabled={
-                isSavingPlan
-              }
+              disabled={isSavingPlan}
               className="mt-3 w-full rounded-xl border px-4 py-2.5 disabled:opacity-50"
             >
               ยกเลิก
