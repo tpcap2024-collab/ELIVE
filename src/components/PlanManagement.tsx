@@ -23,6 +23,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
+
 import {
   cancelDailyPlan,
   createExtraPlan,
@@ -33,6 +34,7 @@ import {
   restoreDailyPlan,
   updateDailyPlan,
 } from '../lib/sheets';
+
 import type {
   DailyPlan,
   DailyPlansResult,
@@ -60,21 +62,54 @@ type PlanManagementProps = {
   ) => void | Promise<void>;
 };
 
-type FormField = {
+type FormFieldConfig = {
   field: keyof EditablePlan;
   label: string;
   type: 'text' | 'date' | 'time';
   required: boolean;
 };
 
+type DailyRefreshOptions = {
+  showMessage?: boolean;
+  clearResultOnError?: boolean;
+};
+
 const WORKING_DAYS = [
-  { value: 1, short: 'จ.', full: 'จันทร์' },
-  { value: 2, short: 'อ.', full: 'อังคาร' },
-  { value: 3, short: 'พ.', full: 'พุธ' },
-  { value: 4, short: 'พฤ.', full: 'พฤหัสบดี' },
-  { value: 5, short: 'ศ.', full: 'ศุกร์' },
-  { value: 6, short: 'ส.', full: 'เสาร์' },
-  { value: 7, short: 'อา.', full: 'อาทิตย์' },
+  {
+    value: 1,
+    short: 'จ.',
+    full: 'จันทร์',
+  },
+  {
+    value: 2,
+    short: 'อ.',
+    full: 'อังคาร',
+  },
+  {
+    value: 3,
+    short: 'พ.',
+    full: 'พุธ',
+  },
+  {
+    value: 4,
+    short: 'พฤ.',
+    full: 'พฤหัสบดี',
+  },
+  {
+    value: 5,
+    short: 'ศ.',
+    full: 'ศุกร์',
+  },
+  {
+    value: 6,
+    short: 'ส.',
+    full: 'เสาร์',
+  },
+  {
+    value: 7,
+    short: 'อา.',
+    full: 'อาทิตย์',
+  },
 ];
 
 const EMPTY_PLAN: EditablePlan = {
@@ -92,7 +127,7 @@ const EMPTY_PLAN: EditablePlan = {
   remark: 'EXTRA',
 };
 
-const FORM_FIELDS: FormField[] = [
+const FORM_FIELDS: FormFieldConfig[] = [
   {
     field: 'date',
     label: 'Date',
@@ -223,7 +258,7 @@ const HEADER_ALIASES: Record<
   ],
 };
 
-function bangkokDate(): string {
+function getBangkokDate(): string {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Bangkok',
     year: 'numeric',
@@ -232,8 +267,11 @@ function bangkokDate(): string {
   }).format(new Date());
 }
 
-function getError(error: unknown): string {
-  if (error instanceof Error) {
+function getErrorMessage(error: unknown): string {
+  if (
+    error instanceof Error &&
+    error.message
+  ) {
     return error.message;
   }
 
@@ -259,8 +297,12 @@ function normalizeTime(value: unknown): string {
     typeof value === 'number' &&
     Number.isFinite(value)
   ) {
+    const rawMinutes =
+      Math.round(value * 1440);
+
     const minutes =
-      Math.round(value * 1440) % 1440;
+      ((rawMinutes % 1440) + 1440) %
+      1440;
 
     const hour =
       Math.floor(minutes / 60);
@@ -268,7 +310,11 @@ function normalizeTime(value: unknown): string {
     const minute =
       minutes % 60;
 
-    return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+    return (
+      String(hour).padStart(2, '0') +
+      ':' +
+      String(minute).padStart(2, '0')
+    );
   }
 
   const match = String(value ?? '')
@@ -283,6 +329,8 @@ function normalizeTime(value: unknown): string {
   const minute = Number(match[2]);
 
   if (
+    !Number.isInteger(hour) ||
+    !Number.isInteger(minute) ||
     hour < 0 ||
     hour > 23 ||
     minute < 0 ||
@@ -291,27 +339,31 @@ function normalizeTime(value: unknown): string {
     return '';
   }
 
-  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+  return (
+    String(hour).padStart(2, '0') +
+    ':' +
+    String(minute).padStart(2, '0')
+  );
 }
 
 function findColumn(
   headers: string[],
   aliases: string[]
 ): number {
-  const choices =
+  const possibleHeaders =
     aliases.map(cleanHeader);
 
   return headers.findIndex(
     header =>
-      choices.includes(header)
+      possibleHeaders.includes(header)
   );
 }
 
 function parseTemplateRows(
   rawRows: unknown[][]
 ): {
-  rows[: MasterPlanRow[];
- validationErrors: MasterPlanValidationError[];
+  rows: MasterPlanRow[];
+  validationErrors: MasterPlanValidationError[];
 } {
   if (rawRows.length < 2) {
     throw new Error(
@@ -334,20 +386,22 @@ function parseTemplateRows(
     number
   >;
 
-  const missing = Object.entries(indexes)
-    .[
-,
-Column(headers, aliases),
- as Record<
- Omit<MasterPlanRow, ' key);
+  const missingColumns =
+    Object.entries(indexes)
+      .filter(
+        ([, columnIndex]) =>
+          columnIndex < 0
+      )
+      .map(([key]) => key);
 
-  if (missing.length > 0) {
+  if (missingColumns.length > 0) {
     throw new Error(
-      `ไม่พบคอลัมน์ที่จำเป็น: ${missing.join(', ')}`
+      `ไม่พบคอลัมน์ที่จำเป็น: ${missingColumns.join(', ')}`
     );
   }
 
   const rows: MasterPlanRow[] = [];
+
   const validationErrors:
     MasterPlanValidationError[] = [];
 
@@ -360,25 +414,45 @@ Column(headers, aliases),
       const row: MasterPlanRow = {
         sheetRow,
         route:
-          cleanCell(rawRow[indexes.route]),
+          cleanCell(
+            rawRow[indexes.route]
+          ),
         company:
-          cleanCell(rawRow[indexes.company]),
+          cleanCell(
+            rawRow[indexes.company]
+          ),
         truckName:
-          cleanCell(rawRow[indexes.truckName]),
+          cleanCell(
+            rawRow[indexes.truckName]
+          ),
         truckType:
-          cleanCell(rawRow[indexes.truckType]),
+          cleanCell(
+            rawRow[indexes.truckType]
+          ),
         driverName:
-          cleanCell(rawRow[indexes.driverName]),
+          cleanCell(
+            rawRow[indexes.driverName]
+          ),
         telDriver:
-          cleanCell(rawRow[indexes.telDriver]),
+          cleanCell(
+            rawRow[indexes.telDriver]
+          ),
         project:
-          cleanCell(rawRow[indexes.project]),
+          cleanCell(
+            rawRow[indexes.project]
+          ),
         dropPoint:
-          cleanCell(rawRow[indexes.dropPoint]),
+          cleanCell(
+            rawRow[indexes.dropPoint]
+          ),
         planEta:
-          normalizeTime(rawRow[indexes.planEta]),
+          normalizeTime(
+            rawRow[indexes.planEta]
+          ),
         planEtd:
-          normalizeTime(rawRow[indexes.planEtd]),
+          normalizeTime(
+            rawRow[indexes.planEtd]
+          ),
       };
 
       const isEmpty =
@@ -403,11 +477,15 @@ Column(headers, aliases),
       }
 
       if (!row.truckName) {
-        errors.push('Truck Name ว่าง');
+        errors.push(
+          'Truck Name ว่าง'
+        );
       }
 
       if (!row.truckType) {
-        errors.push('Truck Type ว่าง');
+        errors.push(
+          'Truck Type ว่าง'
+        );
       }
 
       if (!row.project) {
@@ -415,15 +493,21 @@ Column(headers, aliases),
       }
 
       if (!row.dropPoint) {
-        errors.push('Drop Point ว่าง');
+        errors.push(
+          'Drop Point ว่าง'
+        );
       }
 
       if (!row.planEta) {
-        errors.push('Plan ETA ไม่ถูกต้อง');
+        errors.push(
+          'Plan ETA ไม่ถูกต้อง'
+        );
       }
 
       if (!row.planEtd) {
-        errors.push('Plan ETD ไม่ถูกต้อง');
+        errors.push(
+          'Plan ETD ไม่ถูกต้อง'
+        );
       }
 
       if (errors.length > 0) {
@@ -458,7 +542,9 @@ async function readPlanFile(
 
   if (
     !extension ||
-    !['xlsx', 'xls', 'csv'].includes(extension)
+    !['xlsx', 'xls', 'csv'].includes(
+      extension
+    )
   ) {
     throw new Error(
       'รองรับเฉพาะไฟล์ .xlsx, .xls และ .csv'
@@ -477,23 +563,34 @@ async function readPlanFile(
   const fileBuffer =
     await file.arrayBuffer();
 
-  const workbook =
-    XLSX.read(fileBuffer, {
+  const workbook = XLSX.read(
+    fileBuffer,
+    {
       type: 'array',
-    });
+    }
+  );
 
-  const firstSheet =
+  const firstSheetName =
     workbook.SheetNames[0];
 
-  if (!firstSheet) {
+  if (!firstSheetName) {
     throw new Error(
       'ไม่พบ Worksheet ในไฟล์'
     );
   }
 
+  const firstWorksheet =
+    workbook.Sheets[firstSheetName];
+
+  if (!firstWorksheet) {
+    throw new Error(
+      'ไม่สามารถอ่าน Worksheet แรกได้'
+    );
+  }
+
   return XLSX.utils.sheet_to_json<unknown[]>(
-    workbook.S[heets[firstSheet],
-   {
+    firstWorksheet,
+    {
       header: 1,
       raw: true,
       defval: '',
@@ -552,7 +649,10 @@ function RemarkBadge({
 }: {
   remark: PlanRemark;
 }) {
-  const classes = {
+  const classes: Record<
+    PlanRemark,
+    string
+  > = {
     REGULAR:
       'bg-blue-100 text-blue-700',
     EXTRA:
@@ -574,171 +674,191 @@ export default function PlanManagement({
   onPlanCreated,
 }: PlanManagementProps) {
   const today =
-    useMemo(bangkokDate, []);
+    useMemo(
+      getBangkokDate,
+      []
+    );
 
   const fileInputRef =
-    useRef<HTMLInputElement>(null);
+    useRef<HTMLInputElement>(
+      null
+    );
 
   const [tab, setTab] =
     useState<MainTab>('create');
 
   const [notice, setNotice] =
-    useState<NoticeState | null>(null);
+    useState<NoticeState | null>(
+      null
+    );
 
   const [source, setSource] =
-    useState<PlanSource | null>(null);
-
-  const [templateRows, setTemplateRows] =
-    useState<MasterPlanRow[]>([]);
-
-  const [
-    validationErrors,
-    setValidationErrors,
-  [
-Errors,
-te<
-    MasterPlanValidationError[]
-  >([]);
-
-  const [fileName, setFileName] =
-    useState('');
-
-  const [startDate, setStartDate] =
-    useState(today);
-
-  const [endDate, setEndDate] =
-    useState(today);
-
-  const [workingDays, setWorkingDays] =
-    useState<number[]>([
-      1,
-      2,
-      3,
-      4,
-      5,
-      6,
-    ]);
-
-  const[
-1,
-2,
-3,
-4,
-5,
-6,
- ] =
-    useState<PlanPeriodPreview | null>(
+    useState<PlanSource | null>(
       null
     );
 
   const [
+    templateRows,
+    setTemplateRows,
+  ] = useState<MasterPlanRow[]>(
+    []
+  );
+
+  const [
+    validationErrors,
+    setValidationErrors,
+  ] = useState<
+    MasterPlanValidationError[]
+  >([]);
+
+  const [
+    fileName,
+    setFileName,
+  ] = useState('');
+
+  const [
+    startDate,
+    setStartDate,
+  ] = useState(today);
+
+  const [
+    endDate,
+    setEndDate,
+  ] = useState(today);
+
+  const [
+    workingDays,
+    setWorkingDays,
+  ] = useState<number[]>([
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+  ]);
+
+  const [
+    preview,
+    setPreview,
+  ] = useState<
+    PlanPeriodPreview | null
+  >(null);
+
+  const [
     creationResult,
     setCreationResult,
-  [
-Result,
-CreationResult,
-] =nResult | null
+  ] = useState<
+    PlanCreationResult | null
   >(null);
 
   const [
     templateSearch,
     setTemplateSearch,
-  [
-Search,
-TemplateSearch,
-] =    isLoadingSource,
+  ] = useState('');
+
+  const [
+    isLoadingSource,
     setIsLoadingSource,
-  [
-LoadingSource,
-IsLoadingSource,
-  isPreviewing,
+  ] = useState(false);
+
+  const [
+    isPreviewing,
     setIsPreviewing,
-  [
-Previewing,
-IsPreviewing,
-] = useState(false);
+  ] = useState(false);
 
-  setIsCreating,
-  [
-Creating,
-IsCreating,
-] = useStateisDragging,
+  const [
+    isCreating,
+    setIsCreating,
+  ] = useState(false);
+
+  const [
+    isDragging,
     setIsDragging,
-  [
-Dragging,
-IsDragging,
-] = useStateshowCreateConfirmation,
+  ] = useState(false);
+
+  const [
+    showCreateConfirmation,
     setShowCreateConfirmation,
-  [
-CreateConfirmation,
-ShowCreateConfirmationtDailyDate] =
-    useState(today);
+  ] = useState(false);
 
-  const [dailyResult, setDailyResult] =
-    useState<DailyPlansResult | null>(
-      null
-    );
+  const [
+    dailyDate,
+    setDailyDate,
+  ] = useState(today);
 
-  const [dailySearch, setDailySearch] =
-    useState('');
+  const [
+    dailyResult,
+    setDailyResult,
+  ] = useState<
+    DailyPlansResult | null
+  >(null);
 
-  const [dailyFilter, setDailyFilter] =
-    useState<DailyFilter>('ALL');
+  const [
+    dailySearch,
+    setDailySearch,
+  ] = useState('');
+
+  const [
+    dailyFilter,
+    setDailyFilter,
+  ] = useState<DailyFilter>(
+    'ALL'
+  );
 
   const [
     isLoadingDaily,
     setIsLoadingDaily,
-  [
-LoadingDaily,
-IsLoadingDaily,
-] = planDialogMode,
+  ] = useState(false);
+
+  const [
+    planDialogMode,
     setPlanDialogMode,
-  [
-DialogMode,
-PlanDialogMode,
-] =| null
+  ] = useState<
+    PlanDialogMode | null
   >(null);
 
   const [
     editingCodeRun,
     setEditingCodeRun,
-  [
-CodeRun,
-EditingCodeRun,
-] =anForm, setPlanForm] =
-    useState<EditablePlan>({
-      ...EMPTY_PLAN,
-      date: today,
-    });
+  ] = useState('');
+
+  const [
+    planForm,
+    setPlanForm,
+  ] = useState<EditablePlan>({
+    ...EMPTY_PLAN,
+    date: today,
+  });
 
   const [
     isSavingPlan,
     setIsSavingPlan,
-  [
-SavingPlan,
-IsSavingPlan,
-] = useState(falseet,
-    setCancelTarget,
-  [
-Target,
-CancelTarget,
-] = useState<DailyPlan | null>(
+  ] = useState(false);
 
+  const [
+    cancelTarget,
+    setCancelTarget,
+  ] = useState<
+    DailyPlan | null
+  >(null);
+
+  const [
     restoreTarget,
     setRestoreTarget,
-  [
-Target,
-RestoreTarget,
-] = useState<DailyPlan | null>(
-lectedWorkingDays =
-    useMemo(
-      () =>
-        [...new Set(workingDays)].sort(
-          (first, second) =>
-            first - second
-        ),
-      [workingDays]
-    );
+  ] = useState<
+    DailyPlan | null
+  >(null);
+
+  const selectedWorkingDays =
+    useMemo(() => {
+      return [
+        ...new Set(workingDays),
+      ].sort(
+        (first, second) =>
+          first - second
+      );
+    }, [workingDays]);
 
   const filteredTemplateRows =
     useMemo(() => {
@@ -778,13 +898,12 @@ lectedWorkingDays =
           .toLowerCase();
 
       return (
-        daily[
-Rows,
-Search,
- filteredDailyRows ow => {
+        dailyResult?.rows || []
+      ).filter(row => {
         const matchesFilter =
           dailyFilter === 'ALL' ||
-          row.remark === dailyFilter;
+          row.remark ===
+            dailyFilter;
 
         const matchesSearch =
           !query ||
@@ -838,11 +957,8 @@ Search,
   const clearSource =
     () => {
       setSource(null);
-      set[
-Result,
-Filter,
-Search,
- createBusyErrors([]);
+      setTemplateRows([]);
+      setValidationErrors([]);
       setFileName('');
       setTemplateSearch('');
       setNotice(null);
@@ -867,28 +983,35 @@ Search,
           await fetchMasterPlan(true);
 
         setSource('master-plan');
-        setTemplateRows(result.rows);
+        setTemplateRows(
+          result.rows
+        );
         setValidationErrors(
           result.validationErrors
         );
         setFileName('Master Plan');
 
-        setNotice({
-          type:
-            result.validationErrors
-              .length > 0
-              ? 'error'
-              : 'success',
-          message:
-            result.validationErrors
-              .length > 0
-              ? `Master Plan มีข้อมูลที่ต้องแก้ไข ${result.validationErrors.length} แถว`
-              : `โหลด Master Plan สำเร็จ ${result.rows.length} เที่ยวต่อวัน`,
-        });
+        if (
+          result.validationErrors
+            .length > 0
+        ) {
+          setNotice({
+            type: 'error',
+            message:
+              `Master Plan มีข้อมูลที่ต้องแก้ไข ${result.validationErrors.length} แถว`,
+          });
+        } else {
+          setNotice({
+            type: 'success',
+            message:
+              `โหลด Master Plan สำเร็จ ${result.rows.length} เที่ยวต่อวัน`,
+          });
+        }
       } catch (error) {
         setNotice({
           type: 'error',
-          message: getError(error),
+          message:
+            getErrorMessage(error),
         });
       } finally {
         setIsLoadingSource(false);
@@ -907,33 +1030,42 @@ Search,
           await readPlanFile(file);
 
         const parsed =
-          parseTemplateRows(rawRows);
+          parseTemplateRows(
+            rawRows
+          );
 
         setSource('uploaded-file');
-        setTemplateRows(parsed.rows);
+        setTemplateRows(
+          parsed.rows
+        );
         setValidationErrors(
           parsed.validationErrors
         );
         setFileName(file.name);
 
-        setNotice({
-          type:
-            parsed.validationErrors
-              .length > 0
-              ? 'error'
-              : 'success',
-          message:
-            parsed.validationErrors
-              .length > 0
-              ? `ไฟล์มีข้อมูลที่ต้องแก้ไข ${parsed.validationErrors.length} แถว`
-              : `อ่านไฟล์สำเร็จ ${parsed.rows.length} เที่ยวต่อวัน`,
-        });
+        if (
+          parsed.validationErrors
+            .length > 0
+        ) {
+          setNotice({
+            type: 'error',
+            message:
+              `ไฟล์มีข้อมูลที่ต้องแก้ไข ${parsed.validationErrors.length} แถว`,
+          });
+        } else {
+          setNotice({
+            type: 'success',
+            message:
+              `อ่านไฟล์สำเร็จ ${parsed.rows.length} เที่ยวต่อวัน`,
+          });
+        }
       } catch (error) {
         clearSource();
 
         setNotice({
           type: 'error',
-          message: getError(error),
+          message:
+            getErrorMessage(error),
         });
       } finally {
         setIsLoadingSource(false);
@@ -963,7 +1095,8 @@ Search,
       setIsDragging(false);
 
       const file =
-        event.dataTransfer.files?.[0];
+        event.dataTransfer
+          .files?.[0];
 
       if (file) {
         void handleFile(file);
@@ -972,17 +1105,24 @@ Search,
 
   const toggleWorkingDay =
     (day: number) => {
-      setWorkingDays(current =>
-        current.includes(day)
-          ? current.filter(
-              value =>
-                value !== day
-            )
-          : [...current, day].sort(
-              (first, second) =>
-                first - second
-            )
-      );
+      setWorkingDays(current => {
+        if (
+          current.includes(day)
+        ) {
+          return current.filter(
+            value =>
+              value !== day
+          );
+        }
+
+        return [
+          ...current,
+          day,
+        ].sort(
+          (first, second) =>
+            first - second
+        );
+      });
 
       resetCreateResult();
     };
@@ -996,11 +1136,13 @@ Search,
       source:
         source || 'master-plan',
       templateRows:
-        source === 'uploaded-file'
+        source ===
+        'uploaded-file'
           ? templateRows
           : undefined,
       fileName:
-        source === 'uploaded-file'
+        source ===
+        'uploaded-file'
           ? fileName
           : undefined,
     });
@@ -1023,22 +1165,28 @@ Search,
 
         setPreview(result);
 
-        setNotice({
-          type:
-            result.newRowCount > 0
-              ? 'success'
-              : 'info',
-          message:
-            result.newRowCount > 0
-              ? `Preview สำเร็จ พบรายการใหม่ ${result.newRowCount} รายการ`
-              : 'ไม่มีรายการใหม่ รายการทั้งหมดมีอยู่ใน Plan แล้ว',
-        });
+        if (
+          result.newRowCount > 0
+        ) {
+          setNotice({
+            type: 'success',
+            message:
+              `Preview สำเร็จ พบรายการใหม่ ${result.newRowCount} รายการ`,
+          });
+        } else {
+          setNotice({
+            type: 'info',
+            message:
+              'ไม่มีรายการใหม่ รายการทั้งหมดมีอยู่ใน Plan แล้ว',
+          });
+        }
       } catch (error) {
         setPreview(null);
 
         setNotice({
           type: 'error',
-          message: getError(error),
+          message:
+            getErrorMessage(error),
         });
       } finally {
         setIsPreviewing(false);
@@ -1049,7 +1197,8 @@ Search,
     async () => {
       if (
         !preview ||
-        preview.newRowCount <= 0
+        preview.newRowCount <= 0 ||
+        isCreating
       ) {
         return;
       }
@@ -1069,14 +1218,23 @@ Search,
 
         setCreationResult(result);
 
-        const refreshedPreview =
-          await previewPlanPeriod(
-            buildPeriodRequest()
-          );
+        try {
+          const refreshedPreview =
+            await previewPlanPeriod(
+              buildPeriodRequest()
+            );
 
-        setPreview(
-          refreshedPreview
-        );
+          setPreview(
+            refreshedPreview
+          );
+        } catch (
+          previewRefreshError
+        ) {
+          console.error(
+            'Unable to refresh Plan preview:',
+            previewRefreshError
+          );
+        }
 
         setNotice({
           type: 'success',
@@ -1090,7 +1248,8 @@ Search,
       } catch (error) {
         setNotice({
           type: 'error',
-          message: getError(error),
+          message:
+            getErrorMessage(error),
         });
       } finally {
         setIsCreating(false);
@@ -1100,8 +1259,15 @@ Search,
   const loadDailyPlans =
     async (
       date = dailyDate,
-      showMessage = true
+      options:
+        DailyRefreshOptions = {}
     ): Promise<DailyPlansResult> => {
+      const {
+        showMessage = true,
+        clearResultOnError =
+          showMessage,
+      } = options;
+
       setIsLoadingDaily(true);
 
       if (showMessage) {
@@ -1110,7 +1276,9 @@ Search,
 
       try {
         const result =
-          await fetchDailyPlans(date);
+          await fetchDailyPlans(
+            date
+          );
 
         setDailyResult(result);
 
@@ -1124,12 +1292,15 @@ Search,
 
         return result;
       } catch (error) {
-        if (showMessage) {
+        if (clearResultOnError) {
           setDailyResult(null);
+        }
 
+        if (showMessage) {
           setNotice({
             type: 'error',
-            message: getError(error),
+            message:
+              getErrorMessage(error),
           });
         }
 
@@ -1145,7 +1316,6 @@ Search,
         return;
       }
 
-      setPlanDialogMode('extra');
       setEditingCodeRun('');
 
       setPlanForm({
@@ -1153,6 +1323,8 @@ Search,
         date: dailyDate,
         remark: 'EXTRA',
       });
+
+      setPlanDialogMode('extra');
     };
 
   const openEditDialog =
@@ -1161,7 +1333,6 @@ Search,
         return;
       }
 
-      setPlanDialogMode('edit');
       setEditingCodeRun(
         plan.codeRun
       );
@@ -1189,6 +1360,8 @@ Search,
         remark:
           plan.remark,
       });
+
+      setPlanDialogMode('edit');
     };
 
   const closePlanDialog =
@@ -1199,6 +1372,18 @@ Search,
 
       setPlanDialogMode(null);
       setEditingCodeRun('');
+    };
+
+  const setFormField =
+    (
+      field:
+        keyof EditablePlan,
+      value: string
+    ) => {
+      setPlanForm(current => ({
+        ...current,
+        value,
+      }));
     };
 
   const handleSavePlan =
@@ -1248,7 +1433,11 @@ Search,
           try {
             await loadDailyPlans(
               submittedPlan.date,
-              false
+              {
+                showMessage: false,
+                clearResultOnError:
+                  false,
+              }
             );
           } catch (
             refreshError
@@ -1265,7 +1454,8 @@ Search,
               `เพิ่มเที่ยว Extra เรียบร้อยแล้ว Code run: ${result.codeRun}`,
           });
         } catch (error) {
-          let refreshed = false;
+          let refreshSucceeded =
+            false;
 
           try {
             setDailyDate(
@@ -1274,10 +1464,15 @@ Search,
 
             await loadDailyPlans(
               submittedPlan.date,
-              false
+              {
+                showMessage: false,
+                clearResultOnError:
+                  false,
+              }
             );
 
-            refreshed = true;
+            refreshSucceeded =
+              true;
           } catch (
             refreshError
           ) {
@@ -1290,16 +1485,19 @@ Search,
           setPlanDialogMode(null);
           setEditingCodeRun('');
 
-          setNotice({
-            type:
-              refreshed
-                ? 'info'
-                : 'error',
-            message:
-              refreshed
-                ? 'ไม่ได้รับการยืนยันจากเซิร์ฟเวอร์ แต่ระบบโหลดข้อมูลล่าสุดแล้ว กรุณาตรวจสอบรายการ Extra ในตารางก่อนเพิ่มใหม่'
-                : `ไม่ได้รับการยืนยันจากเซิร์ฟเวอร์และไม่สามารถโหลดข้อมูลล่าสุดได้ กรุณากดโหลดแผนประจำวันก่อนเพิ่มใหม่ รายละเอียด: ${getError(error)}`,
-          });
+          if (refreshSucceeded) {
+            setNotice({
+              type: 'info',
+              message:
+                'ไม่ได้รับการยืนยันจากเซิร์ฟเวอร์ แต่ระบบโหลดข้อมูลล่าสุดแล้ว กรุณาตรวจสอบรายการ Extra ล่าสุดในตารางก่อนเพิ่มใหม่',
+            });
+          } else {
+            setNotice({
+              type: 'error',
+              message:
+                `ไม่ได้รับการยืนยันจากเซิร์ฟเวอร์และไม่สามารถโหลดข้อมูลล่าสุดได้ กรุณากดโหลดแผนประจำวันก่อนเพิ่มใหม่ รายละเอียด: ${getErrorMessage(error)}`,
+            });
+          }
         } finally {
           setIsSavingPlan(false);
         }
@@ -1322,7 +1520,11 @@ Search,
 
         await loadDailyPlans(
           submittedPlan.date,
-          false
+          {
+            showMessage: false,
+            clearResultOnError:
+              false,
+          }
         );
 
         setNotice({
@@ -1334,7 +1536,11 @@ Search,
         try {
           await loadDailyPlans(
             submittedPlan.date,
-            false
+            {
+              showMessage: false,
+              clearResultOnError:
+                false,
+            }
           );
         } catch (
           refreshError
@@ -1347,7 +1553,8 @@ Search,
 
         setNotice({
           type: 'error',
-          message: getError(error),
+          message:
+            getErrorMessage(error),
         });
       } finally {
         setIsSavingPlan(false);
@@ -1378,7 +1585,11 @@ Search,
 
         await loadDailyPlans(
           dailyDate,
-          false
+          {
+            showMessage: false,
+            clearResultOnError:
+              false,
+          }
         );
 
         setNotice({
@@ -1390,7 +1601,11 @@ Search,
         try {
           await loadDailyPlans(
             dailyDate,
-            false
+            {
+              showMessage: false,
+              clearResultOnError:
+                false,
+            }
           );
         } catch (
           refreshError
@@ -1403,7 +1618,8 @@ Search,
 
         setNotice({
           type: 'error',
-          message: getError(error),
+          message:
+            getErrorMessage(error),
         });
       } finally {
         setIsSavingPlan(false);
@@ -1439,7 +1655,11 @@ Search,
 
         await loadDailyPlans(
           dailyDate,
-          false
+          {
+            showMessage: false,
+            clearResultOnError:
+              false,
+          }
         );
 
         setNotice({
@@ -1451,7 +1671,11 @@ Search,
         try {
           await loadDailyPlans(
             dailyDate,
-            false
+            {
+              showMessage: false,
+              clearResultOnError:
+                false,
+            }
           );
         } catch (
           refreshError
@@ -1464,23 +1688,14 @@ Search,
 
         setNotice({
           type: 'error',
-          message: getError(error),
+          message:
+            getErrorMessage(error),
         });
       } finally {
         setIsSavingPlan(false);
       }
     };
 
-  const setFormField = (
-    field: keyof EditablePlan,
-    value: string
-  ) => {
-    setPlanForm((current) => ({
-      ...current,
-      value,
-    }));
-  };
-    
   return (
     <div className="min-h-full bg-slate-50 p-4 sm:p-6 lg:p-8">
       <div className="mx-auto max-w-7xl space-y-6">
@@ -1652,7 +1867,7 @@ Search,
                         type="button"
                         onClick={clearSource}
                         disabled={createBusy}
-                        className="rounded-lg p-2 text-slate-500 hover:bg-slate-200"
+                        className="rounded-lg p-2 text-slate-500 hover:bg-slate-200 disabled:opacity-50"
                       >
                         <X className="h-5 w-5" />
                       </button>
@@ -1661,7 +1876,9 @@ Search,
                     <div className="mt-4 grid grid-cols-2 gap-3">
                       <StatCard
                         label="เที่ยวต่อวัน"
-                        value={templateRows.length}
+                        value={
+                          templateRows.length
+                        }
                         tone="blue"
                       />
 
@@ -1698,6 +1915,7 @@ Search,
                             setStartDate(
                               event.target.value
                             );
+
                             resetCreateResult();
                           }}
                           className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5"
@@ -1715,6 +1933,7 @@ Search,
                             setEndDate(
                               event.target.value
                             );
+
                             resetCreateResult();
                           }}
                           className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5"
@@ -1738,7 +1957,7 @@ Search,
                               day.value
                             )
                               ? 'border-blue-600 bg-blue-600 text-white'
-                              : 'border-slate-300'
+                              : 'border-slate-300 text-slate-700'
                           }`}
                         >
                           {day.short}
@@ -1752,7 +1971,9 @@ Search,
                         onClick={() =>
                           void handlePreview()
                         }
-                        disabled={!canPreview}
+                        disabled={
+                          !canPreview
+                        }
                         className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white disabled:bg-slate-300"
                       >
                         {isPreviewing ? (
@@ -1791,10 +2012,17 @@ Search,
                   onClick={() =>
                     void loadDailyPlans(
                       dailyDate,
-                      true
+                      {
+                        showMessage:
+                          true,
+                        clearResultOnError:
+                          true,
+                      }
                     )
                   }
-                  disabled={isLoadingDaily}
+                  disabled={
+                    isLoadingDaily
+                  }
                   className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-60"
                 >
                   {isLoadingDaily ? (
@@ -1808,8 +2036,12 @@ Search,
 
                 <button
                   type="button"
-                  onClick={openExtraDialog}
-                  disabled={isSavingPlan}
+                  onClick={
+                    openExtraDialog
+                  }
+                  disabled={
+                    isSavingPlan
+                  }
                   className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-60 lg:ml-auto"
                 >
                   <Plus className="h-4 w-4" />
@@ -1822,30 +2054,40 @@ Search,
                   <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
                     <StatCard
                       label="ทั้งหมด"
-                      value={dailyResult.rowCount}
+                      value={
+                        dailyResult.rowCount
+                      }
                     />
 
                     <StatCard
                       label="ใช้งาน"
-                      value={dailyResult.activeCount}
+                      value={
+                        dailyResult.activeCount
+                      }
                       tone="green"
                     />
 
                     <StatCard
                       label="REGULAR"
-                      value={dailyResult.regularCount}
+                      value={
+                        dailyResult.regularCount
+                      }
                       tone="blue"
                     />
 
                     <StatCard
                       label="EXTRA"
-                      value={dailyResult.extraCount}
+                      value={
+                        dailyResult.extraCount
+                      }
                       tone="purple"
                     />
 
                     <StatCard
                       label="CANCEL"
-                      value={dailyResult.cancelCount}
+                      value={
+                        dailyResult.cancelCount
+                      }
                       tone="red"
                     />
                   </div>
@@ -1855,7 +2097,9 @@ Search,
                       <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
 
                       <input
-                        value={dailySearch}
+                        value={
+                          dailySearch
+                        }
                         onChange={event =>
                           setDailySearch(
                             event.target.value
@@ -1867,7 +2111,9 @@ Search,
                     </div>
 
                     <select
-                      value={dailyFilter}
+                      value={
+                        dailyFilter
+                      }
                       onChange={event =>
                         setDailyFilter(
                           event.target
@@ -1879,12 +2125,15 @@ Search,
                       <option value="ALL">
                         ทุกประเภท
                       </option>
+
                       <option value="REGULAR">
                         REGULAR
                       </option>
+
                       <option value="EXTRA">
                         EXTRA
                       </option>
+
                       <option value="CANCEL">
                         CANCEL
                       </option>
@@ -1905,19 +2154,24 @@ Search,
                             'ETA',
                             'ETD',
                             'Action',
-                          ].map(heading => (
-                            <th
-                              key={heading}
-                              className="px-4 py-3"
-                            >
-                              {heading}
-                            </th>
-                          ))}
+                          ].map(
+                            heading => (
+                              <th
+                                key={
+                                  heading
+                                }
+                                className="px-4 py-3"
+                              >
+                                {heading}
+                              </th>
+                            )
+                          )}
                         </tr>
                       </thead>
 
                       <tbody className="divide-y divide-slate-100 bg-white">
-                        {filteredDailyRows.length === 0 ? (
+                        {filteredDailyRows.length ===
+                        0 ? (
                           <tr>
                             <td
                               colSpan={9}
@@ -1927,94 +2181,114 @@ Search,
                             </td>
                           </tr>
                         ) : (
-                          filteredDailyRows.map(plan => (
-                            <tr
-                              key={plan.codeRun}
-                              className={
-                                plan.remark === 'CANCEL'
-                                  ? 'bg-red-50/50 text-slate-500'
-                                  : 'hover:bg-blue-50/40'
-                              }
-                            >
-                              <td className="whitespace-nowrap px-4 py-3 font-bold text-slate-900">
-                                {plan.codeRun}
-                              </td>
+                          filteredDailyRows.map(
+                            plan => (
+                              <tr
+                                key={
+                                  plan.codeRun
+                                }
+                                className={
+                                  plan.remark ===
+                                  'CANCEL'
+                                    ? 'bg-red-50/50 text-slate-500'
+                                    : 'hover:bg-blue-50/40'
+                                }
+                              >
+                                <td className="whitespace-nowrap px-4 py-3 font-bold text-slate-900">
+                                  {plan.codeRun}
+                                </td>
 
-                              <td className="whitespace-nowrap px-4 py-3">
-                                <RemarkBadge
-                                  remark={plan.remark}
-                                />
-                              </td>
+                                <td className="whitespace-nowrap px-4 py-3">
+                                  <RemarkBadge
+                                    remark={
+                                      plan.remark
+                                    }
+                                  />
+                                </td>
 
-                              <td className="whitespace-nowrap px-4 py-3">
-                                {plan.route}
-                              </td>
+                                <td className="whitespace-nowrap px-4 py-3">
+                                  {plan.route}
+                                </td>
 
-                              <td className="whitespace-nowrap px-4 py-3">
-                                {plan.company}
-                              </td>
+                                <td className="whitespace-nowrap px-4 py-3">
+                                  {plan.company}
+                                </td>
 
-                              <td className="whitespace-nowrap px-4 py-3 font-medium">
-                                {plan.truckName}
-                              </td>
+                                <td className="whitespace-nowrap px-4 py-3 font-medium">
+                                  {plan.truckName}
+                                </td>
 
-                              <td className="whitespace-nowrap px-4 py-3">
-                                {plan.dropPoint}
-                              </td>
+                                <td className="whitespace-nowrap px-4 py-3">
+                                  {plan.dropPoint}
+                                </td>
 
-                              <td className="whitespace-nowrap px-4 py-3 font-mono">
-                                {plan.planEta}
-                              </td>
+                                <td className="whitespace-nowrap px-4 py-3 font-mono">
+                                  {plan.planEta}
+                                </td>
 
-                              <td className="whitespace-nowrap px-4 py-3 font-mono">
-                                {plan.planEtd}
-                              </td>
+                                <td className="whitespace-nowrap px-4 py-3 font-mono">
+                                  {plan.planEtd}
+                                </td>
 
-                              <td className="whitespace-nowrap px-4 py-3">
-                                <div className="flex gap-2">
-                                  {plan.remark !== 'CANCEL' ? (
-                                    <>
+                                <td className="whitespace-nowrap px-4 py-3">
+                                  <div className="flex gap-2">
+                                    {plan.remark !==
+                                    'CANCEL' ? (
+                                      <>
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            openEditDialog(
+                                              plan
+                                            )
+                                          }
+                                          disabled={
+                                            isSavingPlan
+                                          }
+                                          className="rounded-lg bg-blue-50 p-2 text-blue-600 disabled:opacity-50"
+                                          title="แก้ไข"
+                                        >
+                                          <Edit3 className="h-4 w-4" />
+                                        </button>
+
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            setCancelTarget(
+                                              plan
+                                            )
+                                          }
+                                          disabled={
+                                            isSavingPlan
+                                          }
+                                          className="rounded-lg bg-red-50 p-2 text-red-600 disabled:opacity-50"
+                                          title="ยกเลิก"
+                                        >
+                                          <Trash2 className="h-4 w-4" />
+                                        </button>
+                                      </>
+                                    ) : (
                                       <button
                                         type="button"
                                         onClick={() =>
-                                          openEditDialog(plan)
+                                          setRestoreTarget(
+                                            plan
+                                          )
                                         }
-                                        disabled={isSavingPlan}
-                                        className="rounded-lg bg-blue-50 p-2 text-blue-600 disabled:opacity-50"
-                                        title="แก้ไข"
-                                      >
-                                        <Edit3 className="h-4 w-4" />
-                                      </button>
-
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          setCancelTarget(plan)
+                                        disabled={
+                                          isSavingPlan
                                         }
-                                        disabled={isSavingPlan}
-                                        className="rounded-lg bg-red-50 p-2 text-red-600 disabled:opacity-50"
-                                        title="ยกเลิก"
+                                        className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 disabled:opacity-50"
                                       >
-                                        <Trash2 className="h-4 w-4" />
+                                        <RotateCcw className="h-4 w-4" />
+                                        คืนค่า
                                       </button>
-                                    </>
-                                  ) : (
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        setRestoreTarget(plan)
-                                      }
-                                      disabled={isSavingPlan}
-                                      className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 disabled:opacity-50"
-                                    >
-                                      <RotateCcw className="h-4 w-4" />
-                                      คืนค่า
-                                    </button>
-                                  )}
-                                </div>
-                              </td>
-                            </tr>
-                          ))
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            )
+                          )
                         )}
                       </tbody>
                     </table>
@@ -2028,16 +2302,20 @@ Search,
         {notice && (
           <div
             className={`flex items-start gap-3 rounded-xl border p-4 text-sm ${
-              notice.type === 'success'
+              notice.type ===
+              'success'
                 ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-                : notice.type === 'error'
+                : notice.type ===
+                  'error'
                   ? 'border-red-200 bg-red-50 text-red-800'
                   : 'border-blue-200 bg-blue-50 text-blue-800'
             }`}
           >
-            {notice.type === 'success' ? (
+            {notice.type ===
+            'success' ? (
               <CheckCircle2 className="h-5 w-5 shrink-0" />
-            ) : notice.type === 'error' ? (
+            ) : notice.type ===
+              'error' ? (
               <XCircle className="h-5 w-5 shrink-0" />
             ) : (
               <RefreshCw className="h-5 w-5 shrink-0" />
@@ -2050,7 +2328,8 @@ Search,
         )}
 
         {tab === 'create' &&
-          validationErrors.length > 0 && (
+          validationErrors.length >
+            0 && (
             <section className="rounded-2xl border border-red-200 bg-red-50 p-5">
               <div className="flex items-center gap-2 font-semibold text-red-800">
                 <AlertTriangle className="h-5 w-5" />
@@ -2058,14 +2337,21 @@ Search,
               </div>
 
               <div className="mt-3 max-h-56 space-y-2 overflow-auto">
-                {validationErrors.map(item => (
-                  <div
-                    key={item.sheetRow}
-                    className="rounded-lg bg-white px-3 py-2 text-sm text-red-700"
-                  >
-                    แถว {item.sheetRow}: {item.errors.join(', ')}
-                  </div>
-                ))}
+                {validationErrors.map(
+                  item => (
+                    <div
+                      key={
+                        item.sheetRow
+                      }
+                      className="rounded-lg bg-white px-3 py-2 text-sm text-red-700"
+                    >
+                      แถว {item.sheetRow}:{' '}
+                      {item.errors.join(
+                        ', '
+                      )}
+                    </div>
+                  )
+                )}
               </div>
             </section>
           )}
@@ -2080,24 +2366,32 @@ Search,
               <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <StatCard
                   label="วันทำงาน"
-                  value={preview.workingDateCount}
+                  value={
+                    preview.workingDateCount
+                  }
                   tone="blue"
                 />
 
                 <StatCard
                   label="รายการทั้งหมด"
-                  value={preview.totalCandidateRows}
+                  value={
+                    preview.totalCandidateRows
+                  }
                 />
 
                 <StatCard
                   label="รายการใหม่"
-                  value={preview.newRowCount}
+                  value={
+                    preview.newRowCount
+                  }
                   tone="green"
                 />
 
                 <StatCard
                   label="รายการซ้ำ"
-                  value={preview.duplicateRowCount}
+                  value={
+                    preview.duplicateRowCount
+                  }
                   tone="amber"
                 />
               </div>
@@ -2107,8 +2401,11 @@ Search,
                   <p className="text-xs text-slate-500">
                     Code run สูงสุด
                   </p>
+
                   <b>
-                    {preview.currentMaximumCodeRun}
+                    {
+                      preview.currentMaximumCodeRun
+                    }
                   </b>
                 </div>
 
@@ -2116,8 +2413,11 @@ Search,
                   <p className="text-xs text-slate-500">
                     เริ่มต้น
                   </p>
+
                   <b className="text-blue-700">
-                    {preview.startCodeRun}
+                    {
+                      preview.startCodeRun
+                    }
                   </b>
                 </div>
 
@@ -2125,8 +2425,11 @@ Search,
                   <p className="text-xs text-slate-500">
                     สุดท้าย
                   </p>
+
                   <b className="text-blue-700">
-                    {preview.endCodeRun}
+                    {
+                      preview.endCodeRun
+                    }
                   </b>
                 </div>
               </div>
@@ -2135,10 +2438,13 @@ Search,
                 <button
                   type="button"
                   onClick={() =>
-                    setShowCreateConfirmation(true)
+                    setShowCreateConfirmation(
+                      true
+                    )
                   }
                   disabled={
-                    preview.newRowCount <= 0 ||
+                    preview.newRowCount <=
+                      0 ||
                     createBusy
                   }
                   className="rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white disabled:bg-slate-300"
@@ -2157,9 +2463,15 @@ Search,
               </h2>
 
               <p className="mt-1 text-sm">
-                สร้าง {creationResult.createdRowCount} รายการ
-                {' '}
-                ข้ามรายการซ้ำ {creationResult.duplicateRowCount} รายการ
+                สร้าง{' '}
+                {
+                  creationResult.createdRowCount
+                }{' '}
+                รายการ ข้ามรายการซ้ำ{' '}
+                {
+                  creationResult.duplicateRowCount
+                }{' '}
+                รายการ
               </p>
             </section>
           )}
@@ -2174,12 +2486,21 @@ Search,
                   </h2>
 
                   <p className="text-sm text-slate-500">
-                    แสดง {filteredTemplateRows.length} จาก {templateRows.length}
+                    แสดง{' '}
+                    {
+                      filteredTemplateRows.length
+                    }{' '}
+                    จาก{' '}
+                    {
+                      templateRows.length
+                    }
                   </p>
                 </div>
 
                 <input
-                  value={templateSearch}
+                  value={
+                    templateSearch
+                  }
                   onChange={event =>
                     setTemplateSearch(
                       event.target.value
@@ -2204,47 +2525,63 @@ Search,
                         'Drop Point',
                         'ETA',
                         'ETD',
-                      ].map(heading => (
-                        <th
-                          key={heading}
-                          className="px-4 py-3"
-                        >
-                          {heading}
-                        </th>
-                      ))}
+                      ].map(
+                        heading => (
+                          <th
+                            key={
+                              heading
+                            }
+                            className="px-4 py-3"
+                          >
+                            {heading}
+                          </th>
+                        )
+                      )}
                     </tr>
                   </thead>
 
                   <tbody className="divide-y divide-slate-100">
                     {filteredTemplateRows.map(
-                      (row, index) => (
+                      (
+                        row,
+                        index
+                      ) => (
                         <tr
                           key={`${row.sheetRow || index}-${row.route}-${row.truckName}`}
                         >
                           <td className="px-4 py-3">
                             {row.route}
                           </td>
+
                           <td className="px-4 py-3">
                             {row.company}
                           </td>
+
                           <td className="px-4 py-3 font-medium text-blue-700">
                             {row.truckName}
                           </td>
+
                           <td className="px-4 py-3">
                             {row.truckType}
                           </td>
+
                           <td className="px-4 py-3">
-                            {row.driverName || '-'}
+                            {row.driverName ||
+                              '-'}
                           </td>
+
                           <td className="px-4 py-3">
                             {row.project}
                           </td>
+
                           <td className="px-4 py-3">
                             {row.dropPoint}
                           </td>
+
                           <td className="px-4 py-3 font-mono">
                             {row.planEta}
                           </td>
+
                           <td className="px-4 py-3 font-mono">
                             {row.planEtd}
                           </td>
@@ -2267,16 +2604,24 @@ Search,
               </h2>
 
               <p className="mt-2 text-sm text-slate-500">
-                ระบบจะเขียน {preview.newRowCount} รายการลงชีต Plan
+                ระบบจะเขียน{' '}
+                {
+                  preview.newRowCount
+                }{' '}
+                รายการลงชีต Plan
               </p>
 
               <div className="mt-6 flex justify-end gap-3">
                 <button
                   type="button"
                   onClick={() =>
-                    setShowCreateConfirmation(false)
+                    setShowCreateConfirmation(
+                      false
+                    )
                   }
-                  disabled={isCreating}
+                  disabled={
+                    isCreating
+                  }
                   className="rounded-xl border px-5 py-2.5 disabled:opacity-50"
                 >
                   ยกเลิก
@@ -2287,12 +2632,15 @@ Search,
                   onClick={() =>
                     void handleCreatePeriod()
                   }
-                  disabled={isCreating}
-                  className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-white disabled:opacity-60"
+                  disabled={
+                    isCreating
+                  }
+                  className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 font-semibold text-white disabled:opacity-60"
                 >
                   {isCreating && (
                     <Loader2 className="h-4 w-4 animate-spin" />
                   )}
+
                   ยืนยันสร้าง
                 </button>
               </div>
@@ -2303,13 +2651,16 @@ Search,
       {planDialogMode && (
         <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-slate-950/60 p-4">
           <form
-            onSubmit={handleSavePlan}
+            onSubmit={
+              handleSavePlan
+            }
             className="max-h-[92vh] w-full max-w-3xl overflow-auto rounded-2xl bg-white p-6 shadow-2xl"
           >
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-xl font-bold">
-                  {planDialogMode === 'extra'
+                  {planDialogMode ===
+                  'extra'
                     ? 'เพิ่ม Extra Plan'
                     : `แก้ไข ${editingCodeRun}`}
                 </h2>
@@ -2321,8 +2672,12 @@ Search,
 
               <button
                 type="button"
-                onClick={closePlanDialog}
-                disabled={isSavingPlan}
+                onClick={
+                  closePlanDialog
+                }
+                disabled={
+                  isSavingPlan
+                }
                 className="rounded-lg p-2 hover:bg-slate-100 disabled:opacity-50"
               >
                 <X className="h-5 w-5" />
@@ -2330,32 +2685,46 @@ Search,
             </div>
 
             <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {FORM_FIELDS.map(item => (
-                <label
-                  key={item.field}
-                  className="text-sm font-medium text-slate-700"
-                >
-                  {item.label}
-
-                  <input
-                    type={item.type}
-                    value={String(
-                      planForm[item.field] || ''
-                    )}
-                    onChange={event =>
-                      setFormField(
-                        item.field,
-                        event.target.value
-                      )
+              {FORM_FIELDS.map(
+                item => (
+                  <label
+                    key={
+                      item.field
                     }
-                    required={item.required}
-                    disabled={isSavingPlan}
-                    className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 disabled:bg-slate-100"
-                  />
-                </label>
-              ))}
+                    className="text-sm font-medium text-slate-700"
+                  >
+                    {item.label}
 
-              {planDialogMode === 'edit' && (
+                    <input
+                      type={
+                        item.type
+                      }
+                      value={String(
+                        planForm[
+                          item.field
+                        ] || ''
+                      )}
+                      onChange={event =>
+                        setFormField(
+                          item.field,
+                          event.target
+                            .value
+                        )
+                      }
+                      required={
+                        item.required
+                      }
+                      disabled={
+                        isSavingPlan
+                      }
+                      className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 disabled:bg-slate-100"
+                    />
+                  </label>
+                )
+              )}
+
+              {planDialogMode ===
+                'edit' && (
                 <label className="text-sm font-medium text-slate-700">
                   Remark
 
@@ -2370,12 +2739,15 @@ Search,
                         event.target.value
                       )
                     }
-                    disabled={isSavingPlan}
+                    disabled={
+                      isSavingPlan
+                    }
                     className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 disabled:bg-slate-100"
                   >
                     <option value="REGULAR">
                       REGULAR
                     </option>
+
                     <option value="EXTRA">
                       EXTRA
                     </option>
@@ -2387,8 +2759,12 @@ Search,
             <div className="mt-6 flex justify-end gap-3">
               <button
                 type="button"
-                onClick={closePlanDialog}
-                disabled={isSavingPlan}
+                onClick={
+                  closePlanDialog
+                }
+                disabled={
+                  isSavingPlan
+                }
                 className="rounded-xl border px-5 py-2.5 disabled:opacity-50"
               >
                 ยกเลิก
@@ -2396,7 +2772,9 @@ Search,
 
               <button
                 type="submit"
-                disabled={isSavingPlan}
+                disabled={
+                  isSavingPlan
+                }
                 className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 font-semibold text-white disabled:opacity-60"
               >
                 {isSavingPlan && (
@@ -2414,7 +2792,7 @@ Search,
 
       {cancelTarget && (
         <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-slate-950/60 p-4">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
             <div className="flex gap-3">
               <div className="rounded-full bg-red-100 p-2 text-red-700">
                 <AlertTriangle className="h-6 w-6" />
@@ -2426,7 +2804,13 @@ Search,
                 </h2>
 
                 <p className="mt-1 text-sm text-slate-500">
-                  {cancelTarget.codeRun} | {cancelTarget.truckName}
+                  {
+                    cancelTarget.codeRun
+                  }{' '}
+                  |{' '}
+                  {
+                    cancelTarget.truckName
+                  }
                 </p>
               </div>
             </div>
@@ -2439,9 +2823,13 @@ Search,
               <button
                 type="button"
                 onClick={() =>
-                  setCancelTarget(null)
+                  setCancelTarget(
+                    null
+                  )
                 }
-                disabled={isSavingPlan}
+                disabled={
+                  isSavingPlan
+                }
                 className="rounded-xl border px-5 py-2.5 disabled:opacity-50"
               >
                 กลับ
@@ -2452,12 +2840,15 @@ Search,
                 onClick={() =>
                   void handleCancelPlan()
                 }
-                disabled={isSavingPlan}
+                disabled={
+                  isSavingPlan
+                }
                 className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-5 py-2.5 font-semibold text-white disabled:opacity-60"
               >
                 {isSavingPlan && (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 )}
+
                 ยืนยันยกเลิก
               </button>
             </div>
@@ -2467,13 +2858,16 @@ Search,
 
       {restoreTarget && (
         <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-slate-950/60 p-4">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
             <h2 className="text-lg font-bold">
-              คืนค่า {restoreTarget.codeRun}
+              คืนค่า{' '}
+              {
+                restoreTarget.codeRun
+              }
             </h2>
 
             <p className="mt-2 text-sm text-slate-500">
-              เลือกประเภทเดิมของแผน
+              เลือกประเภทของแผนที่ต้องการคืนค่า
             </p>
 
             <div className="mt-5 grid grid-cols-2 gap-3">
@@ -2484,12 +2878,15 @@ Search,
                     'REGULAR'
                   )
                 }
-                disabled={isSavingPlan}
+                disabled={
+                  isSavingPlan
+                }
                 className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 font-semibold text-white disabled:opacity-60"
               >
                 {isSavingPlan && (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 )}
+
                 REGULAR
               </button>
 
@@ -2500,12 +2897,15 @@ Search,
                     'EXTRA'
                   )
                 }
-                disabled={isSavingPlan}
+                disabled={
+                  isSavingPlan
+                }
                 className="inline-flex items-center justify-center gap-2 rounded-xl bg-purple-600 px-4 py-3 font-semibold text-white disabled:opacity-60"
               >
                 {isSavingPlan && (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 )}
+
                 EXTRA
               </button>
             </div>
@@ -2513,9 +2913,13 @@ Search,
             <button
               type="button"
               onClick={() =>
-                setRestoreTarget(null)
+                setRestoreTarget(
+                  null
+                )
               }
-              disabled={isSavingPlan}
+              disabled={
+                isSavingPlan
+              }
               className="mt-3 w-full rounded-xl border px-4 py-2.5 disabled:opacity-50"
             >
               ยกเลิก
