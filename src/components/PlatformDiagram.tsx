@@ -1,429 +1,625 @@
-import React, { useMemo, useState } from 'react';
-import { Truck } from '../types';
-import { motion, AnimatePresence } from 'motion/react';
+import { useMemo, useState } from 'react';
+import type { Truck } from '../types';
+import {
+  AnimatePresence,
+  motion,
+} from 'motion/react';
 import {
   AlertTriangle,
-  X,
-  Package,
   CheckCircle2,
   Clock,
+  Package,
   Truck as TruckIcon,
+  X,
 } from 'lucide-react';
-import { calculateMinutesDifference } from '../utils';
+import {
+  calculateMinutesDifference,
+} from '../utils';
 
 interface PlatformDiagramProps {
   trucks: Truck[];
 }
 
+type GroupFilter =
+  | 'M1'
+  | 'L1'
+  | 'L2'
+  | 'R1'
+  | 'R2';
+
+type DockDefinition = {
+  id: string;
+  mappedPoint: string;
+};
+
+type RowGroup = {
+  groupName: string;
+  title: string;
+  docks: DockDefinition[];
+};
+
+const START_HOUR = 6;
+const END_HOUR = 18;
+
+const HOURS = Array.from(
+  {
+    length:
+      END_HOUR -
+      START_HOUR +
+      1,
+  },
+  (_, index) =>
+    START_HOUR + index
+);
+
+const MINUTES = [
+  5,
+  10,
+  15,
+  20,
+  25,
+  30,
+  35,
+  40,
+  45,
+  50,
+  55,
+  60,
+];
+
+const TOTAL_MINS =
+  (END_HOUR -
+    START_HOUR +
+    1) *
+  60;
+
+const TIMELINE_WIDTH = 2500;
+
+const GROUP_FILTER_OPTIONS:
+  GroupFilter[] = [
+  'M1',
+  'L1',
+  'L2',
+  'R1',
+  'R2',
+];
+
+const CATEGORIES = [
+  {
+    label: 'INTERPLANT',
+    color:
+      'bg-white text-slate-800',
+  },
+  {
+    label: 'MILK RUN',
+    color:
+      'bg-white text-slate-800',
+  },
+  {
+    label: 'BODY PARTS',
+    color:
+      'bg-slate-200 text-slate-800',
+  },
+  {
+    label: 'RETURN TRIP',
+    color:
+      'bg-white text-slate-800',
+  },
+  {
+    label: 'MIX BANPHO',
+    color:
+      'bg-white text-slate-800',
+  },
+  {
+    label: 'DIRECT',
+    color:
+      'bg-white text-slate-800',
+  },
+];
+
+const ROW_GROUPS: RowGroup[] = [
+  {
+    groupName: 'M1',
+    title: 'MOTOR OIL',
+    docks: [
+      {
+        id: '1',
+        mappedPoint: 'M1-1',
+      },
+      {
+        id: '2',
+        mappedPoint: 'M1-2',
+      },
+    ],
+  },
+  {
+    groupName: 'L1',
+    title: '(L1) LSP MON-FRI',
+    docks: [
+      {
+        id: '1',
+        mappedPoint: 'L1-1',
+      },
+      {
+        id: '2',
+        mappedPoint: 'L1-2',
+      },
+      {
+        id: '3',
+        mappedPoint: 'L1-3',
+      },
+    ],
+  },
+  {
+    groupName: 'L2',
+    title: '(L2) LSP MON-FRI',
+    docks: [
+      {
+        id: '4',
+        mappedPoint: 'L2-4',
+      },
+      {
+        id: '5',
+        mappedPoint: 'L2-5',
+      },
+      {
+        id: '6',
+        mappedPoint: 'L2-6',
+      },
+    ],
+  },
+  {
+    groupName: 'R2',
+    title:
+      'FREELOCATION2#Shutter 2',
+    docks: [
+      {
+        id: '1',
+        mappedPoint: 'R2-1',
+      },
+    ],
+  },
+  {
+    groupName: 'R1',
+    title: 'FREELOCATION#1',
+    docks: [
+      {
+        id: '1',
+        mappedPoint: 'R1-1',
+      },
+      {
+        id: '2',
+        mappedPoint: 'R1-2',
+      },
+    ],
+  },
+];
+
+function normalizePoint(
+  point?: string
+): string {
+  return String(point || '')
+    .replace(/\s+/g, '')
+    .toUpperCase();
+}
+
+function parseTimeToMinutes(
+  timeText?: string
+): number | null {
+  if (!timeText) {
+    return null;
+  }
+
+  const match = String(timeText)
+    .trim()
+    .match(
+      /^(\d{1,2}):(\d{2})/
+    );
+
+  if (!match) {
+    return null;
+  }
+
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+
+  if (
+    !Number.isInteger(hour) ||
+    !Number.isInteger(minute) ||
+    hour < 0 ||
+    hour > 23 ||
+    minute < 0 ||
+    minute > 59
+  ) {
+    return null;
+  }
+
+  return (
+    (hour - START_HOUR) *
+      60 +
+    minute
+  );
+}
+
+function isOverdueAndNotDocked(
+  truck: Truck
+): boolean {
+  if (
+    truck.stampEta ||
+    truck.actualEta
+  ) {
+    return false;
+  }
+
+  const dockedStatuses = [
+    'DOCK_IN',
+    'UNLOADING',
+    'UNLOADING_AT_TPCAP',
+    'COMPLETED',
+    'TRUCK_OUT',
+  ];
+
+  if (
+    dockedStatuses.includes(
+      truck.status
+    )
+  ) {
+    return false;
+  }
+
+  if (
+    !truck.planDate ||
+    !truck.planEta
+  ) {
+    return false;
+  }
+
+  const planDate = String(
+    truck.planDate
+  )
+    .trim()
+    .slice(0, 10);
+
+  const planTime = String(
+    truck.planEta
+  )
+    .trim()
+    .slice(0, 5);
+
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(
+      planDate
+    ) ||
+    !/^\d{2}:\d{2}$/.test(
+      planTime
+    )
+  ) {
+    return false;
+  }
+
+  const plannedEta = new Date(
+    `${planDate}T${planTime}:00+07:00`
+  );
+
+  if (
+    Number.isNaN(
+      plannedEta.getTime()
+    )
+  ) {
+    return false;
+  }
+
+  return (
+    Date.now() >
+    plannedEta.getTime()
+  );
+}
+
+function getTruckColor(
+  truck: Truck
+): string {
+  if (
+    isOverdueAndNotDocked(
+      truck
+    )
+  ) {
+    return [
+      'bg-red-600',
+      'border-red-800',
+      'text-white',
+      'animate-pulse',
+      'shadow-lg',
+      'shadow-red-500/50',
+    ].join(' ');
+  }
+
+  if (
+    truck.status ===
+      'COMPLETED' ||
+    truck.status ===
+      'TRUCK_OUT'
+  ) {
+    if (
+      truck.performanceStatus ===
+      'DELAY'
+    ) {
+      return [
+        'bg-red-500',
+        'border-red-700',
+        'text-white',
+      ].join(' ');
+    }
+
+    if (
+      truck.performanceStatus ===
+      'EARLY'
+    ) {
+      return [
+        'bg-blue-500',
+        'border-blue-700',
+        'text-white',
+      ].join(' ');
+    }
+
+    return [
+      'bg-green-500',
+      'border-green-700',
+      'text-white',
+    ].join(' ');
+  }
+
+  if (
+    truck.status ===
+      'DOCK_IN' ||
+    truck.status ===
+      'UNLOADING' ||
+    truck.status ===
+      'UNLOADING_AT_TPCAP'
+  ) {
+    if (
+      truck.performanceStatus ===
+      'DELAY'
+    ) {
+      return [
+        'bg-orange-500',
+        'border-orange-700',
+        'text-white',
+      ].join(' ');
+    }
+
+    return [
+      'bg-yellow-400',
+      'border-yellow-600',
+      'text-slate-900',
+    ].join(' ');
+  }
+
+  if (
+    truck.performanceStatus ===
+    'DELAY'
+  ) {
+    return [
+      'bg-red-500',
+      'border-red-700',
+      'text-white',
+      'animate-pulse',
+    ].join(' ');
+  }
+
+  return [
+    'bg-slate-300',
+    'border-slate-500',
+    'text-slate-800',
+  ].join(' ');
+}
+
 export function PlatformDiagram({
   trucks,
 }: PlatformDiagramProps) {
-  const [selectedTruck, setSelectedTruck] =
-    useState<Truck | null>(null);
-
-  /*
-   * Timeline ตั้งแต่ 06:00-18:00
-   */
-  const START_HOUR = 6;
-  const END_HOUR = 18;
-
-  const HOURS = Array.from(
-    {
-      length: END_HOUR - START_HOUR + 1,
-    },
-    (_, index) => START_HOUR + index
+  const [
+    selectedTruck,
+    setSelectedTruck,
+  ] = useState<Truck | null>(
+    null
   );
 
-  const MINUTES = [
-    5,
-    10,
-    15,
-    20,
-    25,
-    30,
-    35,
-    40,
-    45,
-    50,
-    55,
-    60,
-  ];
+  const [
+    selectedGroups,
+    setSelectedGroups,
+  ] = useState<GroupFilter[]>([
+    ...GROUP_FILTER_OPTIONS,
+  ]);
 
-  const TOTAL_MINS =
-    (END_HOUR - START_HOUR + 1) * 60;
+  const mappedDocks =
+    useMemo(() => {
+      const result =
+        new Set<string>();
 
-  const categories = [
-    {
-      label: 'INTERPLANT',
-      color: 'bg-white text-slate-800',
-    },
-    {
-      label: 'MILK RUN',
-      color: 'bg-white text-slate-800',
-    },
-    {
-      label: 'BODY PARTS',
-      color: 'bg-slate-200 text-slate-800',
-    },
-    {
-      label: 'RETURN TRIP',
-      color: 'bg-white text-slate-800',
-    },
-    {
-      label: 'MIX BANPHO',
-      color: 'bg-white text-slate-800',
-    },
-    {
-      label: 'DIRECT',
-      color: 'bg-white text-slate-800',
-    },
-  ];
+      ROW_GROUPS.forEach(
+        group => {
+          group.docks.forEach(
+            dock => {
+              result.add(
+                normalizePoint(
+                  dock.mappedPoint
+                )
+              );
+            }
+          );
+        }
+      );
 
-  const ROW_GROUPS = [
-    {
-      groupName: 'M1',
-      title: 'MOTOR OIL',
-      docks: [
-        {
-          id: '1',
-          mappedPoint: 'M1-1',
-        },
-        {
-          id: '2',
-          mappedPoint: 'M1-2',
-        },
-      ],
-    },
-    {
-      groupName: 'L1',
-      title: '(L1) LSP MON-FRI',
-      docks: [
-        {
-          id: '1',
-          mappedPoint: 'L1-1',
-        },
-        {
-          id: '2',
-          mappedPoint: 'L1-2',
-        },
-        {
-          id: '3',
-          mappedPoint: 'L1-3',
-        },
-      ],
-    },
-    {
-      groupName: 'L2',
-      title: '(L2) LSP MON-FRI',
-      docks: [
-        {
-          id: '4',
-          mappedPoint: 'L2-4',
-        },
-        {
-          id: '5',
-          mappedPoint: 'L2-5',
-        },
-        {
-          id: '6',
-          mappedPoint: 'L2-6',
-        },
-      ],
-    },
-    {
-      groupName: 'R2',
-      title: 'FREELOCATION2#Shutter 2',
-      docks: [
-        {
-          id: '1',
-          mappedPoint: 'R2-1',
-        },
-      ],
-    },
-    {
-      groupName: 'R1',
-      title: 'FREELOCATION#1',
-      docks: [
-        {
-          id: '1',
-          mappedPoint: 'R1-1',
-        },
-        {
-          id: '2',
-          mappedPoint: 'R1-2',
-        },
-      ],
-    },
-  ];
+      return result;
+    }, []);
 
-  /*
-   * แปลงเวลา HH:mm เป็นจำนวนนาที
-   * โดยเริ่มจาก START_HOUR
-   */
-  const parseTimeToMinutes = (
-    timeStr: string | undefined
-  ): number | null => {
-    if (!timeStr) {
-      return null;
-    }
+  const dynamicGroups =
+    useMemo<RowGroup[]>(() => {
+      const groups =
+        ROW_GROUPS.map(
+          group => ({
+            ...group,
+            docks:
+              group.docks.map(
+                dock => ({
+                  ...dock,
+                })
+              ),
+          })
+        );
 
-    const [hourString, minuteString] =
-      timeStr.trim().split(':');
+      const unmappedPoints = [
+        ...new Set(
+          trucks
+            .map(
+              truck =>
+                truck.dropPoint
+                  ?.trim() ||
+                'UNASSIGNED'
+            )
+            .filter(
+              dropPoint =>
+                !mappedDocks.has(
+                  normalizePoint(
+                    dropPoint
+                  )
+                )
+            )
+        ),
+      ];
 
-    const hour = Number(hourString);
-    const minute = Number(minuteString);
-
-    if (
-      Number.isNaN(hour) ||
-      Number.isNaN(minute)
-    ) {
-      return null;
-    }
-
-    return (
-      (hour - START_HOUR) * 60 + minute
-    );
-  };
-
-
-      /*
- * ตรวจว่ารถเลย Plan ETA แล้ว แต่ยังไม่เข้าช่อง
-     */
-    const isOverdueAndNotDocked = (truck: Truck): boolean => {
-  /*
-   * หากมี Stamp ETA แล้ว ถือว่าเข้าพื้นที่/เข้าช่องแล้ว
-   */
-      if (truck.stampEta || truck.actualEta) {
-        return false;
+      if (
+        unmappedPoints.length > 0
+      ) {
+        groups.push({
+          groupName: 'ETC',
+          title:
+            'UNMAPPED DOCKS',
+          docks:
+            unmappedPoints.map(
+              dropPoint => ({
+                id: '?',
+                mappedPoint:
+                  dropPoint,
+              })
+            ),
+        });
       }
 
-  /*
-   * สถานะเหล่านี้ถือว่าเข้าสู่กระบวนการลงงานแล้ว
-   */
-      const dockedStatuses = [
-        'DOCK_IN',
-        'UNLOADING',
-        'UNLOADING_AT_TPCAP',
+      return groups;
+    }, [
+      trucks,
+      mappedDocks,
+    ]);
+
+  const filteredGroups =
+    useMemo(() => {
+      return dynamicGroups.filter(
+        group =>
+          group.groupName ===
+            'ETC' ||
+          selectedGroups.includes(
+            group.groupName as GroupFilter
+          )
+      );
+    }, [
+      dynamicGroups,
+      selectedGroups,
+    ]);
+
+  const stats = useMemo(
+    () => {
+      const completeStatuses = [
         'COMPLETED',
         'TRUCK_OUT',
       ];
 
-      if (dockedStatuses.includes(truck.status)) {
-        return false;
-      }
+      return {
+        total:
+          trucks.length,
 
-      if (!truck.planDate || !truck.planEta) {
-        return false;
-      }
+        unloading:
+          trucks.filter(
+            truck =>
+              truck.status ===
+                'UNLOADING' ||
+              truck.status ===
+                'DOCK_IN' ||
+              truck.status ===
+                'UNLOADING_AT_TPCAP'
+          ).length,
 
-  /*
-   * planDate มีรูปแบบ YYYY-MM-DD
-   * planEta มีรูปแบบ HH:mm
-   */
-      const planDate = String(truck.planDate)
-        .trim()
-        .slice(0, 10);
+        complete:
+          trucks.filter(
+            truck =>
+              completeStatuses.includes(
+                truck.status
+              )
+          ).length,
 
-      const planTime = String(truck.planEta)
-        .trim()
-        .slice(0, 5);
-
-      if (
-        !/^\d{4}-\d{2}-\d{2}$/.test(planDate) ||
-        !/^\d{2}:\d{2}$/.test(planTime)
-      ) {
-        return false;
-      }
-
-  /*
-   * สร้างเวลา Plan ETA ตามเขตเวลาประเทศไทย
-   */
-      const plannedEta = new Date(
-        `${planDate}T${planTime}:00+07:00`
-      );
-
-      if (Number.isNaN(plannedEta.getTime())) {
-        return false;
-      }
-
-      return Date.now() > plannedEta.getTime();
-    };
-
-  
-      /*
-       * กำหนดสีของ Truck
-       */
-      const getTruckColor = (truck: Truck): string => {
-        /*
-         * เลย Plan ETA แต่ยังไม่มี Stamp ETA
-         * และยังไม่เข้าสู่ขั้นตอนลงงาน
-         * ให้แสดงสีแดงกระพริบ
-         */
-        if (isOverdueAndNotDocked(truck)) {
-          return [
-            'bg-red-600',
-            'border-red-800',
-            'text-white',
-            'animate-pulse',
-            'shadow-lg',
-            'shadow-red-500/50',
-          ].join(' ');
-        }
-
-        /*
-         * Complete + On Plan = สีเขียว
-         * Complete + Delay = สีแดง
-         * Complete + Early = สีน้ำเงิน
-         */
-        if (
-          truck.status === 'COMPLETED' ||
-          truck.status === 'TRUCK_OUT'
-        ) {
-          if (truck.performanceStatus === 'DELAY') {
-            return 'bg-red-500 border-red-700 text-white';
-          }
-
-          if (truck.performanceStatus === 'EARLY') {
-            return 'bg-blue-500 border-blue-700 text-white';
-          }
-
-          return 'bg-green-500 border-green-700 text-white';
-        }
-
-        /*
-         * เข้าช่องหรือกำลังลงงานแล้ว
-         * Delay = สีส้ม
-         * ปกติ = สีเหลือง
-         */
-        if (
-          truck.status === 'DOCK_IN' ||
-          truck.status === 'UNLOADING' ||
-          truck.status === 'UNLOADING_AT_TPCAP'
-        ) {
-          if (truck.performanceStatus === 'DELAY') {
-            return 'bg-orange-500 border-orange-700 text-white';
-          }
-
-          return 'bg-yellow-400 border-yellow-600 text-slate-900';
-        }
-
-        /*
-         * มีสถานะ Delay จากข้อมูลในชีท
-         * แต่ยังไม่เข้าเงื่อนไขด้านบน
-         */
-        if (truck.performanceStatus === 'DELAY') {
-          return [
-            'bg-red-500',
-            'border-red-700',
-            'text-white',
-            'animate-pulse',
-          ].join(' ');
-        }
-
-        /*
-         * ยังไม่ถึง Plan ETA และยังไม่เข้าสู่กระบวนการ
-         */
-        return 'bg-slate-300 border-slate-500 text-slate-800';
+        remain:
+          trucks.filter(
+            truck =>
+              !completeStatuses.includes(
+                truck.status
+              )
+          ).length,
       };
-  /*
-   * Normalize จุดลงงานเพื่อให้เทียบข้อความได้ง่าย
-   */
-  const normalizePoint = (
-    point?: string
-  ): string => {
-    return (point || '')
-      .replace(/\s+/g, '')
-      .toUpperCase();
-  };
+    },
+    [trucks]
+  );
 
-  /*
-   * สร้างรายการ Dock ที่ถูกกำหนดไว้แล้ว
-   */
-  const mappedDocks = new Set<string>();
-
-  ROW_GROUPS.forEach(group => {
-    group.docks.forEach(dock => {
-      mappedDocks.add(
-        normalizePoint(dock.mappedPoint)
-      );
-    });
-  });
-
-  /*
-   * ค้นหาจุดลงงานที่ยังไม่ได้ Map
-   */
-  const unmappedPoints = [
-    ...new Set(
-      trucks
-        .map(
-          truck =>
-            truck.dropPoint?.trim() ||
-            'UNASSIGNED'
+  const allGroupsSelected =
+    GROUP_FILTER_OPTIONS.every(
+      groupName =>
+        selectedGroups.includes(
+          groupName
         )
-        .filter(
-          dropPoint =>
-            !mappedDocks.has(
-              normalizePoint(dropPoint)
-            )
-        )
-    ),
-  ];
+    );
 
-  /*
-   * เพิ่มกลุ่ม ETC หากมี Dock ที่ไม่ได้ Map
-   */
-  const dynamicGroups = [...ROW_GROUPS];
-
-  if (unmappedPoints.length > 0) {
-    dynamicGroups.push({
-      groupName: 'ETC',
-      title: 'UNMAPPED DOCKS',
-      docks: unmappedPoints.map(
-        dropPoint => ({
-          id: '?',
-          mappedPoint: dropPoint,
-        })
-      ),
-    });
-  }
-
-  /*
-   * สถิติด้านบน
-   */
-  const stats = useMemo(() => {
-    return {
-      total: trucks.length,
-
-      unloading: trucks.filter(
-        truck =>
-          truck.status === 'UNLOADING' ||
-          truck.status === 'DOCK_IN' ||
-          truck.status ===
-            'UNLOADING_AT_TPCAP'
-      ).length,
-
-      complete: trucks.filter(
-        truck =>
-          truck.status === 'COMPLETED' ||
-          truck.status === 'TRUCK_OUT'
-      ).length,
-
-      remain: trucks.filter(
-        truck =>
-          ![
-            'COMPLETED',
-            'TRUCK_OUT',
-          ].includes(truck.status)
-      ).length,
+  const selectAllGroups =
+    () => {
+      setSelectedGroups([
+        ...GROUP_FILTER_OPTIONS,
+      ]);
     };
-  }, [trucks]);
+
+  const clearAllGroups =
+    () => {
+      setSelectedGroups([]);
+    };
+
+  const toggleGroupFilter =
+    (
+      groupName:
+        GroupFilter
+    ) => {
+      setSelectedGroups(
+        current => {
+          if (
+            current.includes(
+              groupName
+            )
+          ) {
+            return current.filter(
+              selectedGroup =>
+                selectedGroup !==
+                groupName
+            );
+          }
+
+          return [
+            ...current,
+            groupName,
+          ];
+        }
+      );
+    };
 
   return (
     <div className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-slate-100 text-xs">
       {/* Summary Cards */}
       <div className="w-full shrink-0 border-b border-slate-200 bg-white px-2 py-2">
         <div className="grid w-full grid-cols-2 gap-2 md:grid-cols-4">
-          {/* Total */}
           <div className="flex h-12 min-w-0 flex-col justify-center rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5">
             <p className="flex items-center gap-1 whitespace-nowrap text-[9px] font-bold uppercase text-slate-500">
               <TruckIcon className="h-3.5 w-3.5 shrink-0" />
@@ -435,7 +631,6 @@ export function PlatformDiagram({
             </h3>
           </div>
 
-          {/* Unloading */}
           <div className="flex h-12 min-w-0 flex-col justify-center rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5">
             <p className="flex items-center gap-1 whitespace-nowrap text-[9px] font-bold uppercase text-slate-500">
               <Package className="h-3.5 w-3.5 shrink-0 text-yellow-500" />
@@ -447,7 +642,6 @@ export function PlatformDiagram({
             </h3>
           </div>
 
-          {/* Complete */}
           <div className="flex h-12 min-w-0 flex-col justify-center rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5">
             <p className="flex items-center gap-1 whitespace-nowrap text-[9px] font-bold uppercase text-slate-500">
               <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-green-500" />
@@ -459,7 +653,6 @@ export function PlatformDiagram({
             </h3>
           </div>
 
-          {/* Remain */}
           <div className="flex h-12 min-w-0 flex-col justify-center rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5">
             <p className="flex items-center gap-1 whitespace-nowrap text-[9px] font-bold uppercase text-slate-500">
               <Clock className="h-3.5 w-3.5 shrink-0 text-blue-500" />
@@ -473,25 +666,91 @@ export function PlatformDiagram({
         </div>
       </div>
 
+      {/* Dock Group Filter */}
+      <div className="flex w-full shrink-0 flex-wrap items-center gap-1.5 border-b border-slate-200 bg-white px-2 py-1.5">
+        <span className="mr-1 whitespace-nowrap text-[9px] font-bold uppercase text-slate-500">
+          Show Dock:
+        </span>
+
+        <button
+          type="button"
+          onClick={
+            allGroupsSelected
+              ? clearAllGroups
+              : selectAllGroups
+          }
+          className={`rounded-md border px-3 py-1 text-[9px] font-bold transition-colors ${
+            allGroupsSelected
+              ? 'border-slate-800 bg-slate-800 text-white'
+              : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          ALL
+        </button>
+
+        {GROUP_FILTER_OPTIONS.map(
+          groupName => {
+            const isSelected =
+              selectedGroups.includes(
+                groupName
+              );
+
+            return (
+              <button
+                key={groupName}
+                type="button"
+                onClick={() =>
+                  toggleGroupFilter(
+                    groupName
+                  )
+                }
+                className={`rounded-md border px-3 py-1 text-[9px] font-bold transition-colors ${
+                  isSelected
+                    ? 'border-blue-700 bg-blue-600 text-white shadow-sm'
+                    : 'border-slate-300 bg-white text-slate-500 hover:bg-slate-100'
+                }`}
+              >
+                {groupName}
+              </button>
+            );
+          }
+        )}
+
+        <span className="ml-auto whitespace-nowrap text-[9px] font-medium text-slate-500">
+          แสดง{' '}
+          {
+            selectedGroups.length
+          }{' '}
+          จาก{' '}
+          {
+            GROUP_FILTER_OPTIONS.length
+          }{' '}
+          กลุ่ม
+        </span>
+      </div>
+
       {/* Diagram Scrollable Area */}
       <div
         className="relative min-h-0 min-w-0 flex-1 overflow-x-scroll overflow-y-auto bg-slate-50"
         style={{
           width: '100%',
           maxWidth: '100%',
-          scrollbarGutter: 'stable',
+          scrollbarGutter:
+            'stable',
         }}
       >
         <div
           className="flex shrink-0 flex-col bg-slate-50"
           style={{
-            width: '2500px',
-            minWidth: '2500px',
+            width:
+              `${TIMELINE_WIDTH}px`,
+            minWidth:
+              `${TIMELINE_WIDTH}px`,
             maxWidth: 'none',
-            flex: '0 0 2500px',
+            flex:
+              `0 0 ${TIMELINE_WIDTH}px`,
           }}
         >
-          
           {/* Platform Header */}
           <div className="sticky top-0 z-50 flex h-8 w-full shrink-0 items-center gap-2 border-b border-slate-900 bg-slate-800 px-2">
             <div className="sticky left-2 z-[60] mr-auto whitespace-nowrap text-[11px] font-bold text-white">
@@ -499,341 +758,377 @@ export function PlatformDiagram({
             </div>
 
             <div className="ml-auto flex items-center gap-2">
-              {categories.map(
-                (category, index) => (
+              {CATEGORIES.map(
+                category => (
                   <div
-                    key={index}
+                    key={
+                      category.label
+                    }
                     className={`min-w-[92px] whitespace-nowrap border border-black px-2 py-0.5 text-center text-[8px] font-bold ${category.color}`}
                   >
-                    {category.label}
+                    {
+                      category.label
+                    }
                   </div>
                 )
               )}
             </div>
           </div>
 
+          {filteredGroups.length ===
+            0 && (
+            <div className="flex h-40 w-full items-center justify-center border-b border-slate-300 bg-white text-sm font-semibold text-slate-500">
+              กรุณาเลือกช่องที่ต้องการแสดงอย่างน้อย 1 กลุ่ม
+            </div>
+          )}
+
           {/* Row Groups */}
-          {dynamicGroups.map(group => {
-            const groupMappedPoints =
-              new Set(
-                group.docks.map(dock =>
-                  normalizePoint(
-                    dock.mappedPoint
+          {filteredGroups.map(
+            group => {
+              const groupMappedPoints =
+                new Set(
+                  group.docks.map(
+                    dock =>
+                      normalizePoint(
+                        dock.mappedPoint
+                      )
                   )
-                )
-              );
+                );
 
-            const groupTrips =
-              trucks.filter(truck =>
-                groupMappedPoints.has(
-                  normalizePoint(
-                    truck.dropPoint
-                  )
-                )
-              ).length;
+              const groupTrips =
+                trucks.filter(
+                  truck =>
+                    groupMappedPoints.has(
+                      normalizePoint(
+                        truck.dropPoint
+                      )
+                    )
+                ).length;
 
-            return (
-              <div
-                key={group.groupName}
-                className="flex flex-col border-b-2 border-slate-900"
-              >
-                {/* Group Title Row */}
-                {group.title && (
-                  <div className="sticky left-0 z-30 flex w-full border-b border-slate-800 bg-slate-600">
-                    <div className="sticky left-0 z-40 flex h-4 w-20 shrink-0 items-center whitespace-nowrap border-r border-slate-800 bg-slate-600 px-1 text-[7px] font-bold tracking-wide text-white">
-                      {group.title}
+              return (
+                <div
+                  key={
+                    group.groupName
+                  }
+                  className="flex flex-col border-b-2 border-slate-900"
+                >
+                  {/* Group Title */}
+                  {group.title && (
+                    <div className="sticky left-0 z-30 flex w-full border-b border-slate-800 bg-slate-600">
+                      <div className="sticky left-0 z-40 flex h-4 w-20 shrink-0 items-center whitespace-nowrap border-r border-slate-800 bg-slate-600 px-1 text-[7px] font-bold tracking-wide text-white">
+                        {
+                          group.title
+                        }
+                      </div>
+
+                      <div className="flex h-4 flex-1 items-center justify-center text-[7px] font-bold text-white">
+                        {groupTrips}{' '}
+                        TRIPS
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex">
+                    {/* Group Name */}
+                    <div className="sticky left-0 z-20 flex w-8 shrink-0 items-center justify-center border-r border-slate-800 bg-slate-700 text-sm font-bold text-white shadow-[2px_0_5px_rgba(0,0,0,0.1)]">
+                      {
+                        group.groupName
+                      }
                     </div>
 
-                    <div className="flex h-4 items-center justify-center text-[7px] font-bold text-white">
-                      {groupTrips} TRIPS
-                    </div>
-                  </div>
-                )}
+                    {/* Dock Rows */}
+                    <div className="flex flex-1 flex-col">
+                      {group.docks.map(
+                        (
+                          dock,
+                          dockIndex
+                        ) => {
+                          const dockTrucks =
+                            trucks.filter(
+                              truck =>
+                                normalizePoint(
+                                  truck.dropPoint ||
+                                    'UNASSIGNED'
+                                ) ===
+                                normalizePoint(
+                                  dock.mappedPoint
+                                )
+                            );
 
-                {/* Group Docks Area */}
-                <div className="flex">
-                  {/* Left Group Name */}
-                  <div className="sticky left-0 z-20 flex w-8 shrink-0 items-center justify-center border-r border-slate-800 bg-slate-700 text-sm font-bold text-white shadow-[2px_0_5px_rgba(0,0,0,0.1)]">
-                    {group.groupName}
-                  </div>
+                          return (
+                            <div
+                              key={`${group.groupName}-${dock.id}-${dockIndex}`}
+                              className="flex flex-col border-b-2 border-slate-900 bg-white last:border-b-0"
+                            >
+                              {/* Time Header */}
+                              <div className="flex h-[18px] border-b border-slate-300 bg-slate-100">
+                                <div className="sticky left-8 z-20 flex w-12 shrink-0 flex-col items-center justify-center border-r border-slate-300 bg-slate-50 text-[6px] font-bold leading-[6px] text-slate-600 shadow-[2px_0_5px_rgba(0,0,0,0.05)]">
+                                  <span>
+                                    TIME
+                                  </span>
+                                  <span>
+                                    (min)
+                                  </span>
+                                </div>
 
-                  {/* Docks List */}
-                  <div className="flex flex-1 flex-col">
-                    {group.docks.map(
-                      (
-                        dock,
-                        dockIndex
-                      ) => {
-                        const dockTrucks =
-                          trucks.filter(
-                            truck =>
-                              normalizePoint(
-                                truck.dropPoint ||
-                                  'UNASSIGNED'
-                              ) ===
-                              normalizePoint(
-                                dock.mappedPoint
-                              )
-                          );
-
-                        return (
-                          <div
-                            key={`${group.groupName}-${dock.id}-${dockIndex}`}
-                            className="flex flex-col border-b-2 border-slate-900 bg-white last:border-b-0"
-                          >
-                            {/* Time Header */}
-                            <div className="flex h-[18px] border-b border-slate-300 bg-slate-100">
-                              {/* Time Min Sticky Box */}
-                              <div className="sticky left-8 z-20 flex w-12 shrink-0 flex-col items-center justify-center border-r border-slate-300 bg-slate-50 text-[6px] font-bold leading-[6px] text-slate-600 shadow-[2px_0_5px_rgba(0,0,0,0.05)]">
-                                <span>
-                                  TIME
-                                </span>
-                                <span>
-                                  (min)
-                                </span>
-                              </div>
-
-                              {/* Timeline Hours */}
-                              <div className="flex flex-1">
-                                {HOURS.map(
-                                  hour => (
-                                    <div
-                                      key={hour}
-                                      className="flex flex-1 flex-col border-r border-slate-400"
-                                    >
-                                      <div className="border-b border-slate-300 bg-slate-200 text-center text-[8px] font-bold leading-[10px]">
-                                        {hour
-                                          .toString()
-                                          .padStart(
+                                <div className="flex flex-1">
+                                  {HOURS.map(
+                                    hour => (
+                                      <div
+                                        key={
+                                          hour
+                                        }
+                                        className="flex flex-1 flex-col border-r border-slate-400"
+                                      >
+                                        <div className="border-b border-slate-300 bg-slate-200 text-center text-[8px] font-bold leading-[10px]">
+                                          {String(
+                                            hour
+                                          ).padStart(
                                             2,
                                             '0'
                                           )}
-                                        :00
-                                      </div>
+                                          :00
+                                        </div>
 
-                                      <div className="flex h-2.5 text-[6px] font-medium leading-[10px] text-slate-600">
+                                        <div className="flex h-2.5 text-[6px] font-medium leading-[10px] text-slate-600">
+                                          {MINUTES.map(
+                                            minute => (
+                                              <div
+                                                key={
+                                                  minute
+                                                }
+                                                className="flex-1 border-r border-slate-300 text-center last:border-r-0"
+                                              >
+                                                {
+                                                  minute
+                                                }
+                                              </div>
+                                            )
+                                          )}
+                                        </div>
+                                      </div>
+                                    )
+                                  )}
+                                </div>
+
+                                <div className="sticky right-0 z-20 flex w-12 shrink-0 border-b border-l border-slate-300 border-l-slate-400 bg-slate-200 shadow-[-2px_0_5px_rgba(0,0,0,0.05)]">
+                                  <div className="flex flex-1 items-center justify-center text-center text-[8px] font-bold">
+                                    Total
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Dock and Truck Row */}
+                              <div className="flex h-[56px]">
+                                <div className="sticky left-8 z-20 flex w-12 shrink-0 items-center justify-center border-r border-slate-300 bg-white text-sm font-bold text-slate-800 shadow-[2px_0_5px_rgba(0,0,0,0.05)]">
+                                  {
+                                    dock.id
+                                  }
+                                </div>
+
+                                <div className="relative flex flex-1">
+                                  {/* Timeline Grid */}
+                                  {HOURS.map(
+                                    hour => (
+                                      <div
+                                        key={
+                                          hour
+                                        }
+                                        className="flex flex-1 border-r border-slate-400"
+                                      >
                                         {MINUTES.map(
                                           minute => (
                                             <div
                                               key={
                                                 minute
                                               }
-                                              className="flex-1 border-r border-slate-300 text-center last:border-r-0"
-                                            >
-                                              {
-                                                minute
-                                              }
-                                            </div>
+                                              className="flex-1 border-r border-slate-100 last:border-r-0"
+                                            />
                                           )
                                         )}
                                       </div>
-                                    </div>
-                                  )
-                                )}
-                              </div>
+                                    )
+                                  )}
 
-                              {/* Summary Header */}
-                              <div className="sticky right-0 z-20 flex w-12 shrink-0 border-b border-l border-slate-300 border-l-slate-400 bg-slate-200 shadow-[-2px_0_5px_rgba(0,0,0,0.05)]">
-                                <div className="flex flex-1 items-center justify-center text-center text-[8px] font-bold">
-                                  Total
-                                </div>
-                              </div>
-                            </div>
+                                  {/* Trucks */}
+                                  {dockTrucks.map(
+                                    truck => {
+                                      const etaToUse =
+                                        truck.planEta ||
+                                        truck.stampEta;
 
-                            {/* Dock and Trucks Row */}
-                            <div className="flex h-[56px]">
-                              {/* Dock Number */}
-                              <div className="sticky left-8 z-20 flex w-12 shrink-0 items-center justify-center border-r border-slate-300 bg-white text-sm font-bold text-slate-800 shadow-[2px_0_5px_rgba(0,0,0,0.05)]">
-                                {dock.id}
-                              </div>
-
-                              {/* Timeline Trucks Grid */}
-                              <div className="relative flex flex-1">
-                                {HOURS.map(
-                                  hour => (
-                                    <div
-                                      key={hour}
-                                      className="flex flex-1 border-r border-slate-400"
-                                    >
-                                      {MINUTES.map(
-                                        minute => (
-                                          <div
-                                            key={
-                                              minute
-                                            }
-                                            className="flex-1 border-r border-slate-100 last:border-r-0"
-                                          />
-                                        )
-                                      )}
-                                    </div>
-                                  )
-                                )}
-
-                                {/* Trucks */}
-                                {dockTrucks.map(
-                                  truck => {
-                                    const etaToUse =
-                                      truck.planEta ||
-                                      truck.stampEta;
-
-                                    const startMins =
-                                      parseTimeToMinutes(
-                                        etaToUse
-                                      );
-
-                                    if (
-                                      startMins ===
-                                      null
-                                    ) {
-                                      return null;
-                                    }
-
-                                    let durationMins =
-                                      60;
-
-                                    const etdToUse =
-                                      truck.planEtd ||
-                                      truck.stampEtd;
-
-                                    if (
-                                      etdToUse
-                                    ) {
-                                      const difference =
-                                        calculateMinutesDifference(
-                                          etaToUse ||
-                                            '',
-                                          etdToUse
+                                      const startMins =
+                                        parseTimeToMinutes(
+                                          etaToUse
                                         );
 
                                       if (
-                                        difference !==
-                                          null &&
-                                        difference >
-                                          0
+                                        startMins ===
+                                        null
                                       ) {
-                                        durationMins =
-                                          difference;
+                                        return null;
                                       }
-                                    }
 
-                                    const leftPercent =
-                                      (startMins /
-                                        TOTAL_MINS) *
-                                      100;
+                                      let durationMins =
+                                        60;
 
-                                    const widthPercent =
-                                      (durationMins /
-                                        TOTAL_MINS) *
-                                      100;
+                                      const etdToUse =
+                                        truck.planEtd ||
+                                        truck.stampEtd;
 
-                                    const left =
-                                      Math.max(
-                                        0,
-                                        leftPercent
-                                      );
+                                      if (
+                                        etdToUse
+                                      ) {
+                                        const difference =
+                                          calculateMinutesDifference(
+                                            etaToUse ||
+                                              '',
+                                            etdToUse
+                                          );
 
-                                    let width =
-                                      widthPercent;
-
-                                    if (
-                                      leftPercent <
-                                      0
-                                    ) {
-                                      width =
-                                        widthPercent +
-                                        leftPercent;
-                                    }
-
-                                    if (
-                                      left +
-                                        width >
-                                      100
-                                    ) {
-                                      width =
-                                        100 -
-                                        left;
-                                    }
-
-                                    if (
-                                      width <= 0
-                                    ) {
-                                      return null;
-                                    }
-
-                                    return (
-                                      <motion.div
-                                        initial={{
-                                          opacity: 0,
-                                          scaleY: 0,
-                                        }}
-                                        animate={{
-                                          opacity: 1,
-                                          scaleY: 1,
-                                        }}
-                                        key={
-                                          truck.id
+                                        if (
+                                          difference !==
+                                            null &&
+                                          difference >
+                                            0
+                                        ) {
+                                          durationMins =
+                                            difference;
                                         }
-                                        onClick={() =>
-                                          setSelectedTruck(
+                                      }
+
+                                      const leftPercent =
+                                        (startMins /
+                                          TOTAL_MINS) *
+                                        100;
+
+                                      const widthPercent =
+                                        (durationMins /
+                                          TOTAL_MINS) *
+                                        100;
+
+                                      const left =
+                                        Math.max(
+                                          0,
+                                          leftPercent
+                                        );
+
+                                      let width =
+                                        widthPercent;
+
+                                      if (
+                                        leftPercent <
+                                        0
+                                      ) {
+                                        width =
+                                          widthPercent +
+                                          leftPercent;
+                                      }
+
+                                      if (
+                                        left +
+                                          width >
+                                        100
+                                      ) {
+                                        width =
+                                          100 -
+                                          left;
+                                      }
+
+                                      if (
+                                        width <= 0
+                                      ) {
+                                        return null;
+                                      }
+
+                                      return (
+                                        <motion.div
+                                          key={
+                                            truck.id
+                                          }
+                                          initial={{
+                                            opacity: 0,
+                                            scaleY: 0,
+                                          }}
+                                          animate={{
+                                            opacity: 1,
+                                            scaleY: 1,
+                                          }}
+                                          onClick={() =>
+                                            setSelectedTruck(
+                                              truck
+                                            )
+                                          }
+                                          className={`absolute bottom-0.5 top-0.5 flex cursor-pointer flex-col items-center justify-center overflow-hidden border p-0.5 text-center transition-shadow hover:z-10 hover:shadow-lg ${getTruckColor(
                                             truck
-                                          )
-                                        }
-                                        className={`absolute bottom-0.5 top-0.5 flex cursor-pointer flex-col items-center justify-center overflow-hidden border p-0.5 text-center transition-shadow hover:z-10 hover:shadow-lg ${getTruckColor(
-                                          truck
-                                        )}`}
-                                        style={{
-                                          left: `${left}%`,
-                                          width: `${width}%`,
-                                        }}
-                                        title={`${truck.licensePlate} (${truck.route})`}
-                                      >
-                                        <div className="w-full truncate text-[6px] font-bold leading-[7px]">
-                                          {
-                                            truck.route
-                                          }
-                                        </div>
+                                          )}`}
+                                          style={{
+                                            left:
+                                              `${left}%`,
+                                            width:
+                                              `${width}%`,
+                                          }}
+                                          title={`${truck.licensePlate} (${truck.route})`}
+                                        >
+                                          <div className="w-full truncate text-[6px] font-bold leading-[7px]">
+                                            {
+                                              truck.route
+                                            }
+                                          </div>
 
-                                        <div className="w-full truncate text-[6px] font-bold leading-[7px]">
-                                          {
-                                            truck.licensePlate
-                                          }
-                                        </div>
+                                          <div className="w-full truncate text-[6px] font-bold leading-[7px]">
+                                            {
+                                              truck.licensePlate
+                                            }
+                                          </div>
 
-                                        {truck.performanceStatus ===
-                                          'DELAY' && (
-                                          <AlertTriangle className="absolute right-0.5 top-0.5 h-2.5 w-2.5 text-white" />
-                                        )}
-                                      </motion.div>
-                                    );
-                                  }
-                                )}
-                              </div>
+                                          {truck.performanceStatus ===
+                                            'DELAY' && (
+                                            <AlertTriangle className="absolute right-0.5 top-0.5 h-2.5 w-2.5 text-white" />
+                                          )}
+                                        </motion.div>
+                                      );
+                                    }
+                                  )}
+                                </div>
 
-                              {/* Summary Body */}
-                              <div className="sticky right-0 z-20 flex w-12 shrink-0 border-l border-slate-400 bg-white shadow-[-2px_0_5px_rgba(0,0,0,0.05)]">
-                                <div className="flex flex-1 items-center justify-center text-xs font-bold">
-                                  {
-                                    dockTrucks.length
-                                  }
+                                <div className="sticky right-0 z-20 flex w-12 shrink-0 border-l border-slate-400 bg-white shadow-[-2px_0_5px_rgba(0,0,0,0.05)]">
+                                  <div className="flex flex-1 items-center justify-center text-xs font-bold">
+                                    {
+                                      dockTrucks.length
+                                    }
+                                  </div>
                                 </div>
                               </div>
                             </div>
-                          </div>
-                        );
-                      }
-                    )}
+                          );
+                        }
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            }
+          )}
         </div>
       </div>
 
       {/* Truck Details Modal */}
       <AnimatePresence>
         {selectedTruck && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div
+            className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/50 p-4"
+            onMouseDown={event => {
+              if (
+                event.target ===
+                event.currentTarget
+              ) {
+                setSelectedTruck(
+                  null
+                );
+              }
+            }}
+          >
             <motion.div
               initial={{
                 opacity: 0,
@@ -849,7 +1144,6 @@ export function PlatformDiagram({
               }}
               className="w-full max-w-sm overflow-hidden rounded-xl bg-white shadow-2xl"
             >
-              {/* Modal Header */}
               <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 p-4">
                 <h3 className="text-sm font-bold text-slate-800">
                   Truck Details
@@ -858,7 +1152,9 @@ export function PlatformDiagram({
                 <button
                   type="button"
                   onClick={() =>
-                    setSelectedTruck(null)
+                    setSelectedTruck(
+                      null
+                    )
                   }
                   className="rounded-lg p-1 text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-600"
                 >
@@ -866,7 +1162,6 @@ export function PlatformDiagram({
                 </button>
               </div>
 
-              {/* Modal Body */}
               <div className="space-y-4 p-4">
                 <div>
                   <div className="mb-1 text-xs font-bold uppercase tracking-wider text-slate-500">
@@ -886,7 +1181,9 @@ export function PlatformDiagram({
                   </div>
 
                   <div className="text-sm text-slate-700">
-                    {selectedTruck.route}
+                    {
+                      selectedTruck.route
+                    }
                   </div>
                 </div>
 
@@ -897,7 +1194,8 @@ export function PlatformDiagram({
 
                   <div className="text-sm text-slate-700">
                     {
-                      selectedTruck.supplierName
+                      selectedTruck.supplierName ||
+                      '-'
                     }
                   </div>
                 </div>
@@ -908,8 +1206,10 @@ export function PlatformDiagram({
                   </div>
 
                   <div className="text-sm text-slate-700">
-                    {selectedTruck.dropPoint ||
-                      '-'}
+                    {
+                      selectedTruck.dropPoint ||
+                      '-'
+                    }
                   </div>
                 </div>
 
@@ -933,7 +1233,8 @@ export function PlatformDiagram({
 
                     <div className="text-sm text-slate-700">
                       {
-                        selectedTruck.performanceStatus
+                        selectedTruck.performanceStatus ||
+                        '-'
                       }
                     </div>
                   </div>
@@ -944,8 +1245,10 @@ export function PlatformDiagram({
                     </div>
 
                     <div className="font-mono text-sm text-slate-700">
-                      {selectedTruck.planEta ||
-                        '-'}
+                      {
+                        selectedTruck.planEta ||
+                        '-'
+                      }
                     </div>
                   </div>
 
@@ -955,8 +1258,10 @@ export function PlatformDiagram({
                     </div>
 
                     <div className="font-mono text-sm text-slate-700">
-                      {selectedTruck.planEtd ||
-                        '-'}
+                      {
+                        selectedTruck.planEtd ||
+                        '-'
+                      }
                     </div>
                   </div>
 
@@ -966,9 +1271,11 @@ export function PlatformDiagram({
                     </div>
 
                     <div className="font-mono text-sm text-slate-700">
-                      {selectedTruck.stampEta ||
+                      {
+                        selectedTruck.stampEta ||
                         selectedTruck.actualEta ||
-                        '-'}
+                        '-'
+                      }
                     </div>
                   </div>
 
@@ -978,14 +1285,16 @@ export function PlatformDiagram({
                     </div>
 
                     <div className="font-mono text-sm text-slate-700">
-                      {selectedTruck.stampEtd ||
-                        '-'}
+                      {
+                        selectedTruck.stampEtd ||
+                        '-'
+                      }
                     </div>
                   </div>
                 </div>
 
                 {selectedTruck.actionProblem && (
-                  <div className="mt-4 rounded-lg border border-red-100 bg-red-50 p-3">
+                  <div className="rounded-lg border border-red-100 bg-red-50 p-3">
                     <div className="mb-1 flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-red-700">
                       <AlertTriangle className="h-3.5 w-3.5" />
                       Action / Problem
@@ -1006,4 +1315,3 @@ export function PlatformDiagram({
     </div>
   );
 }
-
