@@ -485,10 +485,10 @@ export function PlatformDiagram({
         <div
           className="flex shrink-0 flex-col bg-slate-50"
           style={{
-            width: '3600px',
-            minWidth: '3600px',
+            width: '2500px',
+            minWidth: '2500px',
             maxWidth: 'none',
-            flex: '0 0 3600px',
+            flex: '0 0 2500px',
           }}
         >
           
