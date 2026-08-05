@@ -247,12 +247,10 @@ function cleanHeader(value: unknown): string {
   return String(value ?? '')
     .trim()
     .toLowerCase()
-    .[
-planetd',
-etd',
-เวลาออก',
-kokDate(): string {
- new Intl.DateTimeFormating {
+    .replace(/[\s_\-./()]+/g, '');
+}
+
+function cleanCell(value: unknown): string {
   return String(value ?? '').trim();
 }
 
