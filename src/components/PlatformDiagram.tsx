@@ -421,52 +421,52 @@ export function PlatformDiagram({
   return (
     <div className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-slate-100 text-xs">
       {/* Summary Cards */}
-      <div className="w-full shrink-0 border-b border-slate-200 bg-white p-4">
-        <div className="grid w-full grid-cols-2 gap-4 md:grid-cols-4">
+      <div className="w-full shrink-0 border-b border-slate-200 bg-white px-2 py-2">
+        <div className="grid w-full grid-cols-2 gap-2 md:grid-cols-4">
           {/* Total */}
-          <div className="flex h-14 min-w-0 flex-col justify-center rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-            <p className="flex items-center gap-1.5 whitespace-nowrap text-[10px] font-bold uppercase text-slate-500">
+          <div className="flex h-12 min-w-0 flex-col justify-center rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5">
+            <p className="flex items-center gap-1 whitespace-nowrap text-[9px] font-bold uppercase text-slate-500">
               <TruckIcon className="h-3.5 w-3.5 shrink-0" />
               Total
             </p>
 
-            <h3 className="mt-1 text-xl font-bold leading-none text-slate-800">
+            <h3 className="mt-0.5 text-lg font-bold leading-none text-slate-800">
               {stats.total}
             </h3>
           </div>
 
           {/* Unloading */}
-          <div className="flex h-14 min-w-0 flex-col justify-center rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-            <p className="flex items-center gap-1.5 whitespace-nowrap text-[10px] font-bold uppercase text-slate-500">
+          <div className="flex h-12 min-w-0 flex-col justify-center rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5">
+            <p className="flex items-center gap-1 whitespace-nowrap text-[9px] font-bold uppercase text-slate-500">
               <Package className="h-3.5 w-3.5 shrink-0 text-yellow-500" />
               Unloading
             </p>
 
-            <h3 className="mt-1 text-xl font-bold leading-none text-slate-800">
+            <h3 className="mt-0.5 text-lg font-bold leading-none text-slate-800">
               {stats.unloading}
             </h3>
           </div>
 
           {/* Complete */}
-          <div className="flex h-14 min-w-0 flex-col justify-center rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-            <p className="flex items-center gap-1.5 whitespace-nowrap text-[10px] font-bold uppercase text-slate-500">
+          <div className="flex h-12 min-w-0 flex-col justify-center rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5">
+            <p className="flex items-center gap-1 whitespace-nowrap text-[9px] font-bold uppercase text-slate-500">
               <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-green-500" />
               Complete
             </p>
 
-            <h3 className="mt-1 text-xl font-bold leading-none text-slate-800">
+            <h3 className="mt-0.5 text-lg font-bold leading-none text-slate-800">
               {stats.complete}
             </h3>
           </div>
 
           {/* Remain */}
-          <div className="flex h-14 min-w-0 flex-col justify-center rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-            <p className="flex items-center gap-1.5 whitespace-nowrap text-[10px] font-bold uppercase text-slate-500">
+          <div className="flex h-12 min-w-0 flex-col justify-center rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5">
+            <p className="flex items-center gap-1 whitespace-nowrap text-[9px] font-bold uppercase text-slate-500">
               <Clock className="h-3.5 w-3.5 shrink-0 text-blue-500" />
               Remain
             </p>
 
-            <h3 className="mt-1 text-xl font-bold leading-none text-slate-800">
+            <h3 className="mt-0.5 text-lg font-bold leading-none text-slate-800">
               {stats.remain}
             </h3>
           </div>
@@ -485,16 +485,16 @@ export function PlatformDiagram({
         <div
           className="flex shrink-0 flex-col bg-slate-50"
           style={{
-            width: '6000px',
-            minWidth: '6000px',
+            width: '4680px',
+            minWidth: '4680px',
             maxWidth: 'none',
-            flex: '0 0 6000px',
+            flex: '0 0 4680px',
           }}
         >
           
           {/* Platform Header */}
-          <div className="sticky top-0 z-50 flex h-10 w-full shrink-0 items-center gap-2 border-b-2 border-slate-900 bg-slate-800 px-4">
-            <div className="sticky left-4 z-[60] mr-auto whitespace-nowrap text-sm font-bold text-white">
+          <div className="sticky top-0 z-50 flex h-8 w-full shrink-0 items-center gap-2 border-b border-slate-900 bg-slate-800 px-2">
+            <div className="sticky left-2 z-[60] mr-auto whitespace-nowrap text-[11px] font-bold text-white">
               PLATFORM DIAGRAM
             </div>
 
@@ -503,7 +503,7 @@ export function PlatformDiagram({
                 (category, index) => (
                   <div
                     key={index}
-                    className={`min-w-[120px] whitespace-nowrap border-2 border-black px-4 py-1 text-center text-[10px] font-bold ${category.color}`}
+                    className={`min-w-[92px] whitespace-nowrap border border-black px-2 py-0.5 text-center text-[8px] font-bold ${category.color}`}
                   >
                     {category.label}
                   </div>
@@ -540,11 +540,11 @@ export function PlatformDiagram({
                 {/* Group Title Row */}
                 {group.title && (
                   <div className="sticky left-0 z-30 flex w-full border-b border-slate-800 bg-slate-600">
-                    <div className="sticky left-0 z-40 flex w-24 shrink-0 items-center whitespace-nowrap border-r-2 border-slate-800 bg-slate-600 px-2 py-1 text-[10px] font-bold tracking-widest text-white">
+                    <div className="sticky left-0 z-40 flex w-20 shrink-0 items-center whitespace-nowrap border-r border-slate-800 bg-slate-600 px-1.5 py-0.5 text-[8px] font-bold tracking-wide text-white">
                       {group.title}
                     </div>
 
-                    <div className="flex-1 py-1 text-center text-[10px] font-bold text-white">
+                    <div className="flex-1 py-0.5 text-center text-[8px] font-bold text-white">
                       {groupTrips} TRIPS
                     </div>
                   </div>
@@ -553,7 +553,7 @@ export function PlatformDiagram({
                 {/* Group Docks Area */}
                 <div className="flex">
                   {/* Left Group Name */}
-                  <div className="sticky left-0 z-20 flex w-10 shrink-0 items-center justify-center border-r-2 border-slate-800 bg-slate-700 text-lg font-bold text-white shadow-[2px_0_5px_rgba(0,0,0,0.1)]">
+                  <div className="sticky left-0 z-20 flex w-8 shrink-0 items-center justify-center border-r border-slate-800 bg-slate-700 text-sm font-bold text-white shadow-[2px_0_5px_rgba(0,0,0,0.1)]">
                     {group.groupName}
                   </div>
 
@@ -582,9 +582,9 @@ export function PlatformDiagram({
                             className="flex flex-col border-b-2 border-slate-900 bg-white last:border-b-0"
                           >
                             {/* Time Header */}
-                            <div className="flex h-6 border-b border-slate-300 bg-slate-100">
+                            <div className="flex h-5 border-b border-slate-300 bg-slate-100">
                               {/* Time Min Sticky Box */}
-                              <div className="sticky left-10 z-20 flex w-14 shrink-0 flex-col items-center justify-center border-r-2 border-slate-300 bg-slate-50 text-[7px] font-bold leading-[8px] text-slate-600 shadow-[2px_0_5px_rgba(0,0,0,0.05)]">
+                              <div className="sticky left-8 z-20 flex w-12 shrink-0 flex-col items-center justify-center border-r border-slate-300 bg-slate-50 text-[6px] font-bold leading-[6px] text-slate-600 shadow-[2px_0_5px_rgba(0,0,0,0.05)]">
                                 <span>
                                   TIME
                                 </span>
@@ -601,7 +601,7 @@ export function PlatformDiagram({
                                       key={hour}
                                       className="flex flex-1 flex-col border-r border-slate-400"
                                     >
-                                      <div className="border-b border-slate-300 bg-slate-200 text-center text-[9px] font-bold">
+                                      <div className="border-b border-slate-300 bg-slate-200 text-center text-[8px] font-bold leading-[10px]">
                                         {hour
                                           .toString()
                                           .padStart(
@@ -611,7 +611,7 @@ export function PlatformDiagram({
                                         :00
                                       </div>
 
-                                      <div className="flex h-3 text-[7px] font-medium text-slate-600">
+                                      <div className="flex h-2.5 text-[6px] font-medium leading-[10px] text-slate-600">
                                         {MINUTES.map(
                                           minute => (
                                             <div
@@ -633,17 +633,17 @@ export function PlatformDiagram({
                               </div>
 
                               {/* Summary Header */}
-                              <div className="sticky right-0 z-20 flex w-16 shrink-0 border-b border-l-2 border-slate-300 border-l-slate-400 bg-slate-200 shadow-[-2px_0_5px_rgba(0,0,0,0.05)]">
-                                <div className="flex flex-1 items-center justify-center text-center text-[10px] font-bold">
+                              <div className="sticky right-0 z-20 flex w-12 shrink-0 border-b border-l border-slate-300 border-l-slate-400 bg-slate-200 shadow-[-2px_0_5px_rgba(0,0,0,0.05)]">
+                                <div className="flex flex-1 items-center justify-center text-center text-[8px] font-bold">
                                   Total
                                 </div>
                               </div>
                             </div>
 
                             {/* Dock and Trucks Row */}
-                            <div className="flex h-24">
+                            <div className="flex h-[78px]">
                               {/* Dock Number */}
-                              <div className="sticky left-10 z-20 flex w-14 shrink-0 items-center justify-center border-r-2 border-slate-300 bg-white text-xl font-bold text-slate-800 shadow-[2px_0_5px_rgba(0,0,0,0.05)]">
+                              <div className="sticky left-8 z-20 flex w-12 shrink-0 items-center justify-center border-r border-slate-300 bg-white text-base font-bold text-slate-800 shadow-[2px_0_5px_rgba(0,0,0,0.05)]">
                                 {dock.id}
                               </div>
 
@@ -778,7 +778,7 @@ export function PlatformDiagram({
                                             truck
                                           )
                                         }
-                                        className={`absolute bottom-1 top-1 flex cursor-pointer flex-col items-center justify-center overflow-hidden border-2 p-1 text-center transition-shadow hover:z-10 hover:shadow-lg ${getTruckColor(
+                                        className={`absolute bottom-1 top-1 flex cursor-pointer flex-col items-center justify-center overflow-hidden border p-0.5 text-center transition-shadow hover:z-10 hover:shadow-lg ${getTruckColor(
                                           truck
                                         )}`}
                                         style={{
@@ -787,13 +787,13 @@ export function PlatformDiagram({
                                         }}
                                         title={`${truck.licensePlate} (${truck.route})`}
                                       >
-                                        <div className="w-full truncate text-[9px] font-bold leading-tight">
+                                        <div className="w-full truncate text-[8px] font-bold leading-[9px]">
                                           {
                                             truck.route
                                           }
                                         </div>
 
-                                        <div className="mt-0.5 w-full truncate text-[8px] font-bold leading-tight">
+                                        <div className="w-full truncate text-[7px] font-bold leading-[8px]">
                                           {
                                             truck.licensePlate
                                           }
@@ -801,7 +801,7 @@ export function PlatformDiagram({
 
                                         {truck.performanceStatus ===
                                           'DELAY' && (
-                                          <AlertTriangle className="absolute right-1 top-1 h-3 w-3 text-white" />
+                                          <AlertTriangle className="absolute right-0.5 top-0.5 h-2.5 w-2.5 text-white" />
                                         )}
                                       </motion.div>
                                     );
@@ -810,8 +810,8 @@ export function PlatformDiagram({
                               </div>
 
                               {/* Summary Body */}
-                              <div className="sticky right-0 z-20 flex w-16 shrink-0 border-l-2 border-slate-400 bg-white shadow-[-2px_0_5px_rgba(0,0,0,0.05)]">
-                                <div className="flex flex-1 items-center justify-center text-sm font-bold">
+                              <div className="sticky right-0 z-20 flex w-12 shrink-0 border-l border-slate-400 bg-white shadow-[-2px_0_5px_rgba(0,0,0,0.05)]">
+                                <div className="flex flex-1 items-center justify-center text-xs font-bold">
                                   {
                                     dockTrucks.length
                                   }
