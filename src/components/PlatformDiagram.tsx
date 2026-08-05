@@ -540,11 +540,11 @@ export function PlatformDiagram({
                 {/* Group Title Row */}
                 {group.title && (
                   <div className="sticky left-0 z-30 flex w-full border-b border-slate-800 bg-slate-600">
-                    <div className="sticky left-0 z-40 flex w-20 shrink-0 items-center whitespace-nowrap border-r border-slate-800 bg-slate-600 px-1.5 py-0.5 text-[8px] font-bold tracking-wide text-white">
+                    <div className="sticky left-0 z-40 flex h-4 w-20 shrink-0 items-center whitespace-nowrap border-r border-slate-800 bg-slate-600 px-1 text-[7px] font-bold tracking-wide text-white">
                       {group.title}
                     </div>
 
-                    <div className="flex-1 py-0.5 text-center text-[8px] font-bold text-white">
+                    <div className="flex h-4 items-center justify-center text-[7px] font-bold text-white">
                       {groupTrips} TRIPS
                     </div>
                   </div>
@@ -582,7 +582,7 @@ export function PlatformDiagram({
                             className="flex flex-col border-b-2 border-slate-900 bg-white last:border-b-0"
                           >
                             {/* Time Header */}
-                            <div className="flex h-5 border-b border-slate-300 bg-slate-100">
+                            <div className="flex h-[18px] border-b border-slate-300 bg-slate-100">
                               {/* Time Min Sticky Box */}
                               <div className="sticky left-8 z-20 flex w-12 shrink-0 flex-col items-center justify-center border-r border-slate-300 bg-slate-50 text-[6px] font-bold leading-[6px] text-slate-600 shadow-[2px_0_5px_rgba(0,0,0,0.05)]">
                                 <span>
@@ -641,9 +641,9 @@ export function PlatformDiagram({
                             </div>
 
                             {/* Dock and Trucks Row */}
-                            <div className="flex h-[78px]">
+                            <div className="flex h-[56px]">
                               {/* Dock Number */}
-                              <div className="sticky left-8 z-20 flex w-12 shrink-0 items-center justify-center border-r border-slate-300 bg-white text-base font-bold text-slate-800 shadow-[2px_0_5px_rgba(0,0,0,0.05)]">
+                              <div className="sticky left-8 z-20 flex w-12 shrink-0 items-center justify-center border-r border-slate-300 bg-white text-sm font-bold text-slate-800 shadow-[2px_0_5px_rgba(0,0,0,0.05)]">
                                 {dock.id}
                               </div>
 
@@ -778,7 +778,7 @@ export function PlatformDiagram({
                                             truck
                                           )
                                         }
-                                        className={`absolute bottom-1 top-1 flex cursor-pointer flex-col items-center justify-center overflow-hidden border p-0.5 text-center transition-shadow hover:z-10 hover:shadow-lg ${getTruckColor(
+                                        className={`absolute bottom-0.5 top-0.5 flex cursor-pointer flex-col items-center justify-center overflow-hidden border p-0.5 text-center transition-shadow hover:z-10 hover:shadow-lg ${getTruckColor(
                                           truck
                                         )}`}
                                         style={{
@@ -787,13 +787,13 @@ export function PlatformDiagram({
                                         }}
                                         title={`${truck.licensePlate} (${truck.route})`}
                                       >
-                                        <div className="w-full truncate text-[8px] font-bold leading-[9px]">
+                                        <div className="w-full truncate text-[6px] font-bold leading-[7px]">
                                           {
                                             truck.route
                                           }
                                         </div>
 
-                                        <div className="w-full truncate text-[7px] font-bold leading-[8px]">
+                                        <div className="w-full truncate text-[6px] font-bold leading-[7px]">
                                           {
                                             truck.licensePlate
                                           }
