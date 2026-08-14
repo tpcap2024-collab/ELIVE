@@ -33,6 +33,7 @@ import {
   ClipboardList,
   Clock,
   LayoutDashboard,
+  LockKeyhole,
   Map,
   MapPin,
   Maximize2,
@@ -113,6 +114,9 @@ export default function App() {
     truck: null,
   });
   const [showSettings, setShowSettings] = useState(false);
+  const [showPlanAccessDialog, setShowPlanAccessDialog] = useState(false);
+  const [planAccessCode, setPlanAccessCode] = useState('');
+  const [planAccessError, setPlanAccessError] = useState('');
   const [appsScriptUrl, setAppsScriptUrl] = useState(getAppsScriptUrl());
   const [showHiddenRows, setShowHiddenRows] = useState(false);
   const [dockFilter, setDockFilter] = useState<DockFilter>('ALL');
@@ -218,6 +222,27 @@ export default function App() {
   const changeView = (view: CurrentView) => {
     setCurrentView(view);
     closeSidebarOnMobile();
+  };
+
+  const requestPlanManagementAccess = () => {
+    setPlanAccessCode('');
+    setPlanAccessError('');
+    setShowPlanAccessDialog(true);
+    closeSidebarOnMobile();
+  };
+
+  const handlePlanAccessSubmit = (event: React.FormEvent) => {
+    event.preventDefault();
+
+    if (planAccessCode === '12234') {
+      setShowPlanAccessDialog(false);
+      setPlanAccessCode('');
+      setPlanAccessError('');
+      setCurrentView('plan-management');
+      return;
+    }
+
+    setPlanAccessError('รหัสไม่ถูกต้อง กรุณาลองใหม่');
   };
 
   const handleOpenGps = (truckId: string) => {
@@ -446,7 +471,6 @@ export default function App() {
       icon: ClipboardList,
       activeClass: 'bg-emerald-50 font-semibold text-emerald-700',
     },
-    { view: 'map', label: 'Live Map', icon: Map },
     {
       view: 'incident',
       label: 'Action Center',
@@ -495,8 +519,11 @@ export default function App() {
                   key={view}
                   type="button"
                   onClick={() => {
-                    if (view === 'map') handleOpenMapMenu();
-                    else changeView(view);
+                    if (view === 'plan-management') {
+                      requestPlanManagementAccess();
+                    } else {
+                      changeView(view);
+                    }
                   }}
                   className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors ${
                     currentView === view
@@ -759,6 +786,87 @@ export default function App() {
           <span className="opacity-60">© 2026 ELIVE Logistics</span>
         </footer>
       </div>
+
+      {showPlanAccessDialog && (
+        <div
+          className="fixed inset-0 z-[1300] flex items-center justify-center bg-slate-950/70 p-4"
+          onMouseDown={event => {
+            if (event.target === event.currentTarget) {
+              setShowPlanAccessDialog(false);
+              setPlanAccessCode('');
+              setPlanAccessError('');
+            }
+          }}
+        >
+          <form
+            onSubmit={handlePlanAccessSubmit}
+            className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="rounded-xl bg-emerald-100 p-3 text-emerald-700">
+                  <LockKeyhole className="h-6 w-6" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-bold text-slate-800">
+                    Plan Management
+                  </h2>
+                  <p className="text-sm text-slate-500">
+                    กรุณาใส่รหัสเพื่อเข้าใช้งาน
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPlanAccessDialog(false);
+                  setPlanAccessCode('');
+                  setPlanAccessError('');
+                }}
+                className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                title="ปิด"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <label className="mt-6 block text-sm font-medium text-slate-700">
+              รหัสเข้าใช้งาน
+              <input
+                type="password"
+                inputMode="numeric"
+                autoFocus
+                autoComplete="off"
+                value={planAccessCode}
+                onChange={event => {
+                  setPlanAccessCode(event.target.value);
+                  if (planAccessError) setPlanAccessError('');
+                }}
+                placeholder="กรอกรหัส"
+                className={`mt-1.5 w-full rounded-xl border px-3 py-2.5 text-center text-lg tracking-[0.35em] outline-none focus:ring-2 ${
+                  planAccessError
+                    ? 'border-red-300 focus:border-red-500 focus:ring-red-500/20'
+                    : 'border-slate-300 focus:border-emerald-500 focus:ring-emerald-500/20'
+                }`}
+              />
+            </label>
+
+            {planAccessError && (
+              <div className="mt-3 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                <AlertTriangle className="h-4 w-4 shrink-0" />
+                {planAccessError}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              className="mt-5 w-full rounded-xl bg-emerald-600 px-4 py-2.5 font-bold text-white transition-colors hover:bg-emerald-700"
+            >
+              เข้า Plan Management
+            </button>
+          </form>
+        </div>
+      )}
 
       {isGpsPopupOpen && selectedGpsTruckId && (
         <div
