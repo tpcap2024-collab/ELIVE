@@ -1,760 +1,1839 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import type { Truck } from '../types';
-import { AnimatePresence, motion } from 'motion/react';
+import React, {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+
+import L from 'leaflet';
+
+import 'leaflet/dist/leaflet.css';
+
+import {
+  GpsLocation,
+  Truck,
+} from '../types';
+
+import {
+  fetchRouteToTpcap,
+  RouteToTpcapResult,
+} from '../lib/sheets';
+
 import {
   AlertTriangle,
-  CheckCircle2,
+  Building2,
   Clock,
-  Expand,
-  Minimize2,
-  Package,
+  LoaderCircle,
+  MapPin,
+  Navigation,
+  RefreshCw,
+  Route,
+  Search,
   Truck as TruckIcon,
+  UserRound,
+  Wifi,
+  WifiOff,
   X,
 } from 'lucide-react';
-import { calculateMinutesDifference } from '../utils';
 
-interface PlatformDiagramProps {
+interface LiveMapProps {
   trucks: Truck[];
+  gpsLocations: GpsLocation[];
+  initialTruckId?: string | null;
+  onRefresh?: () => void | Promise<void>;
+  isRefreshing?: boolean;
 }
 
-type GroupFilter = 'M1' | 'L1' | 'L2' | 'R1' | 'R2';
+type GpsFreshness =
+  | 'LIVE'
+  | 'STALE'
+  | 'OFFLINE';
 
-type DockDefinition = {
-  id: string;
-  mappedPoint: string;
-};
+const DEFAULT_MAP_CENTER:
+  [number, number] = [
+    13.623729606202758,
+    101.01501162061923,
+  ];
 
-type RowGroup = {
-  groupName: string;
-  title: string;
-  docks: DockDefinition[];
-};
+const TPCAP_POSITION:
+  [number, number] = [
+    13.623729606202758,
+    101.01501162061923,
+  ];
 
-const START_HOUR = 6;
-const END_HOUR = 18;
-const TIMELINE_WIDTH = 2500;
-
-const HOURS = Array.from(
-  { length: END_HOUR - START_HOUR + 1 },
-  (_, index) => START_HOUR + index
-);
-
-const MINUTES = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60];
-const TOTAL_MINS = (END_HOUR - START_HOUR + 1) * 60;
-
-const GROUP_FILTER_OPTIONS: GroupFilter[] = ['M1', 'L1', 'L2', 'R1', 'R2'];
-
-const CATEGORIES = [
-  { label: 'INTERPLANT', color: 'bg-white text-slate-800' },
-  { label: 'MILK RUN', color: 'bg-white text-slate-800' },
-  { label: 'BODY PARTS', color: 'bg-slate-200 text-slate-800' },
-  { label: 'RETURN TRIP', color: 'bg-white text-slate-800' },
-  { label: 'MIX BANPHO', color: 'bg-white text-slate-800' },
-  { label: 'DIRECT', color: 'bg-white text-slate-800' },
-];
-
-const ROW_GROUPS: RowGroup[] = [
-  {
-    groupName: 'M1',
-    title: 'MOTOR OIL',
-    docks: [
-      { id: '1', mappedPoint: 'M1-1' },
-      { id: '2', mappedPoint: 'M1-2' },
-    ],
-  },
-  {
-    groupName: 'L1',
-    title: '(L1) LSP MON-FRI',
-    docks: [
-      { id: '1', mappedPoint: 'L1-1' },
-      { id: '2', mappedPoint: 'L1-2' },
-      { id: '3', mappedPoint: 'L1-3' },
-    ],
-  },
-  {
-    groupName: 'L2',
-    title: '(L2) LSP MON-FRI',
-    docks: [
-      { id: '4', mappedPoint: 'L2-4' },
-      { id: '5', mappedPoint: 'L2-5' },
-      { id: '6', mappedPoint: 'L2-6' },
-    ],
-  },
-  {
-    groupName: 'R2',
-    title: 'FREELOCATION2#Shutter 2',
-    docks: [{ id: '1', mappedPoint: 'R2-1' }],
-  },
-  {
-    groupName: 'R1',
-    title: 'FREELOCATION#1',
-    docks: [
-      { id: '1', mappedPoint: 'R1-1' },
-      { id: '2', mappedPoint: 'R1-2' },
-    ],
-  },
-];
-
-function normalizePoint(point?: string): string {
-  return String(point || '').replace(/\s+/g, '').toUpperCase();
+function normalizeLicensePlate(
+  value?: string
+): string {
+  return String(value || '')
+    .split('(')[0]
+    .replace(/[\s-]/g, '')
+    .trim()
+    .toUpperCase();
 }
 
-function parseTimeToMinutes(timeText?: string): number | null {
-  if (!timeText) return null;
+function parseGpsDateTime(
+  value?: string
+): Date | null {
+  if (!value) {
+    return null;
+  }
 
-  const match = String(timeText).trim().match(/^(\d{1,2}):(\d{2})/);
-  if (!match) return null;
+  const text =
+    String(value).trim();
 
-  const hour = Number(match[1]);
-  const minute = Number(match[2]);
+  if (!text) {
+    return null;
+  }
+
+  const isoText =
+    text.includes('T')
+      ? text
+      : text.replace(
+          ' ',
+          'T'
+        );
+
+  const hasTimeZone =
+    isoText.endsWith('Z') ||
+    /[+-]\d{2}:\d{2}$/.test(
+      isoText
+    );
+
+  const normalizedText =
+    hasTimeZone
+      ? isoText
+      : `${isoText}+07:00`;
+
+  const date =
+    new Date(
+      normalizedText
+    );
 
   if (
-    !Number.isInteger(hour) ||
-    !Number.isInteger(minute) ||
-    hour < 0 ||
-    hour > 23 ||
-    minute < 0 ||
-    minute > 59
+    Number.isNaN(
+      date.getTime()
+    )
   ) {
     return null;
   }
 
-  return (hour - START_HOUR) * 60 + minute;
+  return date;
 }
 
-function isOverdueAndNotDocked(truck: Truck): boolean {
-  if (truck.stampEta || truck.actualEta) return false;
+function getGpsFreshness(
+  location: GpsLocation
+): GpsFreshness {
+  const gpsDate =
+    parseGpsDateTime(
+      location.gpsTime
+    );
 
-  const dockedStatuses = [
-    'DOCK_IN',
-    'UNLOADING',
-    'UNLOADING_AT_TPCAP',
-    'COMPLETED',
-    'TRUCK_OUT',
-  ];
+  const receivedDate =
+    parseGpsDateTime(
+      location.receivedAt
+    );
 
-  if (dockedStatuses.includes(truck.status)) return false;
-  if (!truck.planDate || !truck.planEta) return false;
+  const referenceDate =
+    gpsDate ||
+    receivedDate;
 
-  const planDate = String(truck.planDate).trim().slice(0, 10);
-  const planTime = String(truck.planEta).trim().slice(0, 5);
-
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(planDate) || !/^\d{2}:\d{2}$/.test(planTime)) {
-    return false;
+  if (!referenceDate) {
+    return 'OFFLINE';
   }
 
-  const plannedEta = new Date(`${planDate}T${planTime}:00+07:00`);
-  if (Number.isNaN(plannedEta.getTime())) return false;
+  const ageMs =
+    Date.now() -
+    referenceDate.getTime();
 
-  return Date.now() > plannedEta.getTime();
-}
-
-function getTruckColor(truck: Truck): string {
-  if (isOverdueAndNotDocked(truck)) {
-    return 'bg-red-600 border-red-800 text-white animate-pulse shadow-lg shadow-red-500/50';
-  }
-
-  if (truck.status === 'COMPLETED' || truck.status === 'TRUCK_OUT') {
-    if (truck.performanceStatus === 'DELAY') {
-      return 'bg-red-500 border-red-700 text-white';
-    }
-    if (truck.performanceStatus === 'EARLY') {
-      return 'bg-blue-500 border-blue-700 text-white';
-    }
-    return 'bg-green-500 border-green-700 text-white';
+  if (
+    ageMs <= 120000
+  ) {
+    return 'LIVE';
   }
 
   if (
-    truck.status === 'DOCK_IN' ||
-    truck.status === 'UNLOADING' ||
-    truck.status === 'UNLOADING_AT_TPCAP'
+    ageMs <= 300000
   ) {
-    if (truck.performanceStatus === 'DELAY') {
-      return 'bg-orange-500 border-orange-700 text-white';
-    }
-    return 'bg-yellow-400 border-yellow-600 text-slate-900';
+    return 'STALE';
   }
 
-  if (truck.performanceStatus === 'DELAY') {
-    return 'bg-red-500 border-red-700 text-white animate-pulse';
-  }
-
-  return 'bg-slate-300 border-slate-500 text-slate-800';
+  return 'OFFLINE';
 }
 
-export function PlatformDiagram({ trucks }: PlatformDiagramProps) {
-  const [selectedTruck, setSelectedTruck] = useState<Truck | null>(null);
-  const [selectedGroups, setSelectedGroups] = useState<GroupFilter[]>([
-    ...GROUP_FILTER_OPTIONS,
-  ]);
-  const [isDiagramFullscreen, setIsDiagramFullscreen] = useState(false);
-  const diagramFullscreenRef = useRef<HTMLDivElement>(null);
+function getFreshnessClasses(
+  freshness: GpsFreshness
+): string {
+  if (
+    freshness === 'LIVE'
+  ) {
+    return [
+      'border-emerald-200',
+      'bg-emerald-50',
+      'text-emerald-700',
+    ].join(' ');
+  }
+
+  if (
+    freshness === 'STALE'
+  ) {
+    return [
+      'border-amber-200',
+      'bg-amber-50',
+      'text-amber-700',
+    ].join(' ');
+  }
+
+  return [
+    'border-slate-200',
+    'bg-slate-100',
+    'text-slate-600',
+  ].join(' ');
+}
+
+function formatGpsDateTime(
+  value?: string
+): string {
+  if (!value) {
+    return '-';
+  }
+
+  const date =
+    parseGpsDateTime(
+      value
+    );
+
+  if (!date) {
+    return value;
+  }
+
+  return date.toLocaleString(
+    'en-GB',
+    {
+      timeZone:
+        'Asia/Bangkok',
+
+      day:
+        '2-digit',
+
+      month:
+        '2-digit',
+
+      year:
+        'numeric',
+
+      hour:
+        '2-digit',
+
+      minute:
+        '2-digit',
+
+      second:
+        '2-digit',
+
+      hour12:
+        false,
+    }
+  );
+}
+
+function formatEta(
+  value?: string
+): string {
+  if (!value) {
+    return '-';
+  }
+
+  const date =
+    new Date(value);
+
+  if (
+    Number.isNaN(
+      date.getTime()
+    )
+  ) {
+    return value;
+  }
+
+  return date.toLocaleString(
+    'en-GB',
+    {
+      timeZone:
+        'Asia/Bangkok',
+
+      day:
+        '2-digit',
+
+      month:
+        '2-digit',
+
+      year:
+        'numeric',
+
+      hour:
+        '2-digit',
+
+      minute:
+        '2-digit',
+
+      hour12:
+        false,
+    }
+  );
+}
+
+function formatDuration(
+  totalMinutes?: number
+): string {
+  if (
+    totalMinutes === undefined ||
+    !Number.isFinite(
+      totalMinutes
+    )
+  ) {
+    return '-';
+  }
+
+  const roundedMinutes =
+    Math.max(
+      1,
+      Math.round(
+        totalMinutes
+      )
+    );
+
+  const hours =
+    Math.floor(
+      roundedMinutes /
+      60
+    );
+
+  const minutes =
+    roundedMinutes %
+    60;
+
+  if (
+    hours <= 0
+  ) {
+    return `${minutes} นาที`;
+  }
+
+  if (
+    minutes === 0
+  ) {
+    return `${hours} ชั่วโมง`;
+  }
+
+  return (
+    `${hours} ชั่วโมง ` +
+    `${minutes} นาที`
+  );
+}
+
+function createTruckMarkerIcon(
+  heading: number
+): L.DivIcon {
+  const safeHeading =
+    Number.isFinite(
+      heading
+    )
+      ? heading
+      : 0;
+
+  return L.divIcon({
+    className:
+      'elive-truck-marker',
+
+    html: `
+      <div
+        style="
+          width:52px;
+          height:52px;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          border-radius:50%;
+          background:#00a8ff;
+          border:4px solid white;
+          box-shadow:0 5px 16px rgba(2,132,199,0.5);
+          box-sizing:border-box;
+        "
+      >
+        <div
+          style="
+            width:0;
+            height:0;
+            border-left:8px solid transparent;
+            border-right:8px solid transparent;
+            border-bottom:20px solid white;
+            transform:rotate(${safeHeading}deg);
+            transform-origin:center;
+          "
+        ></div>
+      </div>
+    `,
+
+    iconSize:
+      [52, 52],
+
+    iconAnchor:
+      [26, 26],
+  });
+}
+
+function createTpcapMarkerIcon():
+  L.DivIcon {
+  return L.divIcon({
+    className:
+      'elive-tpcap-marker',
+
+    html: `
+      <div
+        style="
+          width:70px;
+          height:80px;
+          display:flex;
+          flex-direction:column;
+          align-items:center;
+        "
+      >
+        <div
+          style="
+            position:relative;
+            width:48px;
+            height:48px;
+          "
+        >
+          <div
+            style="
+              position:absolute;
+              left:4px;
+              top:4px;
+              width:40px;
+              height:40px;
+              border-radius:50% 50% 50% 0;
+              background:#ef4444;
+              border:4px solid white;
+              box-shadow:0 5px 16px rgba(185,28,28,0.45);
+              transform:rotate(-45deg);
+              box-sizing:border-box;
+            "
+          ></div>
+
+          <div
+            style="
+              position:absolute;
+              left:17px;
+              top:17px;
+              width:14px;
+              height:14px;
+              border-radius:50%;
+              background:white;
+            "
+          ></div>
+        </div>
+
+        <div
+          style="
+            margin-top:4px;
+            padding:4px 9px;
+            border-radius:6px;
+            background:white;
+            border:1px solid #fecaca;
+            color:#b91c1c;
+            font-size:11px;
+            font-weight:700;
+            white-space:nowrap;
+            box-shadow:0 2px 8px rgba(15,23,42,0.2);
+          "
+        >
+          TPCAP
+        </div>
+      </div>
+    `,
+
+    iconSize:
+      [70, 80],
+
+    iconAnchor:
+      [35, 44],
+  });
+}
+
+export function LiveMap({
+  trucks,
+  gpsLocations,
+  initialTruckId,
+  onRefresh,
+  isRefreshing = false,
+}: LiveMapProps) {
+  const mapContainerRef =
+    useRef<HTMLDivElement | null>(
+      null
+    );
+
+  const mapRef =
+    useRef<L.Map | null>(
+      null
+    );
+
+  const markerLayerRef =
+    useRef<L.LayerGroup | null>(
+      null
+    );
+
+  const routeLayerRef =
+    useRef<L.LayerGroup | null>(
+      null
+    );
+
+  const routeRequestIdRef =
+    useRef(0);
+
+  const appliedInitialTruckIdRef =
+    useRef<string | null>(
+      null
+    );
+
+  const [
+    selectedGpsId,
+    setSelectedGpsId,
+  ] = useState('');
+
+  const [
+    searchText,
+    setSearchText,
+  ] = useState('');
+
+  const [
+    routeError,
+    setRouteError,
+  ] = useState<string | null>(
+    null
+  );
+
+  const [
+    routeResult,
+    setRouteResult,
+  ] = useState<RouteToTpcapResult | null>(
+    null
+  );
+
+  const [
+    isRouteLoading,
+    setIsRouteLoading,
+  ] = useState(false);
+
+  const truckByPlate =
+    useMemo(() => {
+      const map =
+        new Map<
+          string,
+          Truck
+        >();
+
+      for (
+        const truck of trucks
+      ) {
+        const normalizedPlate =
+          normalizeLicensePlate(
+            truck.licensePlate
+          );
+
+        if (
+          normalizedPlate
+        ) {
+          map.set(
+            normalizedPlate,
+            truck
+          );
+        }
+      }
+
+      return map;
+    }, [
+      trucks,
+    ]);
+
+  const matchedGpsLocations =
+    useMemo(() => {
+      return gpsLocations.filter(
+        location => {
+          const normalizedPlate =
+            normalizeLicensePlate(
+              location.licensePlate
+            );
+
+          return (
+            normalizedPlate !== '' &&
+            truckByPlate.has(
+              normalizedPlate
+            )
+          );
+        }
+      );
+    }, [
+      gpsLocations,
+      truckByPlate,
+    ]);
+
+  const selectableGpsLocations =
+    useMemo(() => {
+      const normalizedSearch =
+        searchText
+          .trim()
+          .toUpperCase();
+
+      return matchedGpsLocations
+        .filter(
+          location => {
+            if (
+              !normalizedSearch
+            ) {
+              return true;
+            }
+
+            const normalizedPlate =
+              normalizeLicensePlate(
+                location.licensePlate
+              );
+
+            const truck =
+              truckByPlate.get(
+                normalizedPlate
+              );
+
+            const searchableText = [
+              location.licensePlate,
+              location.gpsId,
+              location.locationName,
+              truck?.licensePlate,
+              truck?.route,
+              truck?.supplierName,
+              truck?.driverName,
+            ]
+              .filter(
+                Boolean
+              )
+              .join(' ')
+              .toUpperCase();
+
+            return searchableText.includes(
+              normalizedSearch
+            );
+          }
+        )
+        .sort(
+          (
+            first,
+            second
+          ) => {
+            const firstLabel =
+              first.licensePlate ||
+              first.gpsId;
+
+            const secondLabel =
+              second.licensePlate ||
+              second.gpsId;
+
+            return firstLabel.localeCompare(
+              secondLabel,
+              'th'
+            );
+          }
+        );
+    }, [
+      matchedGpsLocations,
+      searchText,
+      truckByPlate,
+    ]);
+
+  const selectedGpsLocation =
+    useMemo(() => {
+      if (
+        !selectedGpsId
+      ) {
+        return null;
+      }
+
+      return (
+        gpsLocations.find(
+          location =>
+            location.gpsId ===
+            selectedGpsId
+        ) ||
+        null
+      );
+    }, [
+      gpsLocations,
+      selectedGpsId,
+    ]);
+
+  const selectedTruck =
+    useMemo(() => {
+      if (
+        !selectedGpsLocation
+      ) {
+        return undefined;
+      }
+
+      const normalizedPlate =
+        normalizeLicensePlate(
+          selectedGpsLocation
+            .licensePlate
+        );
+
+      return truckByPlate.get(
+        normalizedPlate
+      );
+    }, [
+      selectedGpsLocation,
+      truckByPlate,
+    ]);
+
+  const selectedFreshness =
+    useMemo(() => {
+      if (
+        !selectedGpsLocation
+      ) {
+        return null;
+      }
+
+      return getGpsFreshness(
+        selectedGpsLocation
+      );
+    }, [
+      selectedGpsLocation,
+    ]);
+
+  const freshnessStats =
+    useMemo(() => {
+      let live =
+        0;
+
+      let stale =
+        0;
+
+      let offline =
+        0;
+
+      for (
+        const location of matchedGpsLocations
+      ) {
+        const freshness =
+          getGpsFreshness(
+            location
+          );
+
+        if (
+          freshness ===
+          'LIVE'
+        ) {
+          live +=
+            1;
+        } else if (
+          freshness ===
+          'STALE'
+        ) {
+          stale +=
+            1;
+        } else {
+          offline +=
+            1;
+        }
+      }
+
+      return {
+        live,
+        stale,
+        offline,
+      };
+    }, [
+      matchedGpsLocations,
+    ]);
 
   useEffect(() => {
-    const handleFullscreenChange = () => {
-      setIsDiagramFullscreen(
-        document.fullscreenElement === diagramFullscreenRef.current
-      );
-    };
+    if (
+      !mapContainerRef.current ||
+      mapRef.current
+    ) {
+      return;
+    }
 
-    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    const map =
+      L.map(
+        mapContainerRef.current,
+        {
+          center:
+            DEFAULT_MAP_CENTER,
+
+          zoom:
+            10,
+
+          zoomControl:
+            true,
+
+          attributionControl:
+            true,
+        }
+      );
+
+    L.tileLayer(
+      'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+      {
+        maxZoom:
+          19,
+
+        attribution:
+          '© OpenStreetMap contributors',
+      }
+    ).addTo(
+      map
+    );
+
+    const markerLayer =
+      L.layerGroup()
+        .addTo(
+          map
+        );
+
+    const routeLayer =
+      L.layerGroup()
+        .addTo(
+          map
+        );
+
+    mapRef.current =
+      map;
+
+    markerLayerRef.current =
+      markerLayer;
+
+    routeLayerRef.current =
+      routeLayer;
+
+    window.setTimeout(
+      () => {
+        map.invalidateSize();
+      },
+      150
+    );
+
     return () => {
-      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      markerLayer
+        .clearLayers();
+
+      routeLayer
+        .clearLayers();
+
+      map.remove();
+
+      markerLayerRef.current =
+        null;
+
+      routeLayerRef.current =
+        null;
+
+      mapRef.current =
+        null;
     };
   }, []);
 
-  const toggleDiagramFullscreen = async () => {
-    const diagramElement = diagramFullscreenRef.current;
-    if (!diagramElement) return;
+  useEffect(() => {
+    if (
+      initialTruckId !==
+      appliedInitialTruckIdRef.current
+    ) {
+      appliedInitialTruckIdRef.current =
+        null;
+    }
+  }, [
+    initialTruckId,
+  ]);
 
-    try {
-      if (document.fullscreenElement === diagramElement) {
-        await document.exitFullscreen();
+  useEffect(() => {
+    if (
+      !initialTruckId ||
+      gpsLocations.length ===
+        0
+    ) {
+      return;
+    }
+
+    if (
+      appliedInitialTruckIdRef.current ===
+      initialTruckId
+    ) {
+      return;
+    }
+
+    const initialTruck =
+      trucks.find(
+        truck =>
+          truck.id ===
+          initialTruckId
+      );
+
+    if (
+      !initialTruck
+    ) {
+      return;
+    }
+
+    const normalizedPlate =
+      normalizeLicensePlate(
+        initialTruck.licensePlate
+      );
+
+    const initialGpsLocation =
+      gpsLocations.find(
+        location =>
+          normalizeLicensePlate(
+            location.licensePlate
+          ) ===
+          normalizedPlate
+      );
+
+    if (
+      !initialGpsLocation
+    ) {
+      return;
+    }
+
+    setSelectedGpsId(
+      initialGpsLocation.gpsId
+    );
+
+    setSearchText(
+      initialTruck.licensePlate
+    );
+
+    appliedInitialTruckIdRef.current =
+      initialTruckId;
+  }, [
+    gpsLocations,
+    initialTruckId,
+    trucks,
+  ]);
+
+  useEffect(() => {
+    if (
+      !selectedGpsId
+    ) {
+      return;
+    }
+
+    const selectedStillExists =
+      gpsLocations.some(
+        location =>
+          location.gpsId ===
+          selectedGpsId
+      );
+
+    if (
+      !selectedStillExists
+    ) {
+      setSelectedGpsId(
+        ''
+      );
+
+      setRouteResult(
+        null
+      );
+
+      setRouteError(
+        null
+      );
+    }
+  }, [
+    gpsLocations,
+    selectedGpsId,
+  ]);
+
+  useEffect(() => {
+    if (
+      !selectedGpsLocation
+    ) {
+      routeRequestIdRef.current +=
+        1;
+
+      setRouteResult(
+        null
+      );
+
+      setRouteError(
+        null
+      );
+
+      setIsRouteLoading(
+        false
+      );
+
+      return;
+    }
+
+    const requestId =
+      routeRequestIdRef.current +
+      1;
+
+    routeRequestIdRef.current =
+      requestId;
+
+    const loadRoute =
+      async () => {
+        setIsRouteLoading(
+          true
+        );
+
+        setRouteError(
+          null
+        );
+
+        try {
+          const result =
+            await fetchRouteToTpcap(
+              selectedGpsLocation
+                .latitude,
+
+              selectedGpsLocation
+                .longitude
+            );
+
+          if (
+            routeRequestIdRef.current !==
+            requestId
+          ) {
+            return;
+          }
+
+          setRouteResult(
+            result
+          );
+        } catch (error) {
+          if (
+            routeRequestIdRef.current !==
+            requestId
+          ) {
+            return;
+          }
+
+          console.error(
+            'Unable to calculate route:',
+            error
+          );
+
+          const message =
+            error instanceof Error
+              ? error.message
+              : 'ไม่สามารถคำนวณเส้นทางได้';
+
+          setRouteResult(
+            null
+          );
+
+          setRouteError(
+            message
+          );
+        } finally {
+          if (
+            routeRequestIdRef.current ===
+            requestId
+          ) {
+            setIsRouteLoading(
+              false
+            );
+          }
+        }
+      };
+
+    loadRoute();
+  }, [
+    selectedGpsLocation,
+  ]);
+
+  useEffect(() => {
+    const map =
+      mapRef.current;
+
+    const markerLayer =
+      markerLayerRef.current;
+
+    const routeLayer =
+      routeLayerRef.current;
+
+    if (
+      !map ||
+      !markerLayer ||
+      !routeLayer
+    ) {
+      return;
+    }
+
+    markerLayer
+      .clearLayers();
+
+    routeLayer
+      .clearLayers();
+
+    if (
+      !selectedGpsLocation
+    ) {
+      return;
+    }
+
+    const truckPosition:
+      [number, number] = [
+        selectedGpsLocation
+          .latitude,
+
+        selectedGpsLocation
+          .longitude,
+      ];
+
+    const truckMarker =
+      L.marker(
+        truckPosition,
+        {
+          icon:
+            createTruckMarkerIcon(
+              selectedGpsLocation
+                .heading
+            ),
+
+          title:
+            selectedTruck
+              ?.licensePlate ||
+            selectedGpsLocation
+              .licensePlate ||
+            selectedGpsLocation
+              .gpsId,
+
+          zIndexOffset:
+            1000,
+        }
+      );
+
+    truckMarker.addTo(
+      markerLayer
+    );
+
+    const tpcapMarker =
+      L.marker(
+        TPCAP_POSITION,
+        {
+          icon:
+            createTpcapMarkerIcon(),
+
+          title:
+            'TPCAP',
+
+          zIndexOffset:
+            900,
+        }
+      );
+
+    tpcapMarker.addTo(
+      markerLayer
+    );
+
+    if (
+      routeResult &&
+      routeResult
+        .geometry
+        .coordinates
+        .length >= 2
+    ) {
+      const routePoints:
+        [number, number][] =
+          routeResult
+            .geometry
+            .coordinates
+            .map(
+              coordinate => {
+                return [
+                  coordinate[1],
+                  coordinate[0],
+                ];
+              }
+            );
+
+      const routeLine =
+        L.polyline(
+          routePoints,
+          {
+            color:
+              '#0284c7',
+
+            weight:
+              6,
+
+            opacity:
+              0.9,
+
+            lineCap:
+              'round',
+
+            lineJoin:
+              'round',
+          }
+        );
+
+      routeLine.addTo(
+        routeLayer
+      );
+
+      const bounds =
+        L.latLngBounds(
+          routePoints
+        );
+
+      bounds.extend(
+        truckPosition
+      );
+
+      bounds.extend(
+        TPCAP_POSITION
+      );
+
+      map.fitBounds(
+        bounds,
+        {
+          padding:
+            [50, 50],
+
+          maxZoom:
+            15,
+
+          animate:
+            true,
+        }
+      );
+    } else {
+      const bounds =
+        L.latLngBounds([
+          truckPosition,
+          TPCAP_POSITION,
+        ]);
+
+      map.fitBounds(
+        bounds,
+        {
+          padding:
+            [50, 50],
+
+          maxZoom:
+            15,
+
+          animate:
+            true,
+        }
+      );
+    }
+  }, [
+    selectedGpsLocation,
+    selectedTruck,
+    routeResult,
+  ]);
+
+  const handleRefresh =
+    async () => {
+      if (
+        !onRefresh ||
+        isRefreshing
+      ) {
         return;
       }
 
-      if (document.fullscreenElement) {
-        await document.exitFullscreen();
-      }
-
-      await diagramElement.requestFullscreen();
-    } catch (error) {
-      console.error('Unable to change Platform Diagram fullscreen mode:', error);
-    }
-  };
-
-  const mappedDocks = useMemo(() => {
-    const result = new Set<string>();
-    ROW_GROUPS.forEach(group => {
-      group.docks.forEach(dock => {
-        result.add(normalizePoint(dock.mappedPoint));
-      });
-    });
-    return result;
-  }, []);
-
-  const dynamicGroups = useMemo<RowGroup[]>(() => {
-    const groups = ROW_GROUPS.map(group => ({
-      ...group,
-      docks: group.docks.map(dock => ({ ...dock })),
-    }));
-
-    const unmappedPoints = [
-      ...new Set(
-        trucks
-          .map(truck => truck.dropPoint?.trim() || 'UNASSIGNED')
-          .filter(dropPoint => !mappedDocks.has(normalizePoint(dropPoint)))
-      ),
-    ];
-
-    if (unmappedPoints.length > 0) {
-      groups.push({
-        groupName: 'ETC',
-        title: 'UNMAPPED DOCKS',
-        docks: unmappedPoints.map(dropPoint => ({
-          id: '?',
-          mappedPoint: dropPoint,
-        })),
-      });
-    }
-
-    return groups;
-  }, [trucks, mappedDocks]);
-
-  const filteredGroups = useMemo(() => {
-    return dynamicGroups.filter(
-      group =>
-        group.groupName === 'ETC' ||
-        selectedGroups.includes(group.groupName as GroupFilter)
-    );
-  }, [dynamicGroups, selectedGroups]);
-
-  const stats = useMemo(() => {
-    const completeStatuses = ['COMPLETED', 'TRUCK_OUT'];
-
-    return {
-      total: trucks.length,
-      unloading: trucks.filter(
-        truck =>
-          truck.status === 'UNLOADING' ||
-          truck.status === 'DOCK_IN' ||
-          truck.status === 'UNLOADING_AT_TPCAP'
-      ).length,
-      complete: trucks.filter(truck => completeStatuses.includes(truck.status)).length,
-      remain: trucks.filter(truck => !completeStatuses.includes(truck.status)).length,
+      await onRefresh();
     };
-  }, [trucks]);
 
-  const allGroupsSelected = GROUP_FILTER_OPTIONS.every(groupName =>
-    selectedGroups.includes(groupName)
-  );
+  const clearSelection =
+    () => {
+      routeRequestIdRef.current +=
+        1;
 
-  const selectAllGroups = () => setSelectedGroups([...GROUP_FILTER_OPTIONS]);
-  const clearAllGroups = () => setSelectedGroups([]);
+      appliedInitialTruckIdRef.current =
+        null;
 
-  const toggleGroupFilter = (groupName: GroupFilter) => {
-    setSelectedGroups(current =>
-      current.includes(groupName)
-        ? current.filter(selectedGroup => selectedGroup !== groupName)
-        : [...current, groupName]
-    );
-  };
+      setSelectedGpsId(
+        ''
+      );
+
+      setSearchText(
+        ''
+      );
+
+      setRouteResult(
+        null
+      );
+
+      setRouteError(
+        null
+      );
+
+      const map =
+        mapRef.current;
+
+      if (map) {
+        map.setView(
+          DEFAULT_MAP_CENTER,
+          10,
+          {
+            animate:
+              true,
+          }
+        );
+      }
+    };
+
+  const showNoGpsMessage =
+    gpsLocations.length ===
+      0 &&
+    !selectedGpsLocation;
+
+  const showNoMatchMessage =
+    gpsLocations.length >
+      0 &&
+    matchedGpsLocations.length ===
+      0 &&
+    !selectedGpsLocation;
+
+  const showSelectTruckMessage =
+    matchedGpsLocations.length >
+      0 &&
+    !selectedGpsLocation;
 
   return (
-    <div className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-slate-100 text-xs">
-      <div className="w-full shrink-0 border-b border-slate-200 bg-white px-2 py-2">
-        <div className="grid w-full grid-cols-2 gap-2 md:grid-cols-4">
-          <div className="flex h-12 min-w-0 flex-col justify-center rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5">
-            <p className="flex items-center gap-1 whitespace-nowrap text-[9px] font-bold uppercase text-slate-500">
-              <TruckIcon className="h-3.5 w-3.5 shrink-0" />
-              Total
+    <div className="flex h-full min-h-0 flex-col bg-slate-50 p-4 md:p-6 lg:p-8">
+      <div className="shrink-0 rounded-t-xl border border-b-0 border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-center">
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="font-bold tracking-tight text-slate-800">
+                Live GPS Tracking
+              </h2>
+
+              <div className="h-2 w-2 animate-pulse rounded-full bg-emerald-500" />
+            </div>
+
+            <p className="mt-1 text-xs text-slate-500">
+              GPS data prepared from the selected plan
             </p>
-            <h3 className="mt-0.5 text-lg font-bold leading-none text-slate-800">
-              {stats.total}
-            </h3>
           </div>
 
-          <div className="flex h-12 min-w-0 flex-col justify-center rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5">
-            <p className="flex items-center gap-1 whitespace-nowrap text-[9px] font-bold uppercase text-slate-500">
-              <Package className="h-3.5 w-3.5 shrink-0 text-yellow-500" />
-              Unloading
-            </p>
-            <h3 className="mt-0.5 text-lg font-bold leading-none text-slate-800">
-              {stats.unloading}
-            </h3>
-          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700">
+              <Wifi className="h-3.5 w-3.5" />
+              Live {freshnessStats.live}
+            </div>
 
-          <div className="flex h-12 min-w-0 flex-col justify-center rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5">
-            <p className="flex items-center gap-1 whitespace-nowrap text-[9px] font-bold uppercase text-slate-500">
-              <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-green-500" />
-              Complete
-            </p>
-            <h3 className="mt-0.5 text-lg font-bold leading-none text-slate-800">
-              {stats.complete}
-            </h3>
-          </div>
+            <div className="flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700">
+              <Clock className="h-3.5 w-3.5" />
+              Stale {freshnessStats.stale}
+            </div>
 
-          <div className="flex h-12 min-w-0 flex-col justify-center rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5">
-            <p className="flex items-center gap-1 whitespace-nowrap text-[9px] font-bold uppercase text-slate-500">
-              <Clock className="h-3.5 w-3.5 shrink-0 text-blue-500" />
-              Remain
-            </p>
-            <h3 className="mt-0.5 text-lg font-bold leading-none text-slate-800">
-              {stats.remain}
-            </h3>
+            <div className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-xs font-bold text-slate-600">
+              <WifiOff className="h-3.5 w-3.5" />
+              Offline {freshnessStats.offline}
+            </div>
+
+            <button
+              type="button"
+              onClick={
+                handleRefresh
+              }
+              disabled={
+                isRefreshing ||
+                !onRefresh
+              }
+              className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <RefreshCw
+                className={`h-3.5 w-3.5 ${
+                  isRefreshing
+                    ? 'animate-spin'
+                    : ''
+                }`}
+              />
+
+              Refresh
+            </button>
           </div>
         </div>
-      </div>
 
-      <div className="flex w-full shrink-0 flex-wrap items-center gap-1.5 border-b border-slate-200 bg-white px-2 py-1.5">
-        <span className="mr-1 whitespace-nowrap text-[9px] font-bold uppercase text-slate-500">
-          Show Dock:
-        </span>
+        <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-center">
+          <div className="relative flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
 
-        <button
-          type="button"
-          onClick={allGroupsSelected ? clearAllGroups : selectAllGroups}
-          className={`rounded-md border px-3 py-1 text-[9px] font-bold transition-colors ${
-            allGroupsSelected
-              ? 'border-slate-800 bg-slate-800 text-white'
-              : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-100'
-          }`}
-        >
-          ALL
-        </button>
+            <input
+              type="text"
+              value={
+                searchText
+              }
+              onChange={
+                event => {
+                  setSearchText(
+                    event.target.value
+                  );
+                }
+              }
+              placeholder="ค้นหาทะเบียน Route บริษัท หรือชื่อคนขับ"
+              className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+            />
+          </div>
 
-        {GROUP_FILTER_OPTIONS.map(groupName => {
-          const isSelected = selectedGroups.includes(groupName);
-          return (
-            <button
-              key={groupName}
-              type="button"
-              onClick={() => toggleGroupFilter(groupName)}
-              className={`rounded-md border px-3 py-1 text-[9px] font-bold transition-colors ${
-                isSelected
-                  ? 'border-blue-700 bg-blue-600 text-white shadow-sm'
-                  : 'border-slate-300 bg-white text-slate-500 hover:bg-slate-100'
-              }`}
-            >
-              {groupName}
-            </button>
-          );
-        })}
+          <select
+            value={
+              selectedGpsId
+            }
+            onChange={
+              event => {
+                setSelectedGpsId(
+                  event.target.value
+                );
 
-        <div className="ml-auto flex items-center gap-2">
-          <span className="whitespace-nowrap text-[9px] font-medium text-slate-500">
-            แสดง {selectedGroups.length} จาก {GROUP_FILTER_OPTIONS.length} กลุ่ม
-          </span>
+                appliedInitialTruckIdRef.current =
+                  null;
+              }
+            }
+            className="min-w-[300px] rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+          >
+            <option value="">
+              เลือกรถที่ต้องการติดตาม
+            </option>
+
+            {selectableGpsLocations.map(
+              location => {
+                const normalizedPlate =
+                  normalizeLicensePlate(
+                    location
+                      .licensePlate
+                  );
+
+                const truck =
+                  truckByPlate.get(
+                    normalizedPlate
+                  );
+
+                const plate =
+                  truck
+                    ?.licensePlate ||
+                  location
+                    .licensePlate ||
+                  location
+                    .gpsId;
+
+                const route =
+                  truck?.route
+                    ? ` | ${truck.route}`
+                    : '';
+
+                return (
+                  <option
+                    key={
+                      location.gpsId
+                    }
+                    value={
+                      location.gpsId
+                    }
+                  >
+                    {plate}
+                    {route}
+                  </option>
+                );
+              }
+            )}
+          </select>
 
           <button
             type="button"
-            onClick={() => void toggleDiagramFullscreen()}
-            title="แสดงเฉพาะ Platform Diagram เต็มหน้าจอ"
-            className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[9px] font-bold text-slate-700 shadow-sm transition-colors hover:border-blue-400 hover:bg-blue-50 hover:text-blue-700"
+            onClick={
+              clearSelection
+            }
+            disabled={
+              !selectedGpsId &&
+              !searchText
+            }
+            className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <Expand className="h-3.5 w-3.5" />
-            FULL SCREEN
+            <X className="h-3.5 w-3.5" />
+            ล้างการเลือก
           </button>
         </div>
       </div>
 
-      <div
-        ref={diagramFullscreenRef}
-        className={`relative min-h-0 min-w-0 overflow-hidden bg-slate-50 ${
-          isDiagramFullscreen ? 'flex h-screen w-screen flex-col' : 'flex flex-1 flex-col'
-        }`}
-      >
-        <div
-          className="relative min-h-0 min-w-0 flex-1 overflow-x-scroll overflow-y-auto bg-slate-50"
-          style={{
-            width: '100%',
-            maxWidth: '100%',
-            scrollbarGutter: 'stable',
-          }}
-        >
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-b-xl border border-slate-200 bg-white shadow-sm lg:flex-row">
+        <div className="relative min-h-[460px] flex-1 overflow-hidden bg-slate-100">
           <div
-            className="flex shrink-0 flex-col bg-slate-50"
-            style={{
-              width: `${TIMELINE_WIDTH}px`,
-              minWidth: `${TIMELINE_WIDTH}px`,
-              maxWidth: 'none',
-              flex: `0 0 ${TIMELINE_WIDTH}px`,
-            }}
-          >
-            <div className="sticky top-0 z-50 flex h-8 w-full shrink-0 items-center gap-2 border-b border-slate-900 bg-slate-800 px-2">
-              <div className="sticky left-2 z-[60] mr-auto flex items-center gap-2 whitespace-nowrap">
-                <span className="text-[11px] font-bold text-white">
-                  PLATFORM DIAGRAM
-                </span>
+            ref={
+              mapContainerRef
+            }
+            className="h-full min-h-[460px] w-full"
+          />
 
-                {isDiagramFullscreen && (
-                  <button
-                    type="button"
-                    onClick={() => void toggleDiagramFullscreen()}
-                    title="ออกจากโหมดเต็มหน้าจอ"
-                    className="inline-flex items-center gap-1 rounded border border-white/30 bg-white/10 px-2 py-0.5 text-[8px] font-bold text-white transition-colors hover:bg-white/20"
+          {showNoGpsMessage && (
+            <div className="pointer-events-none absolute inset-0 z-[500] flex items-center justify-center bg-white/60 backdrop-blur-sm">
+              <div className="max-w-sm rounded-xl border border-slate-200 bg-white p-6 text-center shadow-lg">
+                <MapPin className="mx-auto h-8 w-8 text-slate-400" />
+
+                <div className="mt-3 font-bold text-slate-700">
+                  ไม่พบข้อมูล GPS ของรถในแผน
+                </div>
+
+                <div className="mt-1 text-sm text-slate-500">
+                  ตรวจสอบทะเบียนรถใน Plan และข้อมูล API GPS
+                </div>
+              </div>
+            </div>
+          )}
+
+          {showNoMatchMessage && (
+            <div className="pointer-events-none absolute inset-0 z-[500] flex items-center justify-center">
+              <div className="max-w-sm rounded-xl border border-amber-200 bg-white p-6 text-center shadow-lg">
+                <AlertTriangle className="mx-auto h-8 w-8 text-amber-500" />
+
+                <div className="mt-3 font-bold text-slate-700">
+                  ไม่พบท้ายทะเบียนที่ตรงกับ GPS
+                </div>
+
+                <div className="mt-1 text-sm text-slate-500">
+                  ตรวจสอบรูปแบบทะเบียนรถใน Plan และ API GPS
+                </div>
+              </div>
+            </div>
+          )}
+
+          {showSelectTruckMessage && (
+            <div className="pointer-events-none absolute inset-0 z-[500] flex items-center justify-center">
+              <div className="rounded-xl border border-slate-200 bg-white p-6 text-center shadow-lg">
+                <MapPin className="mx-auto h-8 w-8 text-blue-500" />
+
+                <div className="mt-3 font-bold text-slate-700">
+                  เลือกรถที่ต้องการติดตาม
+                </div>
+
+                <div className="mt-1 text-sm text-slate-500">
+                  เลือกทะเบียนจากรายการด้านบน
+                </div>
+
+                <div className="mt-2 text-xs text-slate-400">
+                  พบรถที่จับคู่ GPS ได้{' '}
+                  {
+                    matchedGpsLocations.length
+                  }{' '}
+                  คัน
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <aside className="w-full shrink-0 overflow-y-auto border-t border-slate-200 bg-white lg:w-[360px] lg:border-l lg:border-t-0">
+          {!selectedGpsLocation && (
+            <div className="flex h-full min-h-[260px] flex-col items-center justify-center p-8 text-center">
+              <TruckIcon className="h-10 w-10 text-slate-300" />
+
+              <div className="mt-3 font-bold text-slate-700">
+                ยังไม่ได้เลือกรถ
+              </div>
+
+              <div className="mt-1 text-sm text-slate-500">
+                รายละเอียดรถและเส้นทางจะแสดงบริเวณนี้
+              </div>
+            </div>
+          )}
+
+          {selectedGpsLocation && (
+            <div className="p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                    Selected Truck
+                  </div>
+
+                  <div className="mt-1 text-xl font-bold text-slate-900">
+                    {selectedTruck
+                      ?.licensePlate ||
+                      selectedGpsLocation
+                        .licensePlate ||
+                      '-'}
+                  </div>
+
+                  <div className="mt-1 text-xs text-slate-500">
+                    GPS ID:{' '}
+                    {
+                      selectedGpsLocation
+                        .gpsId
+                    }
+                  </div>
+                </div>
+
+                {selectedFreshness && (
+                  <div
+                    className={`rounded-full border px-3 py-1 text-[10px] font-bold ${getFreshnessClasses(
+                      selectedFreshness
+                    )}`}
                   >
-                    <Minimize2 className="h-3 w-3" />
-                    EXIT FULL SCREEN
-                  </button>
+                    {selectedFreshness}
+                  </div>
                 )}
               </div>
 
-              <div className="ml-auto flex items-center gap-2">
-                {CATEGORIES.map(category => (
-                  <div
-                    key={category.label}
-                    className={`min-w-[92px] whitespace-nowrap border border-black px-2 py-0.5 text-center text-[8px] font-bold ${category.color}`}
-                  >
-                    {category.label}
+              <div className="mt-5 grid grid-cols-2 gap-3">
+                <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
+                  <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase text-blue-600">
+                    <Route className="h-3.5 w-3.5" />
+                    Distance
                   </div>
-                ))}
+
+                  <div className="mt-2 text-xl font-bold text-blue-800">
+                    {routeResult
+                      ? `${routeResult.distanceKilometers.toFixed(
+                          1
+                        )} km`
+                      : '-'}
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-3">
+                  <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase text-indigo-600">
+                    <Clock className="h-3.5 w-3.5" />
+                    Travel Time
+                  </div>
+
+                  <div className="mt-2 text-base font-bold text-indigo-800">
+                    {routeResult
+                      ? formatDuration(
+                          routeResult
+                            .durationMinutes
+                        )
+                      : '-'}
+                  </div>
+                </div>
               </div>
-            </div>
 
-            {filteredGroups.length === 0 && (
-              <div className="flex h-40 w-full items-center justify-center border-b border-slate-300 bg-white text-sm font-semibold text-slate-500">
-                กรุณาเลือกช่องที่ต้องการแสดงอย่างน้อย 1 กลุ่ม
+              <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+                <div className="flex items-center gap-2 text-xs font-bold uppercase text-emerald-700">
+                  <Navigation className="h-4 w-4" />
+                  Estimated arrival at TPCAP
+                </div>
+
+                <div className="mt-2 text-lg font-bold text-emerald-900">
+                  {routeResult
+                    ? formatEta(
+                        routeResult
+                          .estimatedArrival
+                      )
+                    : '-'}
+                </div>
+
+                <div className="mt-1 text-xs text-emerald-700">
+                  คำนวณจากเส้นทางถนนไปยัง TPCAP
+                </div>
               </div>
-            )}
 
-            {filteredGroups.map(group => {
-              const groupMappedPoints = new Set(
-                group.docks.map(dock => normalizePoint(dock.mappedPoint))
-              );
-              const groupTrips = trucks.filter(truck =>
-                groupMappedPoints.has(normalizePoint(truck.dropPoint))
-              ).length;
+              {isRouteLoading && (
+                <div className="mt-3 flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-3 text-sm text-blue-700">
+                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                  กำลังคำนวณเส้นทาง
+                </div>
+              )}
 
-              return (
-                <div
-                  key={group.groupName}
-                  className="flex flex-col border-b-2 border-slate-900"
-                >
-                  {group.title && (
-                    <div className="sticky left-0 z-30 flex w-full border-b border-slate-800 bg-slate-600">
-                      <div className="sticky left-0 z-40 flex h-4 w-20 shrink-0 items-center whitespace-nowrap border-r border-slate-800 bg-slate-600 px-1 text-[7px] font-bold tracking-wide text-white">
-                        {group.title}
+              {routeError && (
+                <div className="mt-3 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-3 text-sm text-red-700">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+
+                  <span>
+                    {routeError}
+                  </span>
+                </div>
+              )}
+
+              <div className="mt-5 border-t border-slate-200 pt-5">
+                <div className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                  Truck Information
+                </div>
+
+                <div className="mt-3 space-y-3 text-sm">
+                  <div className="flex items-start gap-3">
+                    <Route className="mt-0.5 h-4 w-4 shrink-0 text-blue-500" />
+
+                    <div>
+                      <div className="text-xs text-slate-400">
+                        Route
                       </div>
-                      <div className="flex h-4 flex-1 items-center justify-center text-[7px] font-bold text-white">
-                        {groupTrips} TRIPS
+
+                      <div className="font-medium text-slate-800">
+                        {selectedTruck
+                          ?.route ||
+                          '-'}
                       </div>
                     </div>
-                  )}
+                  </div>
 
-                  <div className="flex">
-                    <div className="sticky left-0 z-20 flex w-8 shrink-0 items-center justify-center border-r border-slate-800 bg-slate-700 text-sm font-bold text-white shadow-[2px_0_5px_rgba(0,0,0,0.1)]">
-                      {group.groupName}
+                  <div className="flex items-start gap-3">
+                    <Building2 className="mt-0.5 h-4 w-4 shrink-0 text-violet-500" />
+
+                    <div>
+                      <div className="text-xs text-slate-400">
+                        Supplier
+                      </div>
+
+                      <div className="font-medium text-slate-800">
+                        {selectedTruck
+                          ?.supplierName ||
+                          '-'}
+                      </div>
                     </div>
+                  </div>
 
-                    <div className="flex flex-1 flex-col">
-                      {group.docks.map((dock, dockIndex) => {
-                        const dockTrucks = trucks.filter(
-                          truck =>
-                            normalizePoint(truck.dropPoint || 'UNASSIGNED') ===
-                            normalizePoint(dock.mappedPoint)
-                        );
+                  <div className="flex items-start gap-3">
+                    <UserRound className="mt-0.5 h-4 w-4 shrink-0 text-slate-500" />
 
-                        return (
-                          <div
-                            key={`${group.groupName}-${dock.id}-${dockIndex}`}
-                            className="flex flex-col border-b-2 border-slate-900 bg-white last:border-b-0"
-                          >
-                            <div className="flex h-[18px] border-b border-slate-300 bg-slate-100">
-                              <div className="sticky left-8 z-20 flex w-12 shrink-0 flex-col items-center justify-center border-r border-slate-300 bg-slate-50 text-[6px] font-bold leading-[6px] text-slate-600 shadow-[2px_0_5px_rgba(0,0,0,0.05)]">
-                                <span>TIME</span>
-                                <span>(min)</span>
-                              </div>
+                    <div>
+                      <div className="text-xs text-slate-400">
+                        Driver
+                      </div>
 
-                              <div className="flex flex-1">
-                                {HOURS.map(hour => (
-                                  <div
-                                    key={hour}
-                                    className="flex flex-1 flex-col border-r border-slate-400"
-                                  >
-                                    <div className="border-b border-slate-300 bg-slate-200 text-center text-[8px] font-bold leading-[10px]">
-                                      {String(hour).padStart(2, '0')}:00
-                                    </div>
-                                    <div className="flex h-2.5 text-[6px] font-medium leading-[10px] text-slate-600">
-                                      {MINUTES.map(minute => (
-                                        <div
-                                          key={minute}
-                                          className="flex-1 border-r border-slate-300 text-center last:border-r-0"
-                                        >
-                                          {minute}
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
+                      <div className="font-medium text-slate-800">
+                        {selectedTruck
+                          ?.driverName ||
+                          '-'}
+                      </div>
 
-                              <div className="sticky right-0 z-20 flex w-12 shrink-0 border-b border-l border-slate-300 border-l-slate-400 bg-slate-200 shadow-[-2px_0_5px_rgba(0,0,0,0.05)]">
-                                <div className="flex flex-1 items-center justify-center text-center text-[8px] font-bold">
-                                  Total
-                                </div>
-                              </div>
-                            </div>
+                      <div className="mt-0.5 text-xs text-slate-500">
+                        {selectedTruck
+                          ?.phone ||
+                          '-'}
+                      </div>
+                    </div>
+                  </div>
 
-                            <div className="flex h-[56px]">
-                              <div className="sticky left-8 z-20 flex w-12 shrink-0 items-center justify-center border-r border-slate-300 bg-white text-sm font-bold text-slate-800 shadow-[2px_0_5px_rgba(0,0,0,0.05)]">
-                                {dock.id}
-                              </div>
+                  <div className="flex items-start gap-3">
+                    <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
 
-                              <div className="relative flex flex-1">
-                                {HOURS.map(hour => (
-                                  <div
-                                    key={hour}
-                                    className="flex flex-1 border-r border-slate-400"
-                                  >
-                                    {MINUTES.map(minute => (
-                                      <div
-                                        key={minute}
-                                        className="flex-1 border-r border-slate-100 last:border-r-0"
-                                      />
-                                    ))}
-                                  </div>
-                                ))}
+                    <div>
+                      <div className="text-xs text-slate-400">
+                        Drop Point
+                      </div>
 
-                                {dockTrucks.map(truck => {
-                                  const etaToUse = truck.planEta || truck.stampEta;
-                                  const startMins = parseTimeToMinutes(etaToUse);
-                                  if (startMins === null) return null;
-
-                                  let durationMins = 60;
-                                  const etdToUse = truck.planEtd || truck.stampEtd;
-                                  if (etdToUse) {
-                                    const difference = calculateMinutesDifference(
-                                      etaToUse || '',
-                                      etdToUse
-                                    );
-                                    if (difference !== null && difference > 0) {
-                                      durationMins = difference;
-                                    }
-                                  }
-
-                                  const leftPercent = (startMins / TOTAL_MINS) * 100;
-                                  const widthPercent = (durationMins / TOTAL_MINS) * 100;
-                                  const left = Math.max(0, leftPercent);
-                                  let width = widthPercent;
-
-                                  if (leftPercent < 0) width = widthPercent + leftPercent;
-                                  if (left + width > 100) width = 100 - left;
-                                  if (width <= 0) return null;
-
-                                  return (
-                                    <motion.div
-                                      key={truck.id}
-                                      initial={{ opacity: 0, scaleY: 0 }}
-                                      animate={{ opacity: 1, scaleY: 1 }}
-                                      onClick={() => setSelectedTruck(truck)}
-                                      className={`absolute bottom-0.5 top-0.5 flex cursor-pointer flex-col items-center justify-center overflow-hidden border p-0.5 text-center transition-shadow hover:z-10 hover:shadow-lg ${getTruckColor(
-                                        truck
-                                      )}`}
-                                      style={{ left: `${left}%`, width: `${width}%` }}
-                                      title={`${truck.licensePlate} (${truck.route})`}
-                                    >
-                                      <div className="w-full truncate text-[6px] font-bold leading-[7px]">
-                                        {truck.route}
-                                      </div>
-                                      <div className="w-full truncate text-[6px] font-bold leading-[7px]">
-                                        {truck.licensePlate}
-                                      </div>
-                                      {truck.performanceStatus === 'DELAY' && (
-                                        <AlertTriangle className="absolute right-0.5 top-0.5 h-2.5 w-2.5 text-white" />
-                                      )}
-                                    </motion.div>
-                                  );
-                                })}
-                              </div>
-
-                              <div className="sticky right-0 z-20 flex w-12 shrink-0 border-l border-slate-400 bg-white shadow-[-2px_0_5px_rgba(0,0,0,0.05)]">
-                                <div className="flex flex-1 items-center justify-center text-xs font-bold">
-                                  {dockTrucks.length}
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
+                      <div className="font-medium text-slate-800">
+                        {selectedTruck
+                          ?.dropPoint ||
+                          '-'}
+                      </div>
                     </div>
                   </div>
                 </div>
-              );
-            })}
-          </div>
-        </div>
+              </div>
 
-        <AnimatePresence>
-          {selectedTruck && (
-            <div
-              className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/50 p-4"
-              onMouseDown={event => {
-                if (event.target === event.currentTarget) setSelectedTruck(null);
-              }}
-            >
-              <motion.div
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                className="w-full max-w-sm overflow-hidden rounded-xl bg-white shadow-2xl"
-              >
-                <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 p-4">
-                  <h3 className="text-sm font-bold text-slate-800">Truck Details</h3>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedTruck(null)}
-                    className="rounded-lg p-1 text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-600"
-                  >
-                    <X className="h-5 w-5" />
-                  </button>
+              <div className="mt-5 border-t border-slate-200 pt-5">
+                <div className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                  GPS Information
                 </div>
 
-                <div className="space-y-4 p-4">
-                  <div>
-                    <div className="mb-1 text-xs font-bold uppercase tracking-wider text-slate-500">
-                      License Plate
+                <div className="mt-3 grid grid-cols-2 gap-3">
+                  <div className="rounded-lg bg-slate-50 p-3">
+                    <div className="text-[10px] font-bold uppercase text-slate-400">
+                      Speed
                     </div>
-                    <div className="text-sm font-medium text-slate-800">
-                      {selectedTruck.licensePlate}
+
+                    <div className="mt-1 text-lg font-bold text-slate-800">
+                      {
+                        selectedGpsLocation
+                          .speed
+                      }{' '}
+                      km/h
                     </div>
                   </div>
 
-                  <div>
-                    <div className="mb-1 text-xs font-bold uppercase tracking-wider text-slate-500">
-                      Route
+                  <div className="rounded-lg bg-slate-50 p-3">
+                    <div className="text-[10px] font-bold uppercase text-slate-400">
+                      Heading
                     </div>
-                    <div className="text-sm text-slate-700">{selectedTruck.route}</div>
-                  </div>
 
-                  <div>
-                    <div className="mb-1 text-xs font-bold uppercase tracking-wider text-slate-500">
-                      Supplier
-                    </div>
-                    <div className="text-sm text-slate-700">
-                      {selectedTruck.supplierName || '-'}
+                    <div className="mt-1 text-lg font-bold text-slate-800">
+                      {
+                        selectedGpsLocation
+                          .heading
+                      }
+                      °
                     </div>
                   </div>
-
-                  <div>
-                    <div className="mb-1 text-xs font-bold uppercase tracking-wider text-slate-500">
-                      Drop Point
-                    </div>
-                    <div className="text-sm text-slate-700">
-                      {selectedTruck.dropPoint || '-'}
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <div className="mb-1 text-xs font-bold uppercase tracking-wider text-slate-500">
-                        Status
-                      </div>
-                      <div className="text-sm text-slate-700">{selectedTruck.status}</div>
-                    </div>
-
-                    <div>
-                      <div className="mb-1 text-xs font-bold uppercase tracking-wider text-slate-500">
-                        Performance
-                      </div>
-                      <div className="text-sm text-slate-700">
-                        {selectedTruck.performanceStatus || '-'}
-                      </div>
-                    </div>
-
-                    <div>
-                      <div className="mb-1 text-xs font-bold uppercase tracking-wider text-slate-500">
-                        Plan ETA
-                      </div>
-                      <div className="font-mono text-sm text-slate-700">
-                        {selectedTruck.planEta || '-'}
-                      </div>
-                    </div>
-
-                    <div>
-                      <div className="mb-1 text-xs font-bold uppercase tracking-wider text-slate-500">
-                        Plan ETD
-                      </div>
-                      <div className="font-mono text-sm text-slate-700">
-                        {selectedTruck.planEtd || '-'}
-                      </div>
-                    </div>
-
-                    <div>
-                      <div className="mb-1 text-xs font-bold uppercase tracking-wider text-slate-500">
-                        Actual ETA
-                      </div>
-                      <div className="font-mono text-sm text-slate-700">
-                        {selectedTruck.stampEta || selectedTruck.actualEta || '-'}
-                      </div>
-                    </div>
-
-                    <div>
-                      <div className="mb-1 text-xs font-bold uppercase tracking-wider text-slate-500">
-                        Actual ETD
-                      </div>
-                      <div className="font-mono text-sm text-slate-700">
-                        {selectedTruck.stampEtd || '-'}
-                      </div>
-                    </div>
-                  </div>
-
-                  {selectedTruck.actionProblem && (
-                    <div className="rounded-lg border border-red-100 bg-red-50 p-3">
-                      <div className="mb-1 flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-red-700">
-                        <AlertTriangle className="h-3.5 w-3.5" />
-                        Action / Problem
-                      </div>
-                      <div className="whitespace-pre-wrap break-words text-sm text-red-800">
-                        {selectedTruck.actionProblem}
-                      </div>
-                    </div>
-                  )}
                 </div>
-              </motion.div>
+
+                <div className="mt-3 space-y-3 text-sm">
+                  <div>
+                    <div className="text-xs text-slate-400">
+                      สถานที่ล่าสุด
+                    </div>
+
+                    <div className="mt-1 font-medium text-slate-800">
+                      {selectedGpsLocation
+                        .locationName ||
+                        '-'}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-xs text-slate-400">
+                      สถานะ GPS
+                    </div>
+
+                    <div className="mt-1 font-medium text-slate-800">
+                      {selectedGpsLocation
+                        .gpsStatus ||
+                        '-'}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-xs text-slate-400">
+                      เวลา GPS
+                    </div>
+
+                    <div className="mt-1 font-mono text-xs font-medium text-slate-700">
+                      {formatGpsDateTime(
+                        selectedGpsLocation
+                          .gpsTime
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-xs text-slate-400">
+                      เวลารับข้อมูล
+                    </div>
+
+                    <div className="mt-1 font-mono text-xs font-medium text-slate-700">
+                      {formatGpsDateTime(
+                        selectedGpsLocation
+                          .receivedAt
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-xs text-slate-400">
+                      พิกัดล่าสุด
+                    </div>
+
+                    <div className="mt-1 break-all font-mono text-xs font-medium text-slate-700">
+                      {selectedGpsLocation
+                        .latitude.toFixed(
+                          6
+                        )}
+                      ,{' '}
+                      {selectedGpsLocation
+                        .longitude.toFixed(
+                          6
+                        )}
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
-        </AnimatePresence>
+        </aside>
       </div>
     </div>
   );
