@@ -305,7 +305,12 @@ export function PlatformDiagram({ trucks }: PlatformDiagramProps) {
   };
 
   return (
-    <div className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-slate-100 text-xs">
+    <div
+      ref={diagramFullscreenRef}
+      className={`relative min-h-0 min-w-0 flex-col overflow-hidden bg-slate-100 text-xs ${
+        isDiagramFullscreen ? 'flex h-screen w-screen' : 'flex h-full'
+      }`}
+    >
       <div className="w-full shrink-0 border-b border-slate-200 bg-white px-2 py-2">
         <div className="grid w-full grid-cols-2 gap-2 md:grid-cols-4">
           <div className="flex h-12 min-w-0 flex-col justify-center rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5">
@@ -402,12 +407,7 @@ export function PlatformDiagram({ trucks }: PlatformDiagramProps) {
         </div>
       </div>
 
-      <div
-        ref={diagramFullscreenRef}
-        className={`relative min-h-0 min-w-0 overflow-hidden bg-slate-50 ${
-          isDiagramFullscreen ? 'flex h-screen w-screen flex-col' : 'flex flex-1 flex-col'
-        }`}
-      >
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-slate-50">
         <div
           className="relative min-h-0 min-w-0 flex-1 overflow-x-scroll overflow-y-auto bg-slate-50"
           style={{
@@ -507,7 +507,7 @@ export function PlatformDiagram({ trucks }: PlatformDiagramProps) {
                                     className={`flex flex-1 flex-col border-r border-slate-400 ${getHourBackgroundClass(hour)}`}
                                   >
                                     <div className={`border-b border-slate-300 text-center text-[8px] font-bold leading-[10px] ${hour === 12 ? 'bg-slate-300 text-slate-700' : 'bg-slate-200'}`}>
-                                      {String(hour).padStart(2, '0')}:00{hour === 12 ? ' BREAK' : ''}
+                                      {String(hour).padStart(2, '0')}:00
                                     </div>
                                     <div className="flex h-2.5 text-[6px] font-medium leading-[10px] text-slate-600">
                                       {MINUTES.map(minute => (
