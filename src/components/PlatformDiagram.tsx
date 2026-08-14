@@ -30,8 +30,8 @@ type RowGroup = {
   docks: DockDefinition[];
 };
 
-const START_HOUR = 7;
-const END_HOUR = 17;
+const START_HOUR = 6;
+const END_HOUR = 18;
 const TIMELINE_WIDTH = 2500;
 
 const HOURS = Array.from(
@@ -43,6 +43,15 @@ const MINUTES = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60];
 const TOTAL_MINS = (END_HOUR - START_HOUR + 1) * 60;
 
 const GROUP_FILTER_OPTIONS: GroupFilter[] = ['M1', 'L1', 'L2', 'R1', 'R2'];
+
+const CATEGORIES = [
+  { label: 'INTERPLANT', color: 'bg-white text-slate-800' },
+  { label: 'MILK RUN', color: 'bg-white text-slate-800' },
+  { label: 'BODY PARTS', color: 'bg-slate-200 text-slate-800' },
+  { label: 'RETURN TRIP', color: 'bg-white text-slate-800' },
+  { label: 'MIX BANPHO', color: 'bg-white text-slate-800' },
+  { label: 'DIRECT', color: 'bg-white text-slate-800' },
+];
 
 const ROW_GROUPS: RowGroup[] = [
   {
@@ -140,20 +149,7 @@ function isOverdueAndNotDocked(truck: Truck): boolean {
   return Date.now() > plannedEta.getTime();
 }
 
-function isNonInboundProject(truck: Truck): boolean {
-  const project = String(truck.project || '').trim();
-  return project !== '' && project.toUpperCase() !== 'INBOUND';
-}
-
-function getHourBackgroundClass(hour: number): string {
-  return hour === 12 ? 'bg-slate-200/80' : '';
-}
-
 function getTruckColor(truck: Truck): string {
-  if (isNonInboundProject(truck)) {
-    return 'bg-pink-500 border-pink-700 text-white shadow-sm shadow-pink-300/60';
-  }
-
   if (isOverdueAndNotDocked(truck)) {
     return 'bg-red-600 border-red-800 text-white animate-pulse shadow-lg shadow-red-500/50';
   }
@@ -444,6 +440,16 @@ export function PlatformDiagram({ trucks }: PlatformDiagramProps) {
                 )}
               </div>
 
+              <div className="ml-auto flex items-center gap-2">
+                {CATEGORIES.map(category => (
+                  <div
+                    key={category.label}
+                    className={`min-w-[92px] whitespace-nowrap border border-black px-2 py-0.5 text-center text-[8px] font-bold ${category.color}`}
+                  >
+                    {category.label}
+                  </div>
+                ))}
+              </div>
             </div>
 
             {filteredGroups.length === 0 && (
@@ -504,10 +510,10 @@ export function PlatformDiagram({ trucks }: PlatformDiagramProps) {
                                 {HOURS.map(hour => (
                                   <div
                                     key={hour}
-                                    className={`flex flex-1 flex-col border-r border-slate-400 ${getHourBackgroundClass(hour)}`}
+                                    className="flex flex-1 flex-col border-r border-slate-400"
                                   >
-                                    <div className={`border-b border-slate-300 text-center text-[8px] font-bold leading-[10px] ${hour === 12 ? 'bg-slate-300 text-slate-700' : 'bg-slate-200'}`}>
-                                      {String(hour).padStart(2, '0')}:00{hour === 12 ? ' BREAK' : ''}
+                                    <div className="border-b border-slate-300 bg-slate-200 text-center text-[8px] font-bold leading-[10px]">
+                                      {String(hour).padStart(2, '0')}:00
                                     </div>
                                     <div className="flex h-2.5 text-[6px] font-medium leading-[10px] text-slate-600">
                                       {MINUTES.map(minute => (
@@ -539,12 +545,12 @@ export function PlatformDiagram({ trucks }: PlatformDiagramProps) {
                                 {HOURS.map(hour => (
                                   <div
                                     key={hour}
-                                    className={`flex flex-1 border-r border-slate-400 ${getHourBackgroundClass(hour)}`}
+                                    className="flex flex-1 border-r border-slate-400"
                                   >
                                     {MINUTES.map(minute => (
                                       <div
                                         key={minute}
-                                        className="flex-1 border-r border-slate-100/80 last:border-r-0"
+                                        className="flex-1 border-r border-slate-100 last:border-r-0"
                                       />
                                     ))}
                                   </div>
@@ -594,7 +600,7 @@ export function PlatformDiagram({ trucks }: PlatformDiagramProps) {
                                       <div className="w-full truncate text-[6px] font-bold leading-[7px]">
                                         {truck.licensePlate}
                                       </div>
-                                      {!isNonInboundProject(truck) && truck.performanceStatus === 'DELAY' && (
+                                      {truck.performanceStatus === 'DELAY' && (
                                         <AlertTriangle className="absolute right-0.5 top-0.5 h-2.5 w-2.5 text-white" />
                                       )}
                                     </motion.div>
@@ -670,14 +676,6 @@ export function PlatformDiagram({ trucks }: PlatformDiagramProps) {
                     </div>
                   </div>
 
-                  <div>
-                    <div className="mb-1 text-xs font-bold uppercase tracking-wider text-slate-500">
-                      Project
-                    </div>
-                    <div className="text-sm text-slate-700">
-                      {selectedTruck.project || '-'}
-                    </div>
-                  </div>
                   <div>
                     <div className="mb-1 text-xs font-bold uppercase tracking-wider text-slate-500">
                       Drop Point
