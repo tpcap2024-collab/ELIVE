@@ -195,6 +195,7 @@ const DEFAULT_API_URL = 'https://elive-api.onrender.com';
 export const getAppsScriptUrl = (): string => {
   const environment = (import.meta as any).env;
   const apiUrl = environment?.VITE_API_URL || DEFAULT_API_URL;
+
   return String(apiUrl)
     .trim()
     .replace(/^['"]|['"]$/g, '')
@@ -238,6 +239,7 @@ function parseGoogleSheetsTime(value: unknown): string {
 
 function parseGoogleSheetsDate(value: unknown): string {
   if (value === null || value === undefined || value === '') return '';
+
   const text = String(value).trim();
   if (!text) return '';
 
@@ -269,6 +271,7 @@ function getApiError(data: unknown): string | null {
     const value = (data as { error?: unknown }).error;
     return value ? String(value) : null;
   }
+
   return null;
 }
 
@@ -333,6 +336,7 @@ async function fetchEliveApiData(): Promise<any> {
   if (data.status !== 'success') {
     throw new Error('The ELIVE Backend API did not return success status.');
   }
+
   return data;
 }
 
@@ -344,6 +348,7 @@ function validateDateText(value: string, fieldName: string): string {
 
   const [year, month, day] = text.split('-').map(Number);
   const date = new Date(year, month - 1, day);
+
   if (
     date.getFullYear() !== year ||
     date.getMonth() !== month - 1 ||
@@ -351,6 +356,7 @@ function validateDateText(value: string, fieldName: string): string {
   ) {
     throw new Error(`${fieldName} is invalid.`);
   }
+
   return text;
 }
 
@@ -362,6 +368,7 @@ function validatePlanTime(value: string, fieldName: string): string {
 
 function normalizePlanWorkingDays(value: number[]): number[] {
   const input = Array.isArray(value) ? value : [1, 2, 3, 4, 5, 6];
+
   return [...new Set(input.map(Number))]
     .filter(day => Number.isInteger(day) && day >= 1 && day <= 7)
     .sort((first, second) => first - second);
@@ -385,6 +392,7 @@ function validatePlanPeriodRequest(
 
   const source: PlanSource =
     request.source === 'uploaded-file' ? 'uploaded-file' : 'master-plan';
+
   const templateRows =
     source === 'uploaded-file'
       ? Array.isArray(request.templateRows)
@@ -407,7 +415,9 @@ function validatePlanPeriodRequest(
 }
 
 function validateEditablePlan(plan: EditablePlan): EditablePlan {
-  if (!plan || typeof plan !== 'object') throw new Error('Plan data is required.');
+  if (!plan || typeof plan !== 'object') {
+    throw new Error('Plan data is required.');
+  }
 
   const validPlan: EditablePlan = {
     date: validateDateText(plan.date, 'Date'),
@@ -434,7 +444,9 @@ function validateEditablePlan(plan: EditablePlan): EditablePlan {
   return validPlan;
 }
 
-function validateMasterPlanRow(row: EditableMasterPlanRow): EditableMasterPlanRow {
+function validateMasterPlanRow(
+  row: EditableMasterPlanRow
+): EditableMasterPlanRow {
   if (!row || typeof row !== 'object') {
     throw new Error('Master Plan data is required.');
   }
@@ -472,7 +484,9 @@ function validateMasterPlanSheetRow(value: number): number {
 
 function normalizeCodeRun(value: string): string {
   const codeRun = String(value || '').trim().toUpperCase();
-  if (!/^A\d+$/.test(codeRun)) throw new Error('Code run format is invalid.');
+  if (!/^A\d+$/.test(codeRun)) {
+    throw new Error('Code run format is invalid.');
+  }
   return codeRun;
 }
 
@@ -522,6 +536,7 @@ export async function fetchMasterPlan(
     refresh: forceRefresh ? 'true' : 'false',
     t: String(Date.now()),
   });
+
   const data = await fetchApiRequest(`/api/master-plan?${query.toString()}`, {
     method: 'GET',
   });
@@ -771,7 +786,9 @@ export async function createPlanPeriod(
   };
 }
 
-export async function fetchDailyPlans(date: string): Promise<DailyPlansResult> {
+export async function fetchDailyPlans(
+  date: string
+): Promise<DailyPlansResult> {
   const validDate = validateDateText(date, 'Date');
   const query = new URLSearchParams({ date: validDate, t: String(Date.now()) });
   const data: PlanApiResponse<DailyPlansResult> = await fetchApiRequest(
@@ -932,41 +949,67 @@ export async function restoreDailyPlan(
 
 function mapTruckStatus(currentStatus: string): TruckStatus {
   const value = String(currentStatus || '').trim().toLowerCase();
+
   if (
     value.includes('complete') ||
     value.includes('completed') ||
     value.includes('เสร็จ')
   ) return 'COMPLETED';
-  if (value.includes('truck out') || value.includes('ออก')) return 'TRUCK_OUT';
+
+  if (value.includes('truck out') || value.includes('ออก')) {
+    return 'TRUCK_OUT';
+  }
+
   if (
     value.includes('unloading at tpcap') ||
     value.includes('arrive') ||
     value.includes('arrived') ||
     value.includes('ถึง')
   ) return 'UNLOADING_AT_TPCAP';
+
   if (value.includes('dock in')) return 'DOCK_IN';
+
   if (
     value.includes('กำลังลงงาน') ||
     value.includes('dock') ||
     value.includes('unloading') ||
     value.includes('unload at tpcap')
   ) return 'UNLOADING';
-  if (value.includes('wait') || value.includes('waiting') || value.includes('รอ'))
-    return 'WAITING_AREA';
+
+  if (
+    value.includes('wait') ||
+    value.includes('waiting') ||
+    value.includes('รอ')
+  ) return 'WAITING_AREA';
+
   return 'TRAVELING';
 }
 
 function mapPerformanceStatus(value: string): PerformanceStatus {
   const status = String(value || '').trim().toLowerCase();
-  if (status.includes('delay') || status.includes('delayed') || status.includes('ดีเล'))
-    return 'DELAY';
-  if (status.includes('early') || status.includes('ก่อน') || status.includes('ไว'))
-    return 'EARLY';
-  if (status.includes('warning') || status.includes('เตือน')) return 'WARNING';
+
+  if (
+    status.includes('delay') ||
+    status.includes('delayed') ||
+    status.includes('ดีเล')
+  ) return 'DELAY';
+
+  if (
+    status.includes('early') ||
+    status.includes('ก่อน') ||
+    status.includes('ไว')
+  ) return 'EARLY';
+
+  if (status.includes('warning') || status.includes('เตือน')) {
+    return 'WARNING';
+  }
+
   return 'ON_PLAN';
 }
 
-export async function fetchTrucksFromSheets(sourceData?: any): Promise<Truck[]> {
+export async function fetchTrucksFromSheets(
+  sourceData?: any
+): Promise<Truck[]> {
   const data = sourceData ?? (await fetchEliveApiData());
   const planData: any[][] = Array.isArray(data.plan) ? data.plan : [];
   const actualData: any[][] = Array.isArray(data.actual) ? data.actual : [];
@@ -979,8 +1022,10 @@ export async function fetchTrucksFromSheets(sourceData?: any): Promise<Truck[]> 
   }
 
   const trucks: Truck[] = [];
+
   for (const row of planData.slice(1)) {
     if (!Array.isArray(row)) continue;
+
     const codeRun = String(row[0] || '').trim();
     if (!codeRun || normalizePlanRemark(row[12]) === 'CANCEL') continue;
 
@@ -1011,6 +1056,7 @@ export async function fetchTrucksFromSheets(sourceData?: any): Promise<Truck[]> 
 
     const mappedStatus = mapTruckStatus(currentStatus);
     let performanceStatus = mapPerformanceStatus(efficiencyStatus);
+
     if (stampEta && planEta && planEtd) {
       performanceStatus = calculatePerformanceStatus(planEta, planEtd, stampEta);
     }
@@ -1024,6 +1070,7 @@ export async function fetchTrucksFromSheets(sourceData?: any): Promise<Truck[]> 
       truckType: String(row[5] || ''),
       driverName: String(row[6] || ''),
       phone: String(row[7] || ''),
+      project: String(row[8] || '').trim(),
       dropPoint: String(row[9] || ''),
       planEta,
       planEtd,
@@ -1059,6 +1106,7 @@ export async function updateTruckInSheets(
     updates.stampEta !== undefined ? updates.stampEta : currentTruck.stampEta;
   const stampEtd =
     updates.stampEtd !== undefined ? updates.stampEtd : currentTruck.stampEtd;
+
   let efficiencyStatus: PerformanceStatus =
     updates.performanceStatus !== undefined
       ? updates.performanceStatus
@@ -1127,7 +1175,9 @@ function readGpsCell(row: any[], index: number): string {
   return index < 0 ? '' : String(row[index] ?? '').trim();
 }
 
-export async function fetchGpsLocations(sourceData?: any): Promise<GpsLocation[]> {
+export async function fetchGpsLocations(
+  sourceData?: any
+): Promise<GpsLocation[]> {
   const data = sourceData ?? (await fetchEliveApiData());
   const gpsData: any[][] = Array.isArray(data.gps) ? data.gps : [];
   if (gpsData.length <= 1) return [];
@@ -1159,11 +1209,13 @@ export async function fetchGpsLocations(sourceData?: any): Promise<GpsLocation[]
   }
 
   const locations: GpsLocation[] = [];
+
   for (const row of gpsData.slice(1)) {
     if (!Array.isArray(row)) continue;
 
     const latitude = parseGpsNumber(row[latIndex]);
     const longitude = parseGpsNumber(row[lngIndex]);
+
     if (
       !Number.isFinite(latitude) ||
       !Number.isFinite(longitude) ||
@@ -1200,6 +1252,7 @@ export async function fetchRouteToTpcap(
   if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) {
     throw new Error('Latitude is invalid.');
   }
+
   if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
     throw new Error('Longitude is invalid.');
   }
@@ -1209,6 +1262,7 @@ export async function fetchRouteToTpcap(
     lng: String(longitude),
     t: String(Date.now()),
   });
+
   const data = await fetchApiRequest(`/api/route-to-tpcap?${query.toString()}`, {
     method: 'GET',
   });
@@ -1232,7 +1286,11 @@ export async function fetchRouteToTpcap(
   }
 
   const geometry = data.geometry;
-  if (!geometry || geometry.type !== 'LineString' || !Array.isArray(geometry.coordinates)) {
+  if (
+    !geometry ||
+    geometry.type !== 'LineString' ||
+    !Array.isArray(geometry.coordinates)
+  ) {
     throw new Error('ไม่พบข้อมูลเส้นทางสำหรับแสดงบนแผนที่');
   }
 
@@ -1241,7 +1299,10 @@ export async function fetchRouteToTpcap(
       (coordinate: unknown): coordinate is unknown[] =>
         Array.isArray(coordinate) && coordinate.length >= 2
     )
-    .map((coordinate: unknown[]) => [Number(coordinate[0]), Number(coordinate[1])])
+    .map((coordinate: unknown[]) => [
+      Number(coordinate[0]),
+      Number(coordinate[1]),
+    ])
     .filter(
       ([lng, lat]: number[]) =>
         Number.isFinite(lng) &&
@@ -1273,7 +1334,10 @@ export async function fetchRouteToTpcap(
     durationMinutes,
     estimatedArrival: String(data.estimatedArrival || ''),
     estimatedArrivalBangkok: String(data.estimatedArrivalBangkok || ''),
-    geometry: { type: 'LineString', coordinates: validCoordinates },
+    geometry: {
+      type: 'LineString',
+      coordinates: validCoordinates,
+    },
   };
 }
 
@@ -1281,5 +1345,9 @@ export async function fetchEliveDashboardData(): Promise<EliveDashboardData> {
   const sourceData = await fetchEliveApiData();
   const trucks = await fetchTrucksFromSheets(sourceData);
   const gpsLocations = await fetchGpsLocations(sourceData);
-  return { trucks, gpsLocations };
+
+  return {
+    trucks,
+    gpsLocations,
+  };
 }
