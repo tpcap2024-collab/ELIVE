@@ -35,7 +35,9 @@ import {
   LayoutDashboard,
   Map,
   MapPin,
+  Maximize2,
   Menu,
+  Minimize2,
   MessageSquare,
   Network,
   Package,
@@ -66,6 +68,10 @@ interface ActionDialogState {
   truck: Truck | null;
 }
 
+type DockFilter = 'ALL' | 'M1' | 'L1' | 'L2' | 'R1' | 'R2';
+
+const DOCK_FILTERS: DockFilter[] = ['ALL', 'M1', 'L1', 'L2', 'R1', 'R2'];
+
 const ROWS_PER_PAGE = 20;
 const REFRESH_INTERVAL = 60000;
 
@@ -75,6 +81,23 @@ function normalizeLicensePlate(value?: string): string {
     .replace(/[\s-]/g, '')
     .trim()
     .toUpperCase();
+}
+
+function getDockGroup(value?: string): Exclude<DockFilter, 'ALL'> | '' {
+  const normalized = String(value || '').replace(/\s+/g, '').toUpperCase();
+  const match = normalized.match(/^(M1|L1|L2|R1|R2)/);
+  return match ? (match[1] as Exclude<DockFilter, 'ALL'>) : '';
+}
+
+function getPlanEtaSortValue(value?: string): number {
+  const match = String(value || '').trim().match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return Number.MAX_SAFE_INTEGER;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    return Number.MAX_SAFE_INTEGER;
+  }
+  return hour * 60 + minute;
 }
 
 export default function App() {
@@ -92,6 +115,9 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [appsScriptUrl, setAppsScriptUrl] = useState(getAppsScriptUrl());
   const [showHiddenRows, setShowHiddenRows] = useState(false);
+  const [dockFilter, setDockFilter] = useState<DockFilter>('ALL');
+  const [isDashboardFullscreen, setIsDashboardFullscreen] = useState(false);
+  const [isGpsPopupOpen, setIsGpsPopupOpen] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [sheetError, setSheetError] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -103,6 +129,7 @@ export default function App() {
   );
 
   const requestRunningRef = useRef(false);
+  const dashboardFullscreenRef = useRef<HTMLElement | null>(null);
 
   const loadData = useCallback(async () => {
     if (requestRunningRef.current) return;
@@ -150,7 +177,18 @@ export default function App() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [selectedDate, showHiddenRows]);
+  }, [selectedDate, showHiddenRows, dockFilter]);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsDashboardFullscreen(
+        document.fullscreenElement === dashboardFullscreenRef.current
+      );
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
 
   const handleUpdateTruck = async (id: string, updates: Partial<Truck>) => {
     const currentTruck = trucks.find((truck) => truck.id === id);
@@ -184,7 +222,29 @@ export default function App() {
 
   const handleOpenGps = (truckId: string) => {
     setSelectedGpsTruckId(truckId);
-    changeView('map');
+    setIsGpsPopupOpen(true);
+  };
+
+  const closeGpsPopup = () => {
+    setIsGpsPopupOpen(false);
+    setSelectedGpsTruckId(null);
+  };
+
+  const toggleDashboardFullscreen = async () => {
+    const element = dashboardFullscreenRef.current;
+    if (!element) return;
+
+    try {
+      if (document.fullscreenElement === element) {
+        await document.exitFullscreen();
+        return;
+      }
+      if (document.fullscreenElement) await document.exitFullscreen();
+      await element.requestFullscreen();
+    } catch (error) {
+      console.error('Unable to change dashboard fullscreen mode:', error);
+      setSheetError('อุปกรณ์หรือเบราว์เซอร์ไม่รองรับ Full Screen');
+    }
   };
 
   const handleOpenMapMenu = () => {
@@ -297,10 +357,19 @@ export default function App() {
     return now.getTime() - etdDate.getTime() <= 600000;
   };
 
-  const visibleTrucks = useMemo(
-    () => filteredTrucks.filter(shouldShowTruck),
-    [filteredTrucks, showHiddenRows]
-  );
+  const visibleTrucks = useMemo(() => {
+    return filteredTrucks
+      .filter(shouldShowTruck)
+      .filter(truck =>
+        dockFilter === 'ALL' ? true : getDockGroup(truck.dropPoint) === dockFilter
+      )
+      .sort((first, second) => {
+        const timeDifference =
+          getPlanEtaSortValue(first.planEta) - getPlanEtaSortValue(second.planEta);
+        if (timeDifference !== 0) return timeDifference;
+        return String(first.route || '').localeCompare(String(second.route || ''), 'en');
+      });
+  }, [filteredTrucks, showHiddenRows, dockFilter]);
 
   const totalPages = Math.max(1, Math.ceil(visibleTrucks.length / ROWS_PER_PAGE));
   const pageStartIndex = (currentPage - 1) * ROWS_PER_PAGE;
@@ -534,8 +603,13 @@ export default function App() {
         ) : (
           <>
             {currentView === 'dashboard' && (
-              <main className="flex flex-1 flex-col overflow-auto p-4 md:p-6 lg:p-8">
-                <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
+              <main
+                ref={dashboardFullscreenRef}
+                className={`flex flex-1 flex-col overflow-auto bg-slate-50 p-2 md:p-3 ${
+                  isDashboardFullscreen ? 'h-screen w-screen' : ''
+                }`}
+              >
+                <div className="mb-2 grid grid-cols-2 gap-2 md:grid-cols-4">
                   {[
                     ['Total Truck', stats.total, TruckIcon, 'text-blue-500'],
                     ['Unloading', stats.unloading, Package, 'text-purple-500'],
@@ -544,59 +618,98 @@ export default function App() {
                   ].map(([label, value, Icon, color]) => {
                     const CardIcon = Icon as React.ComponentType<{ className?: string }>;
                     return (
-                      <div key={String(label)} className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-                        <p className="mb-2 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      <div key={String(label)} className="rounded-lg border border-slate-200 bg-white px-3 py-2 shadow-sm">
+                        <p className="mb-0.5 flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider text-slate-500">
                           <CardIcon className={`h-3.5 w-3.5 ${color}`} /> {String(label)}
                         </p>
-                        <h3 className="text-2xl font-bold text-slate-800">{String(value)}</h3>
+                        <h3 className="text-xl font-bold leading-none text-slate-800">{String(value)}</h3>
                       </div>
                     );
                   })}
                 </div>
 
                 <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-                  <div className="border-b border-slate-200 bg-slate-50 p-4">
-                    <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
-                      <input type="checkbox" checked={showHiddenRows} onChange={(event) => setShowHiddenRows(event.target.checked)} className="rounded border-slate-300 text-blue-600" />
+                  <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-200 bg-white px-2 py-1.5">
+                    <span className="mr-1 text-[9px] font-bold uppercase text-slate-500">
+                      Show Dock:
+                    </span>
+                    {DOCK_FILTERS.map(option => (
+                      <button
+                        key={option}
+                        type="button"
+                        onClick={() => setDockFilter(option)}
+                        className={`rounded-md border px-3 py-1 text-[9px] font-bold transition-colors ${
+                          dockFilter === option
+                            ? option === 'ALL'
+                              ? 'border-slate-800 bg-slate-800 text-white'
+                              : 'border-blue-700 bg-blue-600 text-white shadow-sm'
+                            : 'border-slate-300 bg-white text-slate-500 hover:bg-slate-100'
+                        }`}
+                      >
+                        {option}
+                      </button>
+                    ))}
+                    <label className="ml-2 flex cursor-pointer items-center gap-1.5 text-[10px] text-slate-600">
+                      <input
+                        type="checkbox"
+                        checked={showHiddenRows}
+                        onChange={event => setShowHiddenRows(event.target.checked)}
+                        className="h-3.5 w-3.5 rounded border-slate-300 text-blue-600"
+                      />
                       Show completed/out trucks
                     </label>
+                    <div className="ml-auto flex items-center gap-2">
+                      <span className="hidden text-[9px] text-slate-500 sm:inline">
+                        แสดง {visibleTrucks.length} รายการ
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => void toggleDashboardFullscreen()}
+                        className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[9px] font-bold text-slate-700 shadow-sm hover:border-blue-400 hover:bg-blue-50 hover:text-blue-700"
+                      >
+                        {isDashboardFullscreen ? (
+                          <Minimize2 className="h-3.5 w-3.5" />
+                        ) : (
+                          <Maximize2 className="h-3.5 w-3.5" />
+                        )}
+                        {isDashboardFullscreen ? 'EXIT FULL SCREEN' : 'FULL SCREEN'}
+                      </button>
+                    </div>
                   </div>
 
                   <div className="flex-1 overflow-x-auto">
                     <table className="w-full text-left text-sm">
                       <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-500">
                         <tr>
-                          {['Route', 'ทะเบียนรถ', 'จุดลงงาน', 'Plan ETA', 'Actual ETA', 'Actual ETD', 'Status', 'GPS พิกัด', 'Action'].map((heading) => (
-                            <th key={heading} className="px-4 py-3">{heading}</th>
+                          {['Route', 'สังกัด', 'ทะเบียนรถ', 'จุดลงงาน', 'Plan ETA', 'Actual ETA', 'Actual ETD', 'Status', 'GPS พิกัด', 'Action'].map((heading) => (
+                            <th key={heading} className="whitespace-nowrap px-3 py-2">{heading}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {paginatedTrucks.length === 0 ? (
-                          <tr><td colSpan={9} className="px-6 py-8 text-center text-slate-500">No trucks found matching your criteria.</td></tr>
+                          <tr><td colSpan={10} className="px-6 py-8 text-center text-slate-500">No trucks found matching your criteria.</td></tr>
                         ) : paginatedTrucks.map((truck) => (
                           <tr key={truck.id} className={`${getRowClass(truck)} border-b border-slate-100/50`}>
-                            <td className="px-3 py-2 font-mono font-medium text-slate-600">{truck.route}</td>
-                            <td className="px-3 py-2">
-                              <div className="font-bold text-slate-800">{truck.licensePlate}</div>
-                              <div className="text-xs text-slate-500">{truck.supplierName}</div>
-                            </td>
-                            <td className="px-3 py-2 font-medium text-slate-700">{truck.dropPoint}</td>
-                            <td className="px-3 py-2 font-mono text-slate-600">{truck.planEta || '-'}</td>
-                            <td className="px-3 py-2 font-mono">
+                            <td className="whitespace-nowrap px-3 py-1.5 font-mono font-bold text-slate-800">{truck.route}</td>
+                            <td className="whitespace-nowrap px-3 py-1.5 font-medium text-slate-700">{truck.supplierName || '-'}</td>
+                            <td className="whitespace-nowrap px-3 py-1.5 font-bold text-slate-800">{truck.licensePlate}</td>
+                            <td className="whitespace-nowrap px-3 py-1.5 font-medium text-slate-700">{truck.dropPoint}</td>
+                            <td className="whitespace-nowrap px-3 py-1.5 font-mono text-slate-600">{truck.planEta || '-'}</td>
+                            <td className="whitespace-nowrap px-3 py-1.5 font-mono">
                               <div className="flex items-center gap-2">
                                 <span className={truck.performanceStatus === 'DELAY' ? 'font-bold text-red-600' : 'text-slate-800'}>{truck.stampEta || truck.actualEta || '-'}</span>
                                 {getPerformanceBadge(truck.performanceStatus)}
                               </div>
                             </td>
-                            <td className="px-3 py-2 font-mono text-slate-600">{truck.stampEtd || '-'}</td>
-                            <td className="px-3 py-2"><StatusBadge status={truck.status} /></td>
-                            <td className="px-3 py-2 text-center">
+                            <td className="whitespace-nowrap px-3 py-1.5 font-mono text-slate-600">{truck.stampEtd || '-'}</td>
+                            <td className="whitespace-nowrap px-3 py-1.5"><StatusBadge status={truck.status} /></td>
+                            <td className="px-3 py-1.5 text-center">
                               <button type="button" onClick={() => handleOpenGps(truck.id)} className="rounded-full border border-blue-100 bg-blue-50 p-1.5 text-blue-600 hover:bg-blue-100">
                                 <MapPin className="h-4 w-4" />
                               </button>
                             </td>
-                            <td className="px-3 py-2 text-center">
+                            <td className="px-3 py-1.5 text-center">
                               <button type="button" onClick={() => setActionDialog({ isOpen: true, truck })} className={truck.actionProblem ? 'text-red-500' : 'text-slate-400 hover:text-blue-600'}>
                                 <MessageSquare className="h-4 w-4" />
                               </button>
@@ -646,6 +759,43 @@ export default function App() {
           <span className="opacity-60">© 2026 ELIVE Logistics</span>
         </footer>
       </div>
+
+      {isGpsPopupOpen && selectedGpsTruckId && (
+        <div
+          className="fixed inset-0 z-[1200] flex items-center justify-center bg-slate-950/70 p-2 sm:p-4"
+          onMouseDown={event => {
+            if (event.target === event.currentTarget) closeGpsPopup();
+          }}
+        >
+          <div className="flex h-[94vh] w-full max-w-[1500px] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <div className="flex shrink-0 items-center justify-between border-b border-slate-200 bg-white px-4 py-2.5">
+              <div>
+                <h2 className="font-bold text-slate-800">Live Map</h2>
+                <p className="text-xs text-slate-500">
+                  แสดงพิกัดและเส้นทางของรถที่เลือก โดยไม่เปลี่ยนออกจาก Live Dashboard
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeGpsPopup}
+                className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"
+                title="ปิด Live Map"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-hidden">
+              <LiveMap
+                trucks={filteredTrucks}
+                gpsLocations={filteredGpsLocations}
+                initialTruckId={selectedGpsTruckId}
+                onRefresh={loadData}
+                isRefreshing={isRefreshing}
+              />
+            </div>
+          </div>
+        </div>
+      )}
 
       {actionDialog.isOpen && actionDialog.truck && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
