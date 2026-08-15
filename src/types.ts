@@ -37,6 +37,7 @@ export interface Truck {
   driverName: string;
   phone: string;
   project?: string;
+  workDetail?: string;
   status: TruckStatus;
   performanceStatus: PerformanceStatus;
   planEta: string;
