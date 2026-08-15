@@ -7,7 +7,7 @@ import {
 const DEFAULT_APPS_SCRIPT_URL =
   'https://script.google.com/macros/s/AKfycbwV9sfFxE-9lN4A08EKGq55_RlBjlVcvK6Bdeddj8GT0-6huxxnz8oyT7zunl69PK3qJA/exec';
 
-const SERVER_VERSION = '8';
+const SERVER_VERSION = '9';
 const TPCAP_LATITUDE = 13.623729606202758;
 const TPCAP_LONGITUDE = 101.01501162061923;
 const OSRM_BASE_URL = 'https://router.project-osrm.org';
@@ -51,6 +51,7 @@ type EditablePlanInput = {
   planEta: string;
   planEtd: string;
   remark?: string;
+  workDetail?: string;
 };
 
 function getAppsScriptUrl(): string {
@@ -591,6 +592,10 @@ function normalizeEditablePlan(
         : cleanText(
             source.remark
           ).toUpperCase(),
+    workDetail:
+      cleanText(
+        source.workDetail
+      ),
   };
 
   if (!plan.route) {
