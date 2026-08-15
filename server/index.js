@@ -3,7 +3,7 @@ import cors from 'cors';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '8';
+const API_VERSION = '9';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -498,6 +498,7 @@ function normalizeEditablePlan(body) {
       source.remark === undefined
         ? undefined
         : cleanText(source.remark).toUpperCase(),
+    workDetail: cleanText(source.workDetail),
   };
 
   if (!plan.route) throw new Error('Route is required.');
@@ -657,7 +658,7 @@ app.get('/', (req, res) => {
   });
 });
 
-app.get('/health', (req, res) => {
+app.get(['/health', '/api/health'], (req, res) => {
   const truckCacheAgeMs = getTruckCacheAgeMs();
   const masterCacheAgeMs = getMasterPlanCacheAgeMs();
 
@@ -666,6 +667,7 @@ app.get('/health', (req, res) => {
     version: API_VERSION,
     routes: [
       '/health',
+      '/api/health',
       '/api/trucks',
       '/api/trucks/update',
       '/api/master-plan',
