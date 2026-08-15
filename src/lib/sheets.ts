@@ -144,6 +144,7 @@ export interface DailyPlan {
   planEta: string;
   planEtd: string;
   remark: PlanRemark;
+  workDetail: string;
 }
 
 export interface EditablePlan {
@@ -159,6 +160,7 @@ export interface EditablePlan {
   planEta: string;
   planEtd: string;
   remark?: PlanRemark;
+  workDetail?: string;
 }
 
 export interface DailyPlansResult {
@@ -432,6 +434,7 @@ function validateEditablePlan(plan: EditablePlan): EditablePlan {
     planEta: validatePlanTime(plan.planEta, 'Plan ETA'),
     planEtd: validatePlanTime(plan.planEtd, 'Plan ETD'),
     remark: plan.remark ? normalizePlanRemark(plan.remark) : undefined,
+    workDetail: String(plan.workDetail || '').trim(),
   };
 
   if (!validPlan.route) throw new Error('Route is required.');
@@ -526,6 +529,7 @@ function mapDailyPlan(value: any): DailyPlan {
     planEta: parseGoogleSheetsTime(value?.planEta),
     planEtd: parseGoogleSheetsTime(value?.planEtd),
     remark: normalizePlanRemark(value?.remark),
+    workDetail: String(value?.workDetail || '').trim(),
   };
 }
 
