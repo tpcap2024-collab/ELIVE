@@ -101,6 +101,7 @@ const EMPTY_PLAN: EditablePlan = {
   planEta: '',
   planEtd: '',
   remark: 'EXTRA',
+  workDetail: '',
 };
 
 const EMPTY_MASTER_PLAN: EditableMasterPlanRow = {
@@ -432,7 +433,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
       const matchesFilter = dailyFilter === 'ALL' || row.remark === dailyFilter;
       const matchesSearch =
         !query ||
-        [row.codeRun, row.route, row.company, row.truckName, row.driverName, row.dropPoint]
+        [row.codeRun, row.route, row.company, row.truckName, row.driverName, row.dropPoint, row.workDetail]
           .join(' ')
           .toLowerCase()
           .includes(query);
@@ -461,6 +462,30 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
     );
   }, [masterRows, masterSearch]);
 
+  const planFieldOptions = useMemo(() => {
+    const sources = [
+      ...masterRows,
+      ...(dailyResult?.rows || []),
+      ...templateRows,
+    ];
+    const fields = [
+      'route',
+      'company',
+      'truckName',
+      'truckType',
+      'driverName',
+      'telDriver',
+      'project',
+      'dropPoint',
+    ] as const;
+    return Object.fromEntries(
+      fields.map(field => [
+        field,
+        [...new Set(sources.map(row => String(row[field] || '').trim()).filter(Boolean))]
+          .sort((first, second) => first.localeCompare(second, 'th')),
+      ])
+    ) as Record<(typeof fields)[number], string[]>;
+  }, [dailyResult, masterRows, templateRows]);
   const createBusy = isLoadingSource || isPreviewing || isCreating;
   const canPreview = Boolean(
     source &&
@@ -716,6 +741,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
       planEta: plan.planEta,
       planEtd: plan.planEtd,
       remark: plan.remark,
+      workDetail: plan.workDetail || '',
     });
     setPlanDialogMode('edit');
   };
@@ -1341,14 +1367,14 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                     <table className="min-w-full divide-y divide-slate-200 text-sm">
                       <thead className="bg-slate-100 text-left text-xs font-semibold uppercase text-slate-600">
                         <tr>
-                          {['Code Run', 'Type', 'Route', 'Company', 'Truck Name', 'Drop Point', 'ETA', 'ETD', 'Action'].map(heading => (
+                          {['Code Run', 'Type', 'Route', 'Company', 'Truck Name', 'Drop Point', 'รายละเอียดงาน', 'ETA', 'ETD', 'Action'].map(heading => (
                             <th key={heading} className="whitespace-nowrap px-4 py-3">{heading}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 bg-white">
                         {filteredDailyRows.length === 0 ? (
-                          <tr><td colSpan={9} className="px-4 py-10 text-center text-slate-500">ไม่พบแผนในวันที่เลือก</td></tr>
+                          <tr><td colSpan={10} className="px-4 py-10 text-center text-slate-500">ไม่พบแผนในวันที่เลือก</td></tr>
                         ) : (
                           filteredDailyRows.map(plan => (
                             <tr key={plan.codeRun} className={plan.remark === 'CANCEL' ? 'bg-red-50/50 text-slate-500' : 'hover:bg-blue-50/40'}>
@@ -1358,6 +1384,11 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                               <td className="whitespace-nowrap px-4 py-3">{plan.company}</td>
                               <td className="whitespace-nowrap px-4 py-3 font-medium">{plan.truckName}</td>
                               <td className="whitespace-nowrap px-4 py-3">{plan.dropPoint}</td>
+                              <td className="max-w-[280px] px-4 py-3">
+                                <span className="block truncate" title={plan.workDetail || '-'}>
+                                  {plan.workDetail || '-'}
+                                </span>
+                              </td>
                               <td className="whitespace-nowrap px-4 py-3 font-mono">{plan.planEta}</td>
                               <td className="whitespace-nowrap px-4 py-3 font-mono">{plan.planEtd}</td>
                               <td className="whitespace-nowrap px-4 py-3">
@@ -1509,14 +1540,37 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                   {item.label}
                   <input
                     type={item.type}
+                    list={item.type === 'text' ? `plan-options-${item.field}` : undefined}
                     value={String(planForm[item.field] || '')}
                     onChange={event => setPlanFormField(item.field, event.target.value)}
                     required={item.required}
                     disabled={isSavingPlan}
                     className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 disabled:bg-slate-100"
                   />
+                  {item.type === 'text' && item.field in planFieldOptions && (
+                    <datalist id={`plan-options-${item.field}`}>
+                      {planFieldOptions[item.field as keyof typeof planFieldOptions].map(option => (
+                        <option key={option} value={option} />
+                      ))}
+                    </datalist>
+                  )}
                 </label>
               ))}
+              {(planDialogMode === 'extra' || planForm.remark === 'EXTRA') && (
+                <label className="text-sm font-medium text-slate-700 sm:col-span-2 lg:col-span-3">
+                  เหตุผล / รายละเอียดงาน
+                  <textarea
+                    value={planForm.workDetail || ''}
+                    onChange={event => setPlanFormField('workDetail', event.target.value)}
+                    required
+                    disabled={isSavingPlan}
+                    rows={4}
+                    placeholder="เช่น ลงงานเสร็จให้ขึ้นพาเลทเปล่า 20 ตัว"
+                    className="mt-1.5 w-full resize-y rounded-xl border border-slate-300 px-3 py-2.5 disabled:bg-slate-100"
+                  />
+                </label>
+              )}
+
               {planDialogMode === 'edit' && (
                 <label className="text-sm font-medium text-slate-700">
                   Remark
