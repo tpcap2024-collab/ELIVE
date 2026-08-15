@@ -139,6 +139,12 @@ export default function App() {
 
   const requestRunningRef = useRef(false);
   const dashboardFullscreenRef = useRef<HTMLElement | null>(null);
+  const updateQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const trucksRef = useRef<Truck[]>(trucks);
+
+  useEffect(() => {
+    trucksRef.current = trucks;
+  }, [trucks]);
 
   const loadData = useCallback(async () => {
     if (requestRunningRef.current) return;
@@ -199,25 +205,35 @@ export default function App() {
     return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
   }, []);
 
-  const handleUpdateTruck = async (id: string, updates: Partial<Truck>) => {
-    const currentTruck = trucks.find((truck) => truck.id === id);
-    if (!currentTruck) return;
+  const handleUpdateTruck = (
+    id: string,
+    updates: Partial<Truck>
+  ): Promise<void> => {
+    const queuedUpdate = updateQueueRef.current.then(async () => {
+      const currentTruck = trucksRef.current.find(truck => truck.id === id);
+      if (!currentTruck) return;
 
-    setTrucks((previousTrucks) =>
-      previousTrucks.map((truck) =>
-        truck.id === id ? { ...truck, ...updates } : truck
-      )
-    );
-
-    try {
-      await updateTruckInSheets(id, updates, currentTruck);
-      await loadData();
-    } catch (error) {
-      console.error('Failed to update sheet:', error);
-      setSheetError(
-        error instanceof Error ? error.message : 'Failed to update truck data'
+      const nextTruck = { ...currentTruck, ...updates };
+      trucksRef.current = trucksRef.current.map(truck =>
+        truck.id === id ? nextTruck : truck
       );
-    }
+      setTrucks(trucksRef.current);
+
+      try {
+        await updateTruckInSheets(id, updates, currentTruck);
+        setSheetError(null);
+      } catch (error) {
+        console.error('Failed to update sheet:', error);
+        setSheetError(
+          error instanceof Error ? error.message : 'Failed to update truck data'
+        );
+        await loadData();
+        throw error;
+      }
+    });
+
+    updateQueueRef.current = queuedUpdate.catch(() => undefined);
+    return queuedUpdate;
   };
 
   const closeSidebarOnMobile = () => {
