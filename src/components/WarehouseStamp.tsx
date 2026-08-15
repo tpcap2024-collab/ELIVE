@@ -13,7 +13,7 @@ interface WarehouseStampProps {
   onUpdateTruck: (
     id: string,
     updates: Partial<Truck>
-  ) => void;
+  ) => void | Promise<void>;
 }
 
 function getPlatformGroup(
@@ -80,6 +80,9 @@ export function WarehouseStamp({
     filterPlatform,
     setFilterPlatform,
   ] = useState('ALL');
+  const [saveStates, setSaveStates] = useState<
+    Record<string, 'saving' | 'saved' | 'error'>
+  >({});
 
   const inboundTrucks = useMemo(
     () => trucks.filter(isInboundProject),
@@ -149,42 +152,55 @@ export function WarehouseStamp({
     filterPlatform,
   ]);
 
-  const handleStampEta = (
-    truck: Truck
+  const setSaveState = (
+    truckId: string,
+    state: 'saving' | 'saved' | 'error'
   ) => {
-    const time =
-      getCurrentTimeString();
-
-    const performanceStatus =
-      calculatePerformanceStatus(
-        truck.planEta,
-        time
-      );
-
-    onUpdateTruck(
-      truck.id,
-      {
-        stampEta: time,
-        status:
-          'UNLOADING_AT_TPCAP',
-        performanceStatus,
-      }
-    );
+    setSaveStates(current => ({ ...current, [truckId]: state }));
   };
 
-  const handleStampEtd = (
-    truck: Truck
-  ) => {
-    const time =
-      getCurrentTimeString();
+  const clearSavedStateLater = (truckId: string) => {
+    window.setTimeout(() => {
+      setSaveStates(current => {
+        if (current[truckId] !== 'saved') return current;
+        const next = { ...current };
+        delete next[truckId];
+        return next;
+      });
+    }, 2500);
+  };
 
-    onUpdateTruck(
-      truck.id,
-      {
-        stampEtd: time,
-        status: 'COMPLETED',
-      }
-    );
+  const handleStampEta = (truck: Truck) => {
+    if (truck.stampEta || truck.actualEta || saveStates[truck.id] === 'saving') return;
+    const time = getCurrentTimeString();
+    const performanceStatus = calculatePerformanceStatus(truck.planEta, time);
+    setSaveState(truck.id, 'saving');
+    void Promise.resolve(onUpdateTruck(truck.id, {
+      stampEta: time,
+      status: 'UNLOADING_AT_TPCAP',
+      performanceStatus,
+    }))
+      .then(() => {
+        setSaveState(truck.id, 'saved');
+        clearSavedStateLater(truck.id);
+      })
+      .catch(() => setSaveState(truck.id, 'error'));
+  };
+
+  const handleStampEtd = (truck: Truck) => {
+    const hasStampEta = Boolean(truck.stampEta || truck.actualEta);
+    if (!hasStampEta || truck.stampEtd || saveStates[truck.id] === 'saving') return;
+    const time = getCurrentTimeString();
+    setSaveState(truck.id, 'saving');
+    void Promise.resolve(onUpdateTruck(truck.id, {
+      stampEtd: time,
+      status: 'COMPLETED',
+    }))
+      .then(() => {
+        setSaveState(truck.id, 'saved');
+        clearSavedStateLater(truck.id);
+      })
+      .catch(() => setSaveState(truck.id, 'error'));
   };
 
   return (
@@ -293,6 +309,7 @@ export function WarehouseStamp({
                   displayedStampEta
                 );
 
+              const saveState = saveStates[truck.id];
               return (
                 <tr
                   key={truck.id}
@@ -320,9 +337,18 @@ export function WarehouseStamp({
                   </td>
 
                   <td className="p-4">
-                    <StatusBadge
-                      status={truck.status}
-                    />
+                    <div className="flex flex-col items-start gap-1">
+                      <StatusBadge status={truck.status} />
+                      {saveState === 'saving' && (
+                        <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-600">กำลังบันทึก</span>
+                      )}
+                      {saveState === 'saved' && (
+                        <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-600">บันทึกแล้ว</span>
+                      )}
+                      {saveState === 'error' && (
+                        <span className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-600">บันทึกไม่สำเร็จ</span>
+                      )}
+                    </div>
                   </td>
 
                   <td className="p-4">
@@ -333,11 +359,8 @@ export function WarehouseStamp({
                     ) : (
                       <button
                         type="button"
-                        onClick={() =>
-                          handleStampEta(
-                            truck
-                          )
-                        }
+                        onClick={() => handleStampEta(truck)}
+                        disabled={saveState === 'saving'}
                         className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-blue-700 active:scale-95"
                       >
                         Stamp ETA
@@ -353,14 +376,8 @@ export function WarehouseStamp({
                     ) : (
                       <button
                         type="button"
-                        onClick={() =>
-                          handleStampEtd(
-                            truck
-                          )
-                        }
-                        disabled={
-                          !hasStampEta
-                        }
+                        onClick={() => handleStampEtd(truck)}
+                        disabled={!hasStampEta || saveState === 'saving'}
                         className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-blue-700 active:scale-95 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 disabled:active:scale-100"
                       >
                         Stamp ETD
