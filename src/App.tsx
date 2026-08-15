@@ -124,7 +124,14 @@ export default function App() {
   const [planAccessError, setPlanAccessError] = useState('');
   const [appsScriptUrl, setAppsScriptUrl] = useState(getAppsScriptUrl());
   const [showHiddenRows, setShowHiddenRows] = useState(false);
-  const [dockFilter, setDockFilter] = useState<DockFilter>('ALL');
+  const [selectedDockFilters, setSelectedDockFilters] = useState<Exclude<DockFilter, 'ALL'>[]>([
+    'M1',
+    'L1',
+    'L2',
+    'R1',
+    'R2',
+  ]);
+  const [dashboardSearch, setDashboardSearch] = useState('');
   const [isDashboardFullscreen, setIsDashboardFullscreen] = useState(false);
   const [isGpsPopupOpen, setIsGpsPopupOpen] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
@@ -192,7 +199,7 @@ export default function App() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [selectedDate, showHiddenRows, dockFilter]);
+  }, [selectedDate, showHiddenRows, selectedDockFilters, dashboardSearch]);
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -296,6 +303,35 @@ export default function App() {
   const handleOpenMapMenu = () => {
     setSelectedGpsTruckId(null);
     changeView('map');
+  };
+  const allDockFiltersSelected = DOCK_FILTERS
+    .filter((filter): filter is Exclude<DockFilter, 'ALL'> => filter !== 'ALL')
+    .every(filter => selectedDockFilters.includes(filter));
+
+  const toggleDockFilter = (filter: DockFilter) => {
+    if (filter === 'ALL') {
+      setSelectedDockFilters(
+        allDockFiltersSelected ? [] : ['M1', 'L1', 'L2', 'R1', 'R2']
+      );
+      return;
+    }
+
+    setSelectedDockFilters(current =>
+      current.includes(filter)
+        ? current.filter(item => item !== filter)
+        : [...current, filter]
+    );
+  };
+
+  const getActionReasonOptions = (dropPoint?: string): string[] => {
+    const dockGroup = getDockGroup(dropPoint);
+    if (dockGroup === 'L1' || dockGroup === 'L2') {
+      return ['LSP ไม่มีงานลง', 'LSP งานไม่พร้อม', 'LSP ช่องลงงานไม่พร้อม', 'อื่น ๆ'];
+    }
+    if (dockGroup === 'R1' || dockGroup === 'R2') {
+      return ['Free ไม่มีงานลง', 'Free งานไม่พร้อม', 'Free ช่องลงงานไม่พร้อม', 'อื่น ๆ'];
+    }
+    return ['ไม่มีงานลง', 'งานไม่พร้อม', 'ช่องลงงานไม่พร้อม', 'อื่น ๆ'];
   };
 
   const formattedSelectedDate = useMemo(() => {
@@ -409,18 +445,30 @@ export default function App() {
   };
 
   const visibleTrucks = useMemo(() => {
+    const query = dashboardSearch.trim().toLowerCase();
     return inboundTrucks
       .filter(shouldShowTruck)
-      .filter(truck =>
-        dockFilter === 'ALL' ? true : getDockGroup(truck.dropPoint) === dockFilter
-      )
+      .filter(truck => selectedDockFilters.includes(getDockGroup(truck.dropPoint)))
+      .filter(truck => {
+        if (!query) return true;
+        return [
+          truck.route,
+          truck.licensePlate,
+          truck.supplierName,
+          truck.dropPoint,
+          truck.workDetail,
+        ]
+          .join(' ')
+          .toLowerCase()
+          .includes(query);
+      })
       .sort((first, second) => {
         const timeDifference =
           getPlanEtaSortValue(first.planEta) - getPlanEtaSortValue(second.planEta);
         if (timeDifference !== 0) return timeDifference;
         return String(first.route || '').localeCompare(String(second.route || ''), 'en');
       });
-  }, [inboundTrucks, showHiddenRows, dockFilter]);
+  }, [inboundTrucks, showHiddenRows, selectedDockFilters, dashboardSearch]);
 
   const totalPages = Math.max(1, Math.ceil(visibleTrucks.length / ROWS_PER_PAGE));
   const pageStartIndex = (currentPage - 1) * ROWS_PER_PAGE;
@@ -690,9 +738,9 @@ export default function App() {
                       <button
                         key={option}
                         type="button"
-                        onClick={() => setDockFilter(option)}
+                        onClick={() => toggleDockFilter(option)}
                         className={`rounded-md border px-3 py-1 text-[9px] font-bold transition-colors ${
-                          dockFilter === option
+                          option === 'ALL' ? allDockFiltersSelected : selectedDockFilters.includes(option)
                             ? option === 'ALL'
                               ? 'border-slate-800 bg-slate-800 text-white'
                               : 'border-blue-700 bg-blue-600 text-white shadow-sm'
@@ -702,7 +750,17 @@ export default function App() {
                         {option}
                       </button>
                     ))}
-                    <label className="ml-2 flex cursor-pointer items-center gap-1.5 text-[10px] text-slate-600">
+                    <div className="relative min-w-[220px] flex-1 sm:max-w-xs">
+                      <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                      <input
+                        type="search"
+                        value={dashboardSearch}
+                        onChange={event => setDashboardSearch(event.target.value)}
+                        placeholder="ค้นหา Route, ทะเบียนรถ..."
+                        className="w-full rounded-md border border-slate-300 bg-white py-1.5 pl-8 pr-3 text-[11px] text-slate-700 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+                    <label className="flex cursor-pointer items-center gap-1.5 text-[10px] text-slate-600">
                       <input
                         type="checkbox"
                         checked={showHiddenRows}
@@ -734,20 +792,25 @@ export default function App() {
                     <table className="w-full text-left text-sm">
                       <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-500">
                         <tr>
-                          {['Route', 'สังกัด', 'ทะเบียนรถ', 'จุดลงงาน', 'Plan ETA', 'Actual ETA', 'Actual ETD', 'Status', 'GPS พิกัด', 'Action'].map((heading) => (
+                          {['Route', 'สังกัด', 'ทะเบียนรถ', 'จุดลงงาน', 'รายละเอียดงาน', 'Plan ETA', 'Actual ETA', 'Actual ETD', 'Status', 'GPS พิกัด', 'Action'].map((heading) => (
                             <th key={heading} className="whitespace-nowrap px-3 py-2">{heading}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {paginatedTrucks.length === 0 ? (
-                          <tr><td colSpan={10} className="px-6 py-8 text-center text-slate-500">No trucks found matching your criteria.</td></tr>
+                          <tr><td colSpan={11} className="px-6 py-8 text-center text-slate-500">No trucks found matching your criteria.</td></tr>
                         ) : paginatedTrucks.map((truck) => (
                           <tr key={truck.id} className={`${getRowClass(truck)} border-b border-slate-100/50`}>
                             <td className="whitespace-nowrap px-3 py-1.5 font-mono font-bold text-slate-800">{truck.route}</td>
                             <td className="whitespace-nowrap px-3 py-1.5 font-medium text-slate-700">{truck.supplierName || '-'}</td>
                             <td className="whitespace-nowrap px-3 py-1.5 font-bold text-slate-800">{truck.licensePlate}</td>
                             <td className="whitespace-nowrap px-3 py-1.5 font-medium text-slate-700">{truck.dropPoint}</td>
+                            <td className="max-w-[260px] px-3 py-1.5 text-slate-700">
+                              <span className="block truncate" title={truck.workDetail || '-'}>
+                                {truck.workDetail || '-'}
+                              </span>
+                            </td>
                             <td className="whitespace-nowrap px-3 py-1.5 font-mono text-slate-600">{truck.planEta || '-'}</td>
                             <td className="whitespace-nowrap px-3 py-1.5 font-mono">
                               <div className="flex items-center gap-2">
@@ -758,13 +821,13 @@ export default function App() {
                             <td className="whitespace-nowrap px-3 py-1.5 font-mono text-slate-600">{truck.stampEtd || '-'}</td>
                             <td className="whitespace-nowrap px-3 py-1.5"><StatusBadge status={truck.status} /></td>
                             <td className="px-3 py-1.5 text-center">
-                              <button type="button" onClick={() => handleOpenGps(truck.id)} className="rounded-full border border-blue-100 bg-blue-50 p-1.5 text-blue-600 hover:bg-blue-100">
-                                <MapPin className="h-4 w-4" />
+                              <button type="button" onClick={() => handleOpenGps(truck.id)} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border-2 border-red-800 bg-red-700 text-white shadow-sm transition hover:bg-red-800 active:scale-95">
+                                <MapPin className="h-5 w-5" />
                               </button>
                             </td>
                             <td className="px-3 py-1.5 text-center">
-                              <button type="button" onClick={() => setActionDialog({ isOpen: true, truck })} className={truck.actionProblem ? 'text-red-500' : 'text-slate-400 hover:text-blue-600'}>
-                                <MessageSquare className="h-4 w-4" />
+                              <button type="button" onClick={() => setActionDialog({ isOpen: true, truck })} className={`inline-flex h-9 w-9 items-center justify-center rounded-lg border-2 text-white shadow-sm transition active:scale-95 ${truck.actionProblem ? 'border-red-900 bg-red-700 hover:bg-red-800' : 'border-amber-700 bg-amber-500 hover:bg-amber-600'}`}>
+                                <MessageSquare className="h-5 w-5" />
                               </button>
                             </td>
                           </tr>
@@ -936,33 +999,114 @@ export default function App() {
             : document.body
         )}
 
-      {actionDialog.isOpen && actionDialog.truck && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
-            <div className="mb-6 flex items-center justify-between">
-              <h3 className="flex items-center gap-2 text-lg font-bold text-slate-800"><MessageSquare className="h-5 w-5 text-blue-500" />Update Problem - {actionDialog.truck.licensePlate}</h3>
-              <button type="button" onClick={() => setActionDialog({ isOpen: false, truck: null })}><X className="h-5 w-5" /></button>
-            </div>
-            <form
-              onSubmit={(event) => {
-                event.preventDefault();
-                const formData = new FormData(event.currentTarget);
-                const problem = String(formData.get('problem') || '');
-                const selectedTruck = actionDialog.truck;
-                if (selectedTruck) void handleUpdateTruck(selectedTruck.id, { actionProblem: problem, actionStatus: 'OPEN' });
+      {actionDialog.isOpen &&
+        actionDialog.truck &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[1400] flex items-center justify-center bg-slate-950/70 p-3 sm:p-6"
+            onMouseDown={event => {
+              if (event.target === event.currentTarget) {
                 setActionDialog({ isOpen: false, truck: null });
-              }}
-            >
-              <textarea name="problem" defaultValue={actionDialog.truck.actionProblem || ''} className="w-full resize-none rounded-lg border border-slate-300 px-3 py-2 focus:ring-2 focus:ring-blue-500" rows={4} required />
-              <div className="mt-6 flex justify-end gap-3">
-                <button type="button" onClick={() => setActionDialog({ isOpen: false, truck: null })} className="rounded-lg bg-slate-100 px-4 py-2 text-sm">Cancel</button>
-                <button type="submit" className="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white">Save Changes</button>
+              }
+            }}
+          >
+            <div className="flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+              <div className="flex items-start justify-between gap-4 border-b border-slate-200 bg-slate-50 px-6 py-5">
+                <div>
+                  <h3 className="flex items-center gap-2 text-xl font-bold text-slate-800">
+                    <MessageSquare className="h-6 w-6 text-amber-600" />
+                    Update Problem
+                  </h3>
+                  <p className="mt-1 text-sm text-slate-500">
+                    {actionDialog.truck.route} · {actionDialog.truck.licensePlate} · {actionDialog.truck.dropPoint}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActionDialog({ isOpen: false, truck: null })}
+                  className="rounded-lg p-2 text-slate-500 hover:bg-slate-200"
+                >
+                  <X className="h-5 w-5" />
+                </button>
               </div>
-            </form>
-          </div>
-        </div>
-      )}
-
+              <form
+                className="overflow-y-auto p-6"
+                onSubmit={event => {
+                  event.preventDefault();
+                  const formData = new FormData(event.currentTarget);
+                  const reason = String(formData.get('reason') || '').trim();
+                  const detail = String(formData.get('detail') || '').trim();
+                  const problem = [reason, detail].filter(Boolean).join(' : ');
+                  const selectedTruck = actionDialog.truck;
+                  if (selectedTruck && problem) {
+                    void handleUpdateTruck(selectedTruck.id, {
+                      actionProblem: problem,
+                      actionStatus: 'OPEN',
+                    });
+                  }
+                  setActionDialog({ isOpen: false, truck: null });
+                }}
+              >
+                <div className="grid gap-4 sm:grid-cols-3">
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-xs font-bold uppercase text-slate-400">Route</p>
+                    <p className="mt-1 font-bold text-slate-800">{actionDialog.truck.route}</p>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-xs font-bold uppercase text-slate-400">ทะเบียนรถ</p>
+                    <p className="mt-1 font-bold text-slate-800">{actionDialog.truck.licensePlate}</p>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-xs font-bold uppercase text-slate-400">จุดลงงาน</p>
+                    <p className="mt-1 font-bold text-slate-800">{actionDialog.truck.dropPoint || '-'}</p>
+                  </div>
+                </div>
+                <label className="mt-5 block text-sm font-bold text-slate-700">
+                  เหตุผล
+                  <select
+                    name="reason"
+                    required
+                    defaultValue=""
+                    className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-base outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20"
+                  >
+                    <option value="" disabled>เลือกเหตุผล</option>
+                    {getActionReasonOptions(actionDialog.truck.dropPoint).map(reason => (
+                      <option key={reason} value={reason}>{reason}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="mt-5 block text-sm font-bold text-slate-700">
+                  รายละเอียดเพิ่มเติม
+                  <textarea
+                    name="detail"
+                    defaultValue={actionDialog.truck.actionProblem || ''}
+                    className="mt-2 w-full resize-y rounded-xl border border-slate-300 px-4 py-3 text-base outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20"
+                    rows={7}
+                    placeholder="ระบุรายละเอียดเพิ่มเติม..."
+                  />
+                </label>
+                <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setActionDialog({ isOpen: false, truck: null })}
+                    className="rounded-xl bg-slate-100 px-6 py-3 font-bold text-slate-700 hover:bg-slate-200"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="rounded-xl bg-amber-600 px-6 py-3 font-bold text-white hover:bg-amber-700"
+                  >
+                    Save Problem
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>,
+          isDashboardFullscreen && dashboardFullscreenRef.current
+            ? dashboardFullscreenRef.current
+            : document.body
+        )}
       <AnimatePresence>
         {showSettings && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
