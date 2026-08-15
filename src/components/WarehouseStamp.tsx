@@ -152,14 +152,14 @@ export function WarehouseStamp({
     filterPlatform,
   ]);
 
-  const setSaveState = (
+  const updateSaveState = (
     truckId: string,
     state: 'saving' | 'saved' | 'error'
   ) => {
     setSaveStates(current => ({ ...current, [truckId]: state }));
   };
 
-  const clearSavedStateLater = (truckId: string) => {
+  const clearSavedState = (truckId: string) => {
     window.setTimeout(() => {
       setSaveStates(current => {
         if (current[truckId] !== 'saved') return current;
@@ -170,37 +170,43 @@ export function WarehouseStamp({
     }, 2500);
   };
 
+  const runBackgroundSave = (
+    truckId: string,
+    updates: Partial<Truck>
+  ) => {
+    updateSaveState(truckId, 'saving');
+
+    void Promise.resolve(onUpdateTruck(truckId, updates))
+      .then(() => {
+        updateSaveState(truckId, 'saved');
+        clearSavedState(truckId);
+      })
+      .catch(() => {
+        updateSaveState(truckId, 'error');
+      });
+  };
+
   const handleStampEta = (truck: Truck) => {
-    if (truck.stampEta || truck.actualEta || saveStates[truck.id] === 'saving') return;
+    if (truck.stampEta || truck.actualEta) return;
+
     const time = getCurrentTimeString();
     const performanceStatus = calculatePerformanceStatus(truck.planEta, time);
-    setSaveState(truck.id, 'saving');
-    void Promise.resolve(onUpdateTruck(truck.id, {
+
+    runBackgroundSave(truck.id, {
       stampEta: time,
       status: 'UNLOADING_AT_TPCAP',
       performanceStatus,
-    }))
-      .then(() => {
-        setSaveState(truck.id, 'saved');
-        clearSavedStateLater(truck.id);
-      })
-      .catch(() => setSaveState(truck.id, 'error'));
+    });
   };
 
   const handleStampEtd = (truck: Truck) => {
     const hasStampEta = Boolean(truck.stampEta || truck.actualEta);
-    if (!hasStampEta || truck.stampEtd || saveStates[truck.id] === 'saving') return;
-    const time = getCurrentTimeString();
-    setSaveState(truck.id, 'saving');
-    void Promise.resolve(onUpdateTruck(truck.id, {
-      stampEtd: time,
+    if (!hasStampEta || truck.stampEtd) return;
+
+    runBackgroundSave(truck.id, {
+      stampEtd: getCurrentTimeString(),
       status: 'COMPLETED',
-    }))
-      .then(() => {
-        setSaveState(truck.id, 'saved');
-        clearSavedStateLater(truck.id);
-      })
-      .catch(() => setSaveState(truck.id, 'error'));
+    });
   };
 
   return (
@@ -340,13 +346,19 @@ export function WarehouseStamp({
                     <div className="flex flex-col items-start gap-1">
                       <StatusBadge status={truck.status} />
                       {saveState === 'saving' && (
-                        <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-600">กำลังบันทึก</span>
+                        <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-600">
+                          กำลังบันทึก
+                        </span>
                       )}
                       {saveState === 'saved' && (
-                        <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-600">บันทึกแล้ว</span>
+                        <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-600">
+                          บันทึกแล้ว
+                        </span>
                       )}
                       {saveState === 'error' && (
-                        <span className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-600">บันทึกไม่สำเร็จ</span>
+                        <span className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-600">
+                          บันทึกไม่สำเร็จ
+                        </span>
                       )}
                     </div>
                   </td>
