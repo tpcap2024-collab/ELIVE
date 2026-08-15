@@ -22,6 +22,7 @@ import {
 } from './types';
 
 import {
+  confirmWorkDetail,
   fetchEliveDashboardData,
   getAppsScriptUrl,
   updateTruckInSheets,
@@ -118,6 +119,8 @@ export default function App() {
     isOpen: false,
     truck: null,
   });
+  const [workDetailTruck, setWorkDetailTruck] = useState<Truck | null>(null);
+  const [isConfirmingWorkDetail, setIsConfirmingWorkDetail] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showPlanAccessDialog, setShowPlanAccessDialog] = useState(false);
   const [planAccessCode, setPlanAccessCode] = useState('');
@@ -334,6 +337,31 @@ export default function App() {
     return ['ไม่มีงานลง', 'งานไม่พร้อม', 'ช่องลงงานไม่พร้อม', 'อื่น ๆ'];
   };
 
+  const handleConfirmWorkDetail = async () => {
+    const selectedTruck = workDetailTruck;
+    if (!selectedTruck || isConfirmingWorkDetail) return;
+    setIsConfirmingWorkDetail(true);
+    try {
+      await confirmWorkDetail(selectedTruck.id);
+      trucksRef.current = trucksRef.current.map(truck =>
+        truck.id === selectedTruck.id
+          ? { ...truck, workDetailConfirmed: true }
+          : truck
+      );
+      setTrucks(trucksRef.current);
+      setWorkDetailTruck(null);
+      setSheetError(null);
+    } catch (error) {
+      console.error('Failed to confirm Work Detail:', error);
+      setSheetError(
+        error instanceof Error
+          ? error.message
+          : 'ไม่สามารถยืนยันรายละเอียดงานได้'
+      );
+    } finally {
+      setIsConfirmingWorkDetail(false);
+    }
+  };
   const formattedSelectedDate = useMemo(() => {
     return selectedDate ? selectedDate.trim().slice(0, 10) : '';
   }, [selectedDate]);
@@ -710,6 +738,24 @@ export default function App() {
                   isDashboardFullscreen ? 'h-screen w-screen' : ''
                 }`}
               >
+                <div className="mb-3 flex shrink-0 flex-col justify-between gap-4 rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-sm sm:flex-row sm:items-center">
+                  <div>
+                    <h2 className="text-xl font-bold tracking-tight text-slate-800">
+                      Live Dashboard
+                    </h2>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Real-Time Truck Status Monitoring
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void toggleDashboardFullscreen()}
+                    className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-xs font-bold text-slate-700 shadow-sm hover:border-blue-400 hover:bg-blue-50 hover:text-blue-700"
+                  >
+                    {isDashboardFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+                    {isDashboardFullscreen ? 'EXIT FULL SCREEN' : 'FULL SCREEN'}
+                  </button>
+                </div>
                 <div className="mb-2 grid grid-cols-2 gap-2 md:grid-cols-4">
                   {[
                     ['Total Truck', stats.total, TruckIcon, 'text-blue-500'],
@@ -773,18 +819,6 @@ export default function App() {
                       <span className="hidden text-[9px] text-slate-500 sm:inline">
                         แสดง {visibleTrucks.length} รายการ
                       </span>
-                      <button
-                        type="button"
-                        onClick={() => void toggleDashboardFullscreen()}
-                        className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[9px] font-bold text-slate-700 shadow-sm hover:border-blue-400 hover:bg-blue-50 hover:text-blue-700"
-                      >
-                        {isDashboardFullscreen ? (
-                          <Minimize2 className="h-3.5 w-3.5" />
-                        ) : (
-                          <Maximize2 className="h-3.5 w-3.5" />
-                        )}
-                        {isDashboardFullscreen ? 'EXIT FULL SCREEN' : 'FULL SCREEN'}
-                      </button>
                     </div>
                   </div>
 
@@ -806,10 +840,20 @@ export default function App() {
                             <td className="whitespace-nowrap px-3 py-1.5 font-medium text-slate-700">{truck.supplierName || '-'}</td>
                             <td className="whitespace-nowrap px-3 py-1.5 font-bold text-slate-800">{truck.licensePlate}</td>
                             <td className="whitespace-nowrap px-3 py-1.5 font-medium text-slate-700">{truck.dropPoint}</td>
-                            <td className="max-w-[260px] px-3 py-1.5 text-slate-700">
-                              <span className="block truncate" title={truck.workDetail || '-'}>
-                                {truck.workDetail || '-'}
-                              </span>
+                            <td className="px-3 py-1.5 text-center">
+                              {truck.workDetail && !truck.workDetailConfirmed ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setWorkDetailTruck(truck)}
+                                  title="เปิดรายละเอียดงาน"
+                                  aria-label={`เปิดรายละเอียดงาน ${truck.route}`}
+                                  className="inline-flex h-9 w-9 animate-pulse items-center justify-center rounded-lg border-2 border-amber-600 bg-yellow-300 text-amber-950 shadow-sm transition hover:bg-yellow-400 active:scale-95"
+                                >
+                                  <AlertTriangle className="h-5 w-5" />
+                                </button>
+                              ) : (
+                                <span className="text-slate-300">-</span>
+                              )}
                             </td>
                             <td className="whitespace-nowrap px-3 py-1.5 font-mono text-slate-600">{truck.planEta || '-'}</td>
                             <td className="whitespace-nowrap px-3 py-1.5 font-mono">
@@ -999,6 +1043,75 @@ export default function App() {
             : document.body
         )}
 
+      {workDetailTruck &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[1450] flex items-center justify-center bg-slate-950/70 p-4"
+            onMouseDown={event => {
+              if (event.target === event.currentTarget && !isConfirmingWorkDetail) {
+                setWorkDetailTruck(null);
+              }
+            }}
+          >
+            <div className="w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-2xl">
+              <div className="flex items-start justify-between gap-4 border-b border-amber-200 bg-yellow-50 px-6 py-5">
+                <div className="flex items-start gap-3">
+                  <div className="rounded-xl border border-amber-400 bg-yellow-300 p-3 text-amber-950">
+                    <AlertTriangle className="h-6 w-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-bold text-slate-900">รายละเอียดงาน</h3>
+                    <p className="mt-1 text-sm text-slate-600">
+                      {workDetailTruck.route} · {workDetailTruck.licensePlate} · {workDetailTruck.dropPoint}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  disabled={isConfirmingWorkDetail}
+                  onClick={() => setWorkDetailTruck(null)}
+                  className="rounded-lg p-2 text-slate-500 hover:bg-amber-100 disabled:opacity-50"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              <div className="p-6">
+                <div className="max-h-[55vh] overflow-y-auto whitespace-pre-wrap break-words rounded-xl border border-slate-200 bg-slate-50 p-5 text-base leading-7 text-slate-800">
+                  {workDetailTruck.workDetail}
+                </div>
+                <p className="mt-4 text-sm text-slate-500">
+                  กรุณาตรวจสอบว่าดำเนินการตามรายละเอียดครบถ้วนก่อนกดยืนยัน
+                </p>
+                <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                  <button
+                    type="button"
+                    disabled={isConfirmingWorkDetail}
+                    onClick={() => setWorkDetailTruck(null)}
+                    className="rounded-xl bg-slate-100 px-6 py-3 font-bold text-slate-700 hover:bg-slate-200 disabled:opacity-50"
+                  >
+                    ปิด
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isConfirmingWorkDetail}
+                    onClick={() => void handleConfirmWorkDetail()}
+                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-6 py-3 font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {isConfirmingWorkDetail ? (
+                      <RefreshCw className="h-5 w-5 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="h-5 w-5" />
+                    )}
+                    {isConfirmingWorkDetail ? 'กำลังยืนยัน...' : 'ยืนยันดำเนินการแล้ว'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>,
+          isDashboardFullscreen && dashboardFullscreenRef.current
+            ? dashboardFullscreenRef.current
+            : document.body
+        )}
       {actionDialog.isOpen &&
         actionDialog.truck &&
         createPortal(
