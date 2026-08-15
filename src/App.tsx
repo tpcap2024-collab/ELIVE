@@ -91,6 +91,10 @@ function getDockGroup(value?: string): Exclude<DockFilter, 'ALL'> | '' {
   return match ? (match[1] as Exclude<DockFilter, 'ALL'>) : '';
 }
 
+function isInboundProject(truck: Truck): boolean {
+  return String(truck.project || '').trim().toUpperCase() === 'INBOUND';
+}
+
 function getPlanEtaSortValue(value?: string): number {
   const match = String(value || '').trim().match(/^(\d{1,2}):(\d{2})/);
   if (!match) return Number.MAX_SAFE_INTEGER;
@@ -290,11 +294,16 @@ export default function App() {
     );
   }, [trucks, formattedSelectedDate]);
 
+  const inboundTrucks = useMemo(
+    () => filteredTrucks.filter(isInboundProject),
+    [filteredTrucks]
+  );
+
   const filteredGpsLocations = useMemo(() => {
-    if (filteredTrucks.length === 0 || gpsLocations.length === 0) return [];
+    if (inboundTrucks.length === 0 || gpsLocations.length === 0) return [];
 
     const planLicensePlates = new Set<string>();
-    for (const truck of filteredTrucks) {
+    for (const truck of inboundTrucks) {
       const normalizedPlate = normalizeLicensePlate(truck.licensePlate);
       if (normalizedPlate) planLicensePlates.add(normalizedPlate);
     }
@@ -303,22 +312,22 @@ export default function App() {
       const normalizedPlate = normalizeLicensePlate(location.licensePlate);
       return normalizedPlate !== '' && planLicensePlates.has(normalizedPlate);
     });
-  }, [filteredTrucks, gpsLocations]);
+  }, [inboundTrucks, gpsLocations]);
 
   const stats = useMemo(() => ({
-    total: filteredTrucks.length,
-    unloading: filteredTrucks.filter((truck) =>
+    total: inboundTrucks.length,
+    unloading: inboundTrucks.filter((truck) =>
       truck.status === 'DOCK_IN' ||
       truck.status === 'UNLOADING' ||
       truck.status === 'UNLOADING_AT_TPCAP'
     ).length,
-    complete: filteredTrucks.filter((truck) =>
+    complete: inboundTrucks.filter((truck) =>
       truck.status === 'COMPLETED' || truck.status === 'TRUCK_OUT'
     ).length,
-    remain: filteredTrucks.filter((truck) =>
+    remain: inboundTrucks.filter((truck) =>
       truck.status !== 'COMPLETED' && truck.status !== 'TRUCK_OUT'
     ).length,
-  }), [filteredTrucks]);
+  }), [inboundTrucks]);
 
   const isDelayedNoStamp = (truck: Truck): boolean => {
     if (truck.stampEta || truck.actualEta) return false;
@@ -384,7 +393,7 @@ export default function App() {
   };
 
   const visibleTrucks = useMemo(() => {
-    return filteredTrucks
+    return inboundTrucks
       .filter(shouldShowTruck)
       .filter(truck =>
         dockFilter === 'ALL' ? true : getDockGroup(truck.dropPoint) === dockFilter
@@ -395,7 +404,7 @@ export default function App() {
         if (timeDifference !== 0) return timeDifference;
         return String(first.route || '').localeCompare(String(second.route || ''), 'en');
       });
-  }, [filteredTrucks, showHiddenRows, dockFilter]);
+  }, [inboundTrucks, showHiddenRows, dockFilter]);
 
   const totalPages = Math.max(1, Math.ceil(visibleTrucks.length / ROWS_PER_PAGE));
   const pageStartIndex = (currentPage - 1) * ROWS_PER_PAGE;
@@ -764,7 +773,7 @@ export default function App() {
 
             {currentView === 'map' && (
               <main className="flex-1 overflow-hidden bg-slate-50">
-                <LiveMap trucks={filteredTrucks} gpsLocations={filteredGpsLocations} initialTruckId={selectedGpsTruckId} onRefresh={loadData} isRefreshing={isRefreshing} />
+                <LiveMap trucks={inboundTrucks} gpsLocations={filteredGpsLocations} initialTruckId={selectedGpsTruckId} onRefresh={loadData} isRefreshing={isRefreshing} />
               </main>
             )}
             {currentView === 'diagram' && (
@@ -774,7 +783,7 @@ export default function App() {
               <main className="flex-1 overflow-hidden"><IncidentCenter trucks={filteredTrucks} onUpdateTruck={handleUpdateTruck} /></main>
             )}
             {currentView === 'warehouse' && (
-              <main className="flex-1 overflow-hidden"><WarehouseStamp trucks={filteredTrucks} onUpdateTruck={handleUpdateTruck} /></main>
+              <main className="flex-1 overflow-hidden"><WarehouseStamp trucks={inboundTrucks} onUpdateTruck={handleUpdateTruck} /></main>
             )}
           </>
         )}
@@ -897,7 +906,7 @@ export default function App() {
               </div>
               <div className="min-h-0 flex-1 overflow-hidden">
                 <LiveMap
-                  trucks={filteredTrucks}
+                  trucks={inboundTrucks}
                   gpsLocations={filteredGpsLocations}
                   initialTruckId={selectedGpsTruckId}
                   onRefresh={loadData}
