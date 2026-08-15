@@ -139,9 +139,7 @@ export default function App() {
 
   const requestRunningRef = useRef(false);
   const dashboardFullscreenRef = useRef<HTMLElement | null>(null);
-  const updateQueuesRef = useRef<Map<string, Promise<void>>>(new Map());
-  const pendingUpdatesRef = useRef<Map<string, Partial<Truck>>>(new Map());
-  const pendingCountsRef = useRef<Map<string, number>>(new Map());
+  const updateQueueRef = useRef<Promise<void>>(Promise.resolve());
   const trucksRef = useRef<Truck[]>(trucks);
 
   useEffect(() => {
@@ -158,12 +156,7 @@ export default function App() {
       const data = await fetchEliveDashboardData();
 
       if (data.trucks.length > 0) {
-        const mergedTrucks = data.trucks.map(truck => {
-          const pendingUpdates = pendingUpdatesRef.current.get(truck.id);
-          return pendingUpdates ? { ...truck, ...pendingUpdates } : truck;
-        });
-        trucksRef.current = mergedTrucks;
-        setTrucks(mergedTrucks);
+        setTrucks(data.trucks);
       }
 
       setGpsLocations(data.gpsLocations);
@@ -219,44 +212,27 @@ export default function App() {
     const currentTruck = trucksRef.current.find(truck => truck.id === id);
     if (!currentTruck) return Promise.resolve();
 
-    const requestBaseTruck = { ...currentTruck };
     const optimisticTruck = { ...currentTruck, ...updates };
     trucksRef.current = trucksRef.current.map(truck =>
       truck.id === id ? optimisticTruck : truck
     );
     setTrucks(trucksRef.current);
 
-    const existingPending = pendingUpdatesRef.current.get(id) || {};
-    pendingUpdatesRef.current.set(id, { ...existingPending, ...updates });
-    pendingCountsRef.current.set(id, (pendingCountsRef.current.get(id) || 0) + 1);
-
-    const previousQueue = updateQueuesRef.current.get(id) || Promise.resolve();
-    const queuedUpdate = previousQueue.then(async () => {
+    const queuedUpdate = updateQueueRef.current.then(async () => {
       try {
-        await updateTruckInSheets(id, updates, requestBaseTruck);
+        await updateTruckInSheets(id, updates, currentTruck);
         setSheetError(null);
       } catch (error) {
         console.error('Failed to update sheet:', error);
         setSheetError(
           error instanceof Error ? error.message : 'Failed to update truck data'
         );
-        pendingUpdatesRef.current.delete(id);
-        pendingCountsRef.current.delete(id);
         await loadData();
         throw error;
-      } finally {
-        const remaining = (pendingCountsRef.current.get(id) || 1) - 1;
-        if (remaining <= 0) {
-          pendingCountsRef.current.delete(id);
-          pendingUpdatesRef.current.delete(id);
-          updateQueuesRef.current.delete(id);
-        } else {
-          pendingCountsRef.current.set(id, remaining);
-        }
       }
     });
 
-    updateQueuesRef.current.set(id, queuedUpdate.catch(() => undefined));
+    updateQueueRef.current = queuedUpdate.catch(() => undefined);
     return queuedUpdate;
   };
 
