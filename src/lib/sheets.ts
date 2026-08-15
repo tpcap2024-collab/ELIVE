@@ -1071,6 +1071,7 @@ export async function fetchTrucksFromSheets(
       driverName: String(row[6] || ''),
       phone: String(row[7] || ''),
       project: String(row[8] || '').trim(),
+      workDetail: String(row[13] || '').trim(),
       dropPoint: String(row[9] || ''),
       planEta,
       planEtd,
