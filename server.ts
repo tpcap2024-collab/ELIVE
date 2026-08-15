@@ -7,7 +7,7 @@ import {
 const DEFAULT_APPS_SCRIPT_URL =
   'https://script.google.com/macros/s/AKfycbwV9sfFxE-9lN4A08EKGq55_RlBjlVcvK6Bdeddj8GT0-6huxxnz8oyT7zunl69PK3qJA/exec';
 
-const SERVER_VERSION = '9';
+const SERVER_VERSION = '10';
 const TPCAP_LATITUDE = 13.623729606202758;
 const TPCAP_LONGITUDE = 101.01501162061923;
 const OSRM_BASE_URL = 'https://router.project-osrm.org';
@@ -950,6 +950,7 @@ async function startServer() {
             '/api/plans/:codeRun',
             '/api/plans/:codeRun/cancel',
             '/api/plans/:codeRun/restore',
+            '/api/plans/:codeRun/confirm-work-detail',
             '/api/route-to-tpcap',
             '/api/gps/webhook',
           ],
@@ -1350,6 +1351,29 @@ async function startServer() {
           res,
           error,
           'Unable to update Plan.'
+        );
+      }
+    }
+  );
+
+  app.post(
+    '/api/plans/:codeRun/confirm-work-detail',
+    async (
+      req,
+      res
+    ) => {
+      try {
+        const codeRun = normalizeCodeRun(req.params.codeRun);
+        const result = await requestAppsScriptPost(
+          'confirmWorkDetail',
+          { codeRun }
+        );
+        return res.status(200).json(result);
+      } catch (error) {
+        return sendRouteError(
+          res,
+          error,
+          'Unable to confirm Work Detail.'
         );
       }
     }
