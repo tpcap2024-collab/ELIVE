@@ -1,7 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Truck } from '../types';
 import {
   CheckCircle2,
+  Maximize2,
+  Minimize2,
+  Search,
 } from 'lucide-react';
 import {
   calculatePerformanceStatus,
@@ -76,10 +79,11 @@ export function WarehouseStamp({
     setShowCompleted,
   ] = useState(false);
 
-  const [
-    filterPlatform,
-    setFilterPlatform,
-  ] = useState('ALL');
+  const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>([]);
+  const [platformSelectionInitialized, setPlatformSelectionInitialized] = useState(false);
+  const [routeSearch, setRouteSearch] = useState('');
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const fullscreenRef = useRef<HTMLDivElement | null>(null);
   const [saveStates, setSaveStates] = useState<
     Record<string, 'saving' | 'saved' | 'error'>
   >({});
@@ -108,6 +112,46 @@ export function WarehouseStamp({
     );
   }, [inboundTrucks]);
 
+  useEffect(() => {
+    if (!platformSelectionInitialized && uniquePlatforms.length > 0) {
+      setSelectedPlatforms(uniquePlatforms);
+      setPlatformSelectionInitialized(true);
+    }
+  }, [platformSelectionInitialized, uniquePlatforms]);
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(document.fullscreenElement === fullscreenRef.current);
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
+  const allPlatformsSelected = uniquePlatforms.length > 0 &&
+    uniquePlatforms.every(platform => selectedPlatforms.includes(platform));
+  const togglePlatform = (platform: string) => {
+    if (platform === 'ALL') {
+      setSelectedPlatforms(allPlatformsSelected ? [] : uniquePlatforms);
+      setPlatformSelectionInitialized(true);
+      return;
+    }
+    setSelectedPlatforms(current => current.includes(platform)
+      ? current.filter(item => item !== platform)
+      : [...current, platform]);
+    setPlatformSelectionInitialized(true);
+  };
+  const toggleFullscreen = async () => {
+    const element = fullscreenRef.current;
+    if (!element) return;
+    try {
+      if (document.fullscreenElement === element) {
+        await document.exitFullscreen();
+      } else {
+        if (document.fullscreenElement) await document.exitFullscreen();
+        await element.requestFullscreen();
+      }
+    } catch (error) {
+      console.error('Unable to change Stamp ETA/ETD fullscreen mode:', error);
+    }
+  };
   const activeTrucks = useMemo(() => {
     return inboundTrucks.filter(truck => {
       const hasBothStamps =
@@ -126,19 +170,11 @@ export function WarehouseStamp({
         return false;
       }
 
-      const truckPlatform =
-        getPlatformGroup(
-          truck.dropPoint
-        );
-
-      if (
-        filterPlatform !== 'ALL' &&
-        truckPlatform !==
-          filterPlatform
-      ) {
-        return false;
-      }
-
+      const truckPlatform = getPlatformGroup(truck.dropPoint);
+      if (!selectedPlatforms.includes(truckPlatform)) return false;
+      const query = routeSearch.trim().toLowerCase();
+      if (query && ![truck.route, truck.licensePlate, truck.dropPoint, truck.truckType]
+        .join(' ').toLowerCase().includes(query)) return false;
       return true;
     }).sort((first, second) => {
       const timeDifference =
@@ -149,8 +185,9 @@ export function WarehouseStamp({
   }, [
     inboundTrucks,
     showCompleted,
-    filterPlatform,
-  ]);
+    selectedPlatforms,
+    routeSearch,
+]);
 
   const updateSaveState = (
     truckId: string,
@@ -210,7 +247,7 @@ export function WarehouseStamp({
   };
 
   return (
-    <div className="flex h-full flex-col bg-slate-50 p-4 md:p-6 lg:p-8">
+    <div ref={fullscreenRef} className={`flex h-full flex-col bg-slate-50 p-4 md:p-6 lg:p-8 ${isFullscreen ? 'h-screen w-screen' : ''}`}>
       <div className="mb-6 flex shrink-0 flex-col justify-between gap-4 rounded-xl border border-slate-200 bg-white p-6 shadow-sm sm:flex-row sm:items-center">
         <div>
           <h2 className="text-xl font-bold tracking-tight text-slate-800">
@@ -223,30 +260,16 @@ export function WarehouseStamp({
         </div>
 
         <div className="flex flex-col items-center gap-3 sm:flex-row">
-          <select
-            value={filterPlatform}
-            onChange={event =>
-              setFilterPlatform(
-                event.target.value
-              )
-            }
-            className="rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-600 shadow-sm transition-colors hover:bg-slate-50 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-          >
-            <option value="ALL">
-              All Platforms
-            </option>
-
-            {uniquePlatforms.map(
-              platform => (
-                <option
-                  key={platform}
-                  value={platform}
-                >
-                  {platform}
-                </option>
-              )
-            )}
-          </select>
+          <div className="relative w-full sm:w-64">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input type="search" value={routeSearch} onChange={event => setRouteSearch(event.target.value)} placeholder="ค้นหา Route, ทะเบียนรถ..." className="w-full rounded-lg border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm text-slate-700 shadow-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" />
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" onClick={() => togglePlatform('ALL')} className={`rounded-lg border px-3 py-2 text-xs font-bold ${allPlatformsSelected ? 'border-slate-800 bg-slate-800 text-white' : 'border-slate-300 bg-white text-slate-600'}`}>ALL</button>
+            {uniquePlatforms.map(platform => (
+              <button key={platform} type="button" onClick={() => togglePlatform(platform)} className={`rounded-lg border px-3 py-2 text-xs font-bold ${selectedPlatforms.includes(platform) ? 'border-blue-700 bg-blue-600 text-white shadow-sm' : 'border-slate-300 bg-white text-slate-600'}`}>{platform}</button>
+            ))}
+          </div>
 
           <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-600 shadow-sm transition-colors hover:bg-slate-50">
             <input
@@ -262,6 +285,10 @@ export function WarehouseStamp({
 
             Show Stamped Routes
           </label>
+          <button type="button" onClick={() => void toggleFullscreen()} className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-xs font-bold text-slate-700 shadow-sm hover:bg-blue-50">
+            {isFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+            {isFullscreen ? 'EXIT FULL SCREEN' : 'FULL SCREEN'}
+          </button>
         </div>
       </div>
 
