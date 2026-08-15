@@ -319,6 +319,29 @@ export function PlatformDiagram({ trucks }: PlatformDiagramProps) {
       }`}
     >
       <div className="w-full shrink-0 border-b border-slate-200 bg-white px-2 py-2">
+        <div className="mb-2 flex w-full flex-col justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm lg:flex-row lg:items-center">
+          <div className="shrink-0">
+            <h2 className="text-xl font-bold tracking-tight text-slate-800">Platform Dashboard</h2>
+            <p className="mt-1 text-sm text-slate-500">Real-Time Dock and Truck Operation Monitoring</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="mr-1 whitespace-nowrap text-[9px] font-bold uppercase text-slate-500">Show Dock:</span>
+            <button type="button" onClick={allGroupsSelected ? clearAllGroups : selectAllGroups} className={`rounded-md border px-3 py-1.5 text-[9px] font-bold transition-colors ${allGroupsSelected ? 'border-slate-800 bg-slate-800 text-white' : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-100'}`}>ALL</button>
+            {GROUP_FILTER_OPTIONS.map(groupName => {
+              const isSelected = selectedGroups.includes(groupName);
+              return (
+                <button key={groupName} type="button" onClick={() => toggleGroupFilter(groupName)} className={`rounded-md border px-3 py-1.5 text-[9px] font-bold transition-colors ${isSelected ? 'border-blue-700 bg-blue-600 text-white shadow-sm' : 'border-slate-300 bg-white text-slate-500 hover:bg-slate-100'}`}>{groupName}</button>
+              );
+            })}
+          </div>
+          <div className="flex shrink-0 items-center gap-3">
+            <span className="whitespace-nowrap text-[9px] font-medium text-slate-500">แสดง {selectedGroups.length} จาก {GROUP_FILTER_OPTIONS.length} กลุ่ม</span>
+            <button type="button" onClick={() => void toggleDiagramFullscreen()} title={isDiagramFullscreen ? 'ออกจากโหมดเต็มหน้าจอ' : 'แสดง Platform Dashboard เต็มหน้าจอ'} className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-xs font-bold text-slate-700 shadow-sm hover:border-blue-400 hover:bg-blue-50 hover:text-blue-700">
+              {isDiagramFullscreen ? <Minimize2 className="h-4 w-4" /> : <Expand className="h-4 w-4" />}
+              {isDiagramFullscreen ? 'EXIT FULL SCREEN' : 'FULL SCREEN'}
+            </button>
+          </div>
+        </div>
         <div className="grid w-full grid-cols-2 gap-2 md:grid-cols-4">
           <div className="flex h-12 min-w-0 flex-col justify-center rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5">
             <p className="flex items-center gap-1 whitespace-nowrap text-[9px] font-bold uppercase text-slate-500">
@@ -362,60 +385,6 @@ export function PlatformDiagram({ trucks }: PlatformDiagramProps) {
         </div>
       </div>
 
-      <div className="flex w-full shrink-0 flex-wrap items-center gap-1.5 border-b border-slate-200 bg-white px-2 py-1.5">
-        <span className="mr-1 whitespace-nowrap text-[9px] font-bold uppercase text-slate-500">
-          Show Dock:
-        </span>
-
-        <button
-          type="button"
-          onClick={allGroupsSelected ? clearAllGroups : selectAllGroups}
-          className={`rounded-md border px-3 py-1 text-[9px] font-bold transition-colors ${
-            allGroupsSelected
-              ? 'border-slate-800 bg-slate-800 text-white'
-              : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-100'
-          }`}
-        >
-          ALL
-        </button>
-
-        {GROUP_FILTER_OPTIONS.map(groupName => {
-          const isSelected = selectedGroups.includes(groupName);
-          return (
-            <button
-              key={groupName}
-              type="button"
-              onClick={() => toggleGroupFilter(groupName)}
-              className={`rounded-md border px-3 py-1 text-[9px] font-bold transition-colors ${
-                isSelected
-                  ? 'border-blue-700 bg-blue-600 text-white shadow-sm'
-                  : 'border-slate-300 bg-white text-slate-500 hover:bg-slate-100'
-              }`}
-            >
-              {groupName}
-            </button>
-          );
-        })}
-
-        <div className="ml-auto flex items-center gap-2">
-          <span className="whitespace-nowrap text-[9px] font-medium text-slate-500">
-            แสดง {selectedGroups.length} จาก {GROUP_FILTER_OPTIONS.length} กลุ่ม
-          </span>
-
-          {!isDiagramFullscreen && (
-            <button
-              type="button"
-              onClick={() => void toggleDiagramFullscreen()}
-              title="แสดง Platform Dashboard เต็มหน้าจอ"
-              className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[9px] font-bold text-slate-700 shadow-sm transition-colors hover:border-blue-400 hover:bg-blue-50 hover:text-blue-700"
-            >
-              <Expand className="h-3.5 w-3.5" />
-              FULL SCREEN
-            </button>
-          )}
-        </div>
-      </div>
-
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-slate-50">
         <div
           className="relative min-h-0 min-w-0 flex-1 overflow-x-scroll overflow-y-auto bg-slate-50"
@@ -434,27 +403,6 @@ export function PlatformDiagram({ trucks }: PlatformDiagramProps) {
               flex: `0 0 ${TIMELINE_WIDTH}px`,
             }}
           >
-            <div className="sticky top-0 z-50 flex h-8 w-full shrink-0 items-center gap-2 border-b border-slate-900 bg-slate-800 px-2">
-              <div className="sticky left-2 z-[60] mr-auto flex items-center gap-2 whitespace-nowrap">
-                <span className="text-[11px] font-bold text-white">
-                  PLATFORM DIAGRAM
-                </span>
-
-                {isDiagramFullscreen && (
-                  <button
-                    type="button"
-                    onClick={() => void toggleDiagramFullscreen()}
-                    title="ออกจากโหมดเต็มหน้าจอ"
-                    className="inline-flex items-center gap-1 rounded border border-white/30 bg-white/10 px-2 py-0.5 text-[8px] font-bold text-white transition-colors hover:bg-white/20"
-                  >
-                    <Minimize2 className="h-3 w-3" />
-                    EXIT FULL SCREEN
-                  </button>
-                )}
-              </div>
-
-            </div>
-
             {filteredGroups.length === 0 && (
               <div className="flex h-40 w-full items-center justify-center border-b border-slate-300 bg-white text-sm font-semibold text-slate-500">
                 กรุณาเลือกช่องที่ต้องการแสดงอย่างน้อย 1 กลุ่ม
