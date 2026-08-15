@@ -36,6 +36,23 @@ function getPlatformGroup(
     : normalizedDropPoint.toUpperCase();
 }
 
+function isInboundProject(truck: Truck): boolean {
+  return String(truck.project || '').trim().toUpperCase() === 'INBOUND';
+}
+
+function getPlanEtaSortValue(value?: string): number {
+  const match = String(value || '').trim().match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return Number.MAX_SAFE_INTEGER;
+
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    return Number.MAX_SAFE_INTEGER;
+  }
+
+  return hour * 60 + minute;
+}
+
 function getCurrentTimeString(): string {
   const now = new Date();
 
@@ -64,10 +81,15 @@ export function WarehouseStamp({
     setFilterPlatform,
   ] = useState('ALL');
 
+  const inboundTrucks = useMemo(
+    () => trucks.filter(isInboundProject),
+    [trucks]
+  );
+
   const uniquePlatforms = useMemo(() => {
     const platforms = Array.from(
       new Set(
-        trucks
+        inboundTrucks
           .map(truck =>
             getPlatformGroup(
               truck.dropPoint
@@ -81,10 +103,10 @@ export function WarehouseStamp({
       (first, second) =>
         first.localeCompare(second)
     );
-  }, [trucks]);
+  }, [inboundTrucks]);
 
   const activeTrucks = useMemo(() => {
-    return trucks.filter(truck => {
+    return inboundTrucks.filter(truck => {
       const hasBothStamps =
         Boolean(truck.stampEta) &&
         Boolean(truck.stampEtd);
@@ -115,9 +137,14 @@ export function WarehouseStamp({
       }
 
       return true;
+    }).sort((first, second) => {
+      const timeDifference =
+        getPlanEtaSortValue(first.planEta) - getPlanEtaSortValue(second.planEta);
+      if (timeDifference !== 0) return timeDifference;
+      return String(first.route || '').localeCompare(String(second.route || ''), 'en');
     });
   }, [
-    trucks,
+    inboundTrucks,
     showCompleted,
     filterPlatform,
   ]);
@@ -229,6 +256,10 @@ export function WarehouseStamp({
               </th>
 
               <th className="p-4">
+                ทะเบียนรถ
+              </th>
+
+              <th className="p-4">
                 Platform
               </th>
 
@@ -271,14 +302,12 @@ export function WarehouseStamp({
                     {truck.planEta || '-'}
                   </td>
 
-                  <td className="p-4">
-                    <div className="font-bold text-slate-900">
-                      {truck.route}
-                    </div>
+                  <td className="p-4 font-bold text-slate-900">
+                    {truck.route}
+                  </td>
 
-                    <div className="text-xs text-slate-500">
-                      {truck.licensePlate}
-                    </div>
+                  <td className="p-4 font-bold text-slate-800">
+                    {truck.licensePlate || '-'}
                   </td>
 
                   <td className="p-4 font-bold text-slate-700">
@@ -345,7 +374,7 @@ export function WarehouseStamp({
             {activeTrucks.length === 0 && (
               <tr>
                 <td
-                  colSpan={7}
+                  colSpan={8}
                   className="p-12 text-center text-slate-500"
                 >
                   <CheckCircle2 className="mx-auto mb-3 h-10 w-10 text-slate-300" />
