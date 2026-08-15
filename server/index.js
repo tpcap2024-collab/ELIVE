@@ -3,7 +3,7 @@ import cors from 'cors';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '9';
+const API_VERSION = '10';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -680,6 +680,7 @@ app.get(['/health', '/api/health'], (req, res) => {
       '/api/plans/:codeRun',
       '/api/plans/:codeRun/cancel',
       '/api/plans/:codeRun/restore',
+      '/api/plans/:codeRun/confirm-work-detail',
       '/api/route-to-tpcap',
     ],
     appsScript: {
@@ -865,6 +866,17 @@ app.put('/api/plans/:codeRun', async (req, res) => {
     return res.status(200).json(result);
   } catch (error) {
     return sendRouteError(res, error, 'Unable to update Plan.');
+  }
+});
+
+app.post('/api/plans/:codeRun/confirm-work-detail', async (req, res) => {
+  try {
+    const codeRun = normalizeCodeRun(req.params.codeRun);
+    const result = await requestAppsScriptPost('confirmWorkDetail', { codeRun });
+    clearTruckCache();
+    return res.status(200).json(result);
+  } catch (error) {
+    return sendRouteError(res, error, 'Unable to confirm Work Detail.');
   }
 });
 
