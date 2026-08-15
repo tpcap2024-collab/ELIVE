@@ -145,6 +145,7 @@ export interface DailyPlan {
   planEtd: string;
   remark: PlanRemark;
   workDetail: string;
+  workDetailConfirmed: boolean;
 }
 
 export interface EditablePlan {
@@ -530,6 +531,7 @@ function mapDailyPlan(value: any): DailyPlan {
     planEtd: parseGoogleSheetsTime(value?.planEtd),
     remark: normalizePlanRemark(value?.remark),
     workDetail: String(value?.workDetail || '').trim(),
+    workDetailConfirmed: String(value?.workDetailConfirmed || '').trim().toUpperCase() === 'CONFIRMED',
   };
 }
 
@@ -951,6 +953,24 @@ export async function restoreDailyPlan(
   };
 }
 
+export async function confirmWorkDetail(
+  codeRun: string
+): Promise<void> {
+  const validCodeRun = normalizeCodeRun(codeRun);
+  const data = await fetchApiRequest(
+    `/api/plans/${encodeURIComponent(validCodeRun)}/confirm-work-detail`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    }
+  );
+
+  if (data.success !== true || !data.result || data.result.success !== true) {
+    throw new Error(data.error || 'The server did not confirm Work Detail completion.');
+  }
+}
+
 function mapTruckStatus(currentStatus: string): TruckStatus {
   const value = String(currentStatus || '').trim().toLowerCase();
 
@@ -1076,6 +1096,7 @@ export async function fetchTrucksFromSheets(
       phone: String(row[7] || ''),
       project: String(row[8] || '').trim(),
       workDetail: String(row[13] || '').trim(),
+      workDetailConfirmed: String(row[14] || '').trim().toUpperCase() === 'CONFIRMED',
       dropPoint: String(row[9] || ''),
       planEta,
       planEtd,
