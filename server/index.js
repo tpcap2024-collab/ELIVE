@@ -1,6 +1,6 @@
 import express from 'express';
 import cors from 'cors';
-import { createHash, pbkdf2 as pbkdf2Callback, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, pbkdf2 as pbkdf2Callback, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import { createClient } from 'redis';
 
@@ -25,6 +25,8 @@ const MASTER_PLAN_CACHE_DURATION_MS = 60000;
 const APPS_SCRIPT_TIMEOUT_MS = 60000;
 const ROUTE_TIMEOUT_MS = 15000;
 const APPS_SCRIPT_MAX_ATTEMPTS = 3;
+const APPS_SCRIPT_SIGNATURE_MAX_AGE_MS = 5 * 60 * 1000;
+const APPS_SCRIPT_SHARED_SECRET = String(process.env.APPS_SCRIPT_SHARED_SECRET || '').trim();
 const MAX_UPLOAD_ROWS = 500;
 const MAX_LOGIN_USERNAME_LENGTH = 100;
 const MAX_LOGIN_PASSWORD_LENGTH = 200;
@@ -643,19 +645,42 @@ function recordAppsScriptError(error) {
   lastAppsScriptErrorTime = new Date().toISOString();
 }
 
+function validateAppsScriptSharedSecret() {
+  if (!APPS_SCRIPT_SHARED_SECRET || APPS_SCRIPT_SHARED_SECRET.length < 32) {
+    throw new Error('APPS_SCRIPT_SHARED_SECRET must contain at least 32 characters.');
+  }
+}
+function stableStringify(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(',')}}`;
+}
+function createAppsScriptSignature(method, action, payload) {
+  validateAppsScriptSharedSecret();
+  const timestamp=String(Date.now());
+  const nonce=randomBytes(24).toString('hex');
+  const payloadHash=createHash('sha256').update(stableStringify(payload)).digest('hex');
+  const canonicalText=[String(method).toUpperCase(),timestamp,nonce,String(action),payloadHash].join('\n');
+  const signature=createHmac('sha256',APPS_SCRIPT_SHARED_SECRET).update(canonicalText).digest('hex');
+  return {timestamp,nonce,signature};
+}
+
 async function requestAppsScriptGet(action, parameters = {}) {
   validateAppsScriptUrl();
 
+  const signedParameters = {};
+  for (const [key, value] of Object.entries(parameters)) {
+    if (value !== undefined && value !== null) signedParameters[key] = String(value);
+  }
+  const auth = createAppsScriptSignature('GET', action, signedParameters);
   const queryData = {
     action,
+    ...signedParameters,
+    authTimestamp: auth.timestamp,
+    authNonce: auth.nonce,
+    authSignature: auth.signature,
     t: String(Date.now()),
   };
-
-  for (const [key, value] of Object.entries(parameters)) {
-    if (value !== undefined && value !== null) {
-      queryData[key] = String(value);
-    }
-  }
 
   const requestUrl = `${APPS_SCRIPT_URL}?${new URLSearchParams(
     queryData
@@ -746,6 +771,7 @@ async function requestAppsScriptPost(action, payload = {}) {
         body: JSON.stringify({
           action,
           ...payload,
+          _auth: createAppsScriptSignature('POST', action, { action, ...payload }),
         }),
         cache: 'no-store',
       },
@@ -1168,6 +1194,8 @@ app.get(['/health', '/api/health'], (req, res) => {
     sessionStore: { type: 'redis', configured: Boolean(REDIS_URL), ready: Boolean(redisReady && redisClient?.isReady), lastError: lastRedisError },
     appsScript: {
       configured: Boolean(APPS_SCRIPT_URL),
+      signatureConfigured: Boolean(APPS_SCRIPT_SHARED_SECRET && APPS_SCRIPT_SHARED_SECRET.length >= 32),
+      signatureMaxAgeSeconds: Math.floor(APPS_SCRIPT_SIGNATURE_MAX_AGE_MS / 1000),
       validFormat: Boolean(
         APPS_SCRIPT_URL &&
           APPS_SCRIPT_URL.startsWith('https://script.google.com/macros/s/') &&
@@ -1519,7 +1547,8 @@ app.use((error, req, res, next) => {
 
 try {
   validateAppsScriptUrl();
-  console.log('Apps Script URL validated:', getMaskedAppsScriptUrl());
+  validateAppsScriptSharedSecret();
+  console.log('Apps Script URL and request signature validated:', getMaskedAppsScriptUrl());
 } catch (error) {
   console.error('Apps Script configuration warning:', getErrorMessage(error));
 }
