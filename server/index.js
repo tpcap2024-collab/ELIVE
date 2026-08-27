@@ -122,6 +122,26 @@ function getSessionFromRequest(req){ const token=parseCookies(req.headers.cookie
 function setSessionCookie(res,token){ res.cookie(SESSION_COOKIE_NAME,token,{httpOnly:true,secure:true,sameSite:'none',path:'/',maxAge:SESSION_DURATION_MS}); }
 function clearSessionCookie(res){ res.clearCookie(SESSION_COOKIE_NAME,{httpOnly:true,secure:true,sameSite:'none',path:'/'}); }
 function createSessionResponse(session){ return {username:session.username,role:session.role,expiresAt:new Date(session.expiresAt).toISOString()}; }
+function requireAuthentication(req, res, next) {
+  const sessionRecord = getSessionFromRequest(req);
+  if (!sessionRecord) {
+    clearSessionCookie(res);
+    return res.status(401).json({
+      success: false,
+      authenticated: false,
+      error: 'Authentication required.',
+    });
+  }
+
+  req.auth = {
+    username: sessionRecord.session.username,
+    role: sessionRecord.session.role,
+    expiresAt: sessionRecord.session.expiresAt,
+  };
+  req.authSessionTokenHash = sessionRecord.tokenHash;
+  return next();
+}
+
 function cleanupExpiredSessions(){ const now=Date.now(); for(const [tokenHash,session] of sessions.entries()){ if(session.expiresAt<=now) sessions.delete(tokenHash); } }
 const sessionCleanupTimer=setInterval(cleanupExpiredSessions,SESSION_CLEANUP_INTERVAL_MS); sessionCleanupTimer.unref();
 
@@ -686,6 +706,22 @@ function sendRouteError(res, error, fallbackMessage, statusCode = 400) {
 
 app.post('/api/auth/login', async (req,res)=>{ try { const username=normalizeLoginUsername(req.body?.username); const password=normalizeLoginPassword(req.body?.password); const users=getConfiguredAuthUsers(); const user=users.find(item=>item.username===username); if(!user||!user.active){ await waitForLoginFailure(); return res.status(401).json({success:false,error:'Username or password is incorrect.'}); } const passwordIsValid=await verifyLoginPassword(password,user); if(!passwordIsValid){ await waitForLoginFailure(); return res.status(401).json({success:false,error:'Username or password is incorrect.'}); } const {token,session}=createSession(user); setSessionCookie(res,token); return res.status(200).json({success:true,user:createLoginUserResponse(user),session:createSessionResponse(session),compatibilityMode:true,timestamp:new Date().toISOString()}); } catch(error){ const errorCode=getErrorMessage(error); if(errorCode==='LOGIN_PAYLOAD_INVALID') return res.status(400).json({success:false,error:'A valid username and password are required.'}); if(errorCode==='AUTH_CONFIG_MISSING'||errorCode==='AUTH_CONFIG_INVALID'){ console.error('Authentication configuration error:',errorCode); return res.status(503).json({success:false,error:'Authentication service is not configured.'}); } console.error('Login endpoint error:',getErrorMessage(error)); return res.status(500).json({success:false,error:'Unable to process login.'}); } });
 
+app.get('/api/auth/verify', requireAuthentication, (req, res) => {
+  return res.status(200).json({
+    success: true,
+    authenticated: true,
+    user: {
+      username: req.auth.username,
+      role: req.auth.role,
+    },
+    session: {
+      expiresAt: new Date(req.auth.expiresAt).toISOString(),
+    },
+    compatibilityMode: true,
+    timestamp: new Date().toISOString(),
+  });
+});
+
 app.get('/api/auth/session',(req,res)=>{ const record=getSessionFromRequest(req); if(!record){ clearSessionCookie(res); return res.status(401).json({success:false,authenticated:false,error:'Authentication required.'}); } return res.status(200).json({success:true,authenticated:true,user:{username:record.session.username,role:record.session.role},session:createSessionResponse(record.session),compatibilityMode:true,timestamp:new Date().toISOString()}); });
 app.post('/api/auth/logout',(req,res)=>{ const record=getSessionFromRequest(req); if(record) sessions.delete(record.tokenHash); clearSessionCookie(res); return res.status(200).json({success:true,message:'Logged out.',timestamp:new Date().toISOString()}); });
 
@@ -711,6 +747,7 @@ app.get(['/health', '/api/health'], (req, res) => {
       '/health',
       '/api/health',
       '/api/auth/login',
+      '/api/auth/verify',
       '/api/auth/session',
       '/api/auth/logout',
       '/api/trucks',
