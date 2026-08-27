@@ -941,7 +941,27 @@ app.get(
 );
 
 app.get('/api/auth/session',(req,res)=>{ const record=getSessionFromRequest(req); if(!record){ clearSessionCookie(res); return res.status(401).json({success:false,authenticated:false,error:'Authentication required.'}); } return res.status(200).json({success:true,authenticated:true,user:{username:record.session.username,role:record.session.role},session:createSessionResponse(record.session),compatibilityMode:true,timestamp:new Date().toISOString()}); });
-app.post('/api/auth/logout',(req,res)=>{ const record=getSessionFromRequest(req); if(record) sessions.delete(record.tokenHash); clearSessionCookie(res); return res.status(200).json({success:true,message:'Logged out.',timestamp:new Date().toISOString()}); });
+app.post('/api/auth/logout', (req, res) => {
+  const record = getSessionFromRequest(req);
+
+  if (record) {
+    req.auth = {
+      username: record.session.username,
+      role: record.session.role,
+      expiresAt: record.session.expiresAt,
+    };
+
+    sessions.delete(record.tokenHash);
+  }
+
+  clearSessionCookie(res);
+
+  return res.status(200).json({
+    success: true,
+    message: 'Logged out.',
+    timestamp: new Date().toISOString(),
+  });
+});
 
 app.get('/', (req, res) => {
   return res.json({
