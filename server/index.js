@@ -764,7 +764,7 @@ app.get('/api/auth/verify', requireAuthentication, (req, res) => {
     session: {
       expiresAt: new Date(req.auth.expiresAt).toISOString(),
     },
-    compatibilityMode: true,
+    compatibilityMode: false,
     timestamp: new Date().toISOString(),
   });
 });
@@ -798,7 +798,7 @@ app.get(
         role: req.auth.role,
       },
       requiredRole: req.authorization.requiredRole,
-      compatibilityMode: true,
+      compatibilityMode: false,
       timestamp: new Date().toISOString(),
     });
   }
@@ -877,7 +877,7 @@ app.get(['/health', '/api/health'], (req, res) => {
   });
 });
 
-app.get('/api/trucks', async (req, res) => {
+app.get('/api/trucks', requireAuthentication, requireMinimumRole('TV_VIEWER'), async (req, res) => {
   try {
     const forceRefresh =
       cleanText(req.query.refresh).toLowerCase() === 'true';
@@ -903,7 +903,7 @@ app.get('/api/trucks', async (req, res) => {
   }
 });
 
-app.get('/api/master-plan', async (req, res) => {
+app.get('/api/master-plan', requireAuthentication, requireMinimumRole('TV_VIEWER'), async (req, res) => {
   try {
     const forceRefresh =
       cleanText(req.query.refresh).toLowerCase() === 'true';
@@ -929,7 +929,7 @@ app.get('/api/master-plan', async (req, res) => {
   }
 });
 
-app.post('/api/master-plan/rows', async (req, res) => {
+app.post('/api/master-plan/rows', requireAuthentication, requireMinimumRole('PLANNER'), async (req, res) => {
   try {
     const row = normalizeMasterPlanRow(req.body);
     const result = await requestAppsScriptPost('createMasterPlanRow', { row });
@@ -942,7 +942,7 @@ app.post('/api/master-plan/rows', async (req, res) => {
   }
 });
 
-app.put('/api/master-plan/rows/:sheetRow', async (req, res) => {
+app.put('/api/master-plan/rows/:sheetRow', requireAuthentication, requireMinimumRole('PLANNER'), async (req, res) => {
   try {
     const sheetRow = normalizeMasterPlanSheetRow(req.params.sheetRow);
     const row = normalizeMasterPlanRow(req.body);
@@ -959,7 +959,7 @@ app.put('/api/master-plan/rows/:sheetRow', async (req, res) => {
   }
 });
 
-app.delete('/api/master-plan/rows/:sheetRow', async (req, res) => {
+app.delete('/api/master-plan/rows/:sheetRow', requireAuthentication, requireMinimumRole('SUPERVISOR'), async (req, res) => {
   try {
     const sheetRow = normalizeMasterPlanSheetRow(req.params.sheetRow);
     const result = await requestAppsScriptPost('deleteMasterPlanRow', {
@@ -974,7 +974,7 @@ app.delete('/api/master-plan/rows/:sheetRow', async (req, res) => {
   }
 });
 
-app.post('/api/plans/preview', async (req, res) => {
+app.post('/api/plans/preview', requireAuthentication, requireMinimumRole('PLANNER'), async (req, res) => {
   try {
     const request = validatePlanPeriodRequest(req.body);
     const result = await requestAppsScriptPost('previewPlanPeriod', request);
@@ -984,7 +984,7 @@ app.post('/api/plans/preview', async (req, res) => {
   }
 });
 
-app.post('/api/plans/create', async (req, res) => {
+app.post('/api/plans/create', requireAuthentication, requireMinimumRole('PLANNER'), async (req, res) => {
   try {
     const request = validatePlanPeriodRequest(req.body);
     const result = await requestAppsScriptPost('createPlanPeriod', request);
@@ -995,7 +995,7 @@ app.post('/api/plans/create', async (req, res) => {
   }
 });
 
-app.get('/api/plans/daily', async (req, res) => {
+app.get('/api/plans/daily', requireAuthentication, requireMinimumRole('TV_VIEWER'), async (req, res) => {
   try {
     const date = validateDateText(req.query.date, 'date');
     const result = await requestAppsScriptGet('getDailyPlans', { date });
@@ -1006,7 +1006,7 @@ app.get('/api/plans/daily', async (req, res) => {
   }
 });
 
-app.post('/api/plans/extra', async (req, res) => {
+app.post('/api/plans/extra', requireAuthentication, requireMinimumRole('PLANNER'), async (req, res) => {
   try {
     const plan = normalizeEditablePlan(req.body);
     const result = await requestAppsScriptPost('createExtraPlan', { plan });
@@ -1017,7 +1017,7 @@ app.post('/api/plans/extra', async (req, res) => {
   }
 });
 
-app.put('/api/plans/:codeRun', async (req, res) => {
+app.put('/api/plans/:codeRun', requireAuthentication, requireMinimumRole('PLANNER'), async (req, res) => {
   try {
     const codeRun = normalizeCodeRun(req.params.codeRun);
     const plan = normalizeEditablePlan(req.body);
@@ -1034,7 +1034,7 @@ app.put('/api/plans/:codeRun', async (req, res) => {
   }
 });
 
-app.post('/api/plans/:codeRun/confirm-work-detail', async (req, res) => {
+app.post('/api/plans/:codeRun/confirm-work-detail', requireAuthentication, requireMinimumRole('OPERATOR'), async (req, res) => {
   try {
     const codeRun = normalizeCodeRun(req.params.codeRun);
     const result = await requestAppsScriptPost('confirmWorkDetail', { codeRun });
@@ -1045,7 +1045,7 @@ app.post('/api/plans/:codeRun/confirm-work-detail', async (req, res) => {
   }
 });
 
-app.post('/api/plans/:codeRun/cancel', async (req, res) => {
+app.post('/api/plans/:codeRun/cancel', requireAuthentication, requireMinimumRole('SUPERVISOR'), async (req, res) => {
   try {
     const codeRun = normalizeCodeRun(req.params.codeRun);
     const result = await requestAppsScriptPost('cancelPlan', { codeRun });
@@ -1056,7 +1056,7 @@ app.post('/api/plans/:codeRun/cancel', async (req, res) => {
   }
 });
 
-app.post('/api/plans/:codeRun/restore', async (req, res) => {
+app.post('/api/plans/:codeRun/restore', requireAuthentication, requireMinimumRole('SUPERVISOR'), async (req, res) => {
   try {
     const codeRun = normalizeCodeRun(req.params.codeRun);
     const restoreAs = cleanText(req.body?.restoreAs || 'REGULAR').toUpperCase();
@@ -1077,7 +1077,7 @@ app.post('/api/plans/:codeRun/restore', async (req, res) => {
   }
 });
 
-app.post('/api/trucks/update', async (req, res) => {
+app.post('/api/trucks/update', requireAuthentication, requireMinimumRole('OPERATOR'), async (req, res) => {
   try {
     const truckId = cleanText(req.body?.truckId);
     const newRow = req.body?.newRow;
@@ -1097,7 +1097,7 @@ app.post('/api/trucks/update', async (req, res) => {
   }
 });
 
-app.get('/api/route-to-tpcap', async (req, res) => {
+app.get('/api/route-to-tpcap', requireAuthentication, requireMinimumRole('TV_VIEWER'), async (req, res) => {
   try {
     const latitude = Number(req.query.lat);
     const longitude = Number(req.query.lng);
@@ -1171,7 +1171,7 @@ app.get('/api/route-to-tpcap', async (req, res) => {
   }
 });
 
-app.post('/api/cache/clear', (req, res) => {
+app.post('/api/cache/clear', requireAuthentication, requireMinimumRole('ADMIN'), (req, res) => {
   clearTruckCache();
   clearMasterPlanCache();
 
