@@ -23,8 +23,13 @@ import {
 
 import {
   confirmWorkDetail,
+  EliveAuthUser,
   fetchEliveDashboardData,
+  fetchEliveSession,
   getAppsScriptUrl,
+  isEliveUnauthorizedError,
+  loginElive,
+  logoutElive,
   updateTruckInSheets,
 } from './lib/sheets';
 
@@ -143,9 +148,11 @@ export default function App() {
   const [hasLoadedSuccessfully, setHasLoadedSuccessfully] = useState(false);
   const [appLoginUser, setAppLoginUser] = useState('');
   const [appLoginPw, setAppLoginPw] = useState('');
-  const [isAppLoggedIn, setIsAppLoggedIn] = useState(
-    localStorage.getItem('isAppLoggedIn') === 'true'
-  );
+  const [authenticatedUser, setAuthenticatedUser] = useState<EliveAuthUser | null>(null);
+  const [isCheckingSession, setIsCheckingSession] = useState(true);
+  const [isSubmittingLogin, setIsSubmittingLogin] = useState(false);
+  const [loginError, setLoginError] = useState('');
+  const isAppLoggedIn = authenticatedUser !== null;
 
   const requestRunningRef = useRef(false);
   const dashboardFullscreenRef = useRef<HTMLElement | null>(null);
@@ -155,6 +162,35 @@ export default function App() {
   useEffect(() => {
     trucksRef.current = trucks;
   }, [trucks]);
+
+  useEffect(() => {
+    let isActive = true;
+
+    const restoreSession = async () => {
+      try {
+        const result = await fetchEliveSession();
+        if (!isActive) return;
+        if (result.success && result.authenticated && result.user) {
+          setAuthenticatedUser(result.user);
+        } else {
+          setAuthenticatedUser(null);
+        }
+      } catch (error) {
+        if (!isActive) return;
+        if (!isEliveUnauthorizedError(error)) {
+          console.error('Unable to restore ELIVE session:', error);
+        }
+        setAuthenticatedUser(null);
+      } finally {
+        if (isActive) setIsCheckingSession(false);
+      }
+    };
+
+    void restoreSession();
+    return () => {
+      isActive = false;
+    };
+  }, []);
 
   const loadData = useCallback(async () => {
     if (requestRunningRef.current) return;
@@ -507,36 +543,90 @@ export default function App() {
     if (currentPage > totalPages) setCurrentPage(1);
   }, [currentPage, totalPages]);
 
-  const handleAppLogin = (event: React.FormEvent) => {
+  const handleAppLogin = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (isSubmittingLogin) return;
 
-    if (appLoginUser === 'TTKA' && appLoginPw === '1234') {
-      setIsAppLoggedIn(true);
-      localStorage.setItem('isAppLoggedIn', 'true');
-      return;
+    setIsSubmittingLogin(true);
+    setLoginError('');
+    try {
+      const result = await loginElive(appLoginUser, appLoginPw);
+      if (!result.success || !result.user) {
+        throw new Error('ไม่สามารถเข้าสู่ระบบได้');
+      }
+      setAuthenticatedUser(result.user);
+      setAppLoginPw('');
+    } catch (error) {
+      console.error('ELIVE login failed:', error);
+      setAuthenticatedUser(null);
+      setAppLoginPw('');
+      setLoginError(
+        error instanceof Error
+          ? error.message
+          : 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง'
+      );
+    } finally {
+      setIsSubmittingLogin(false);
     }
-
-    alert('Invalid Username or Password');
   };
+
+  const handleAppLogout = async () => {
+    try {
+      await logoutElive();
+    } catch (error) {
+      console.error('ELIVE logout failed:', error);
+    } finally {
+      setAuthenticatedUser(null);
+      setAppLoginUser('');
+      setAppLoginPw('');
+      setLoginError('');
+      setCurrentView('dashboard');
+      setShowSettings(false);
+      setShowPlanAccessDialog(false);
+      setActionDialog({ isOpen: false, truck: null });
+      setWorkDetailTruck(null);
+      closeGpsPopup();
+    }
+  };
+
+  if (isCheckingSession) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50 font-sans">
+        <div className="flex flex-col items-center gap-4 rounded-2xl border border-slate-200 bg-white px-10 py-8 shadow-sm">
+          <RefreshCw className="h-8 w-8 animate-spin text-blue-600" />
+          <div className="text-center">
+            <h1 className="font-bold text-slate-800">ELIVE</h1>
+            <p className="mt-1 text-sm text-slate-500">กำลังตรวจสอบ Session...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (!isAppLoggedIn) {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50 font-sans">
+      <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50 px-4 font-sans">
         <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
           <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-blue-600">
             <span className="text-3xl font-bold italic text-white">E</span>
           </div>
           <h1 className="mb-2 text-center text-2xl font-bold text-slate-800">ELIVE Login</h1>
-          <p className="mb-6 text-center text-sm text-slate-500">Sign in to access your dashboard</p>
+          <p className="mb-6 text-center text-sm text-slate-500">เข้าสู่ระบบเพื่อใช้งาน ELIVE Dashboard</p>
           <form onSubmit={handleAppLogin} className="space-y-4">
             <label className="block">
               <span className="mb-1 block text-sm font-medium text-slate-700">Username</span>
               <input
                 type="text"
                 value={appLoginUser}
-                onChange={(event) => setAppLoginUser(event.target.value)}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="Enter username"
+                onChange={(event) => {
+                  setAppLoginUser(event.target.value);
+                  if (loginError) setLoginError('');
+                }}
+                disabled={isSubmittingLogin}
+                autoComplete="username"
+                required
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100"
+                placeholder="กรอก Username"
               />
             </label>
             <label className="block">
@@ -544,15 +634,35 @@ export default function App() {
               <input
                 type="password"
                 value={appLoginPw}
-                onChange={(event) => setAppLoginPw(event.target.value)}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="Enter password"
+                onChange={(event) => {
+                  setAppLoginPw(event.target.value);
+                  if (loginError) setLoginError('');
+                }}
+                disabled={isSubmittingLogin}
+                autoComplete="current-password"
+                required
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100"
+                placeholder="กรอก Password"
               />
             </label>
-            <button type="submit" className="w-full rounded-xl bg-blue-600 px-4 py-2.5 font-bold text-white hover:bg-blue-700">
-              Sign In
+            {loginError && (
+              <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>{loginError}</span>
+              </div>
+            )}
+            <button
+              type="submit"
+              disabled={isSubmittingLogin}
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 font-bold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isSubmittingLogin && <RefreshCw className="h-4 w-4 animate-spin" />}
+              {isSubmittingLogin ? 'กำลังเข้าสู่ระบบ...' : 'Sign In'}
             </button>
           </form>
+          <p className="mt-5 text-center text-xs text-slate-400">
+            Session จะหมดอายุภายใน 12 ชั่วโมง หรือเมื่อระบบ Backend เริ่มทำงานใหม่
+          </p>
         </div>
       </div>
     );
@@ -645,10 +755,7 @@ export default function App() {
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  setIsAppLoggedIn(false);
-                  localStorage.removeItem('isAppLoggedIn');
-                }}
+                onClick={() => void handleAppLogout()}
                 className="flex w-full items-center gap-3 px-3 py-2 text-sm text-red-500 hover:text-red-700"
               >
                 <X className="h-5 w-5" /> Sign Out
@@ -694,7 +801,12 @@ export default function App() {
                 <Bell className="h-5 w-5" />
                 <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-red-500 ring-2 ring-white" />
               </button>
-              <div className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-300 bg-slate-200 text-xs font-medium text-slate-600">OP</div>
+              <div
+                className="flex h-10 min-w-10 items-center justify-center rounded-full border border-slate-300 bg-slate-200 px-2 text-xs font-bold text-slate-600"
+                title={`${authenticatedUser.username} · ${authenticatedUser.role}`}
+              >
+                {authenticatedUser.role === 'ADMIN' ? 'AD' : authenticatedUser.role.slice(0, 2)}
+              </div>
             </div>
           </div>
         </header>
