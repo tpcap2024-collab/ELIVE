@@ -1,6 +1,6 @@
 import express from 'express';
 import cors from 'cors';
-import { createHash, pbkdf2 as pbkdf2Callback, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, pbkdf2 as pbkdf2Callback, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 
 const app = express();
@@ -92,6 +92,142 @@ app.use(
 );
 
 app.use(express.json({ limit: '10mb' }));
+
+function hashAuditValue(value) {
+  const text = cleanText(value);
+  if (!text) return null;
+  return createHash('sha256').update(text).digest('hex').slice(0, 16);
+}
+
+function getMaskedRequestIp(req) {
+  const forwardedFor = cleanText(req.headers['x-forwarded-for']);
+  const rawIp = forwardedFor
+    ? forwardedFor.split(',')[0].trim()
+    : cleanText(req.socket?.remoteAddress);
+  return rawIp ? `sha256:${hashAuditValue(rawIp)}` : null;
+}
+
+function getAuditDescriptor(req) {
+  const method = String(req.method || '').toUpperCase();
+  const path = String(req.path || '');
+
+  if (method === 'POST' && path === '/api/auth/login') {
+    return {
+      action: 'AUTH_LOGIN',
+      targetType: 'AUTH_USER',
+      targetIdHash: hashAuditValue(req.body?.username),
+    };
+  }
+  if (method === 'POST' && path === '/api/auth/logout') {
+    return { action: 'AUTH_LOGOUT', targetType: 'SESSION', targetIdHash: null };
+  }
+  if (method === 'POST' && path === '/api/master-plan/rows') {
+    return { action: 'MASTER_PLAN_CREATE', targetType: 'MASTER_PLAN_ROW', targetIdHash: null };
+  }
+  if (method === 'PUT' && /^\/api\/master-plan\/rows\/\d+$/.test(path)) {
+    return {
+      action: 'MASTER_PLAN_UPDATE',
+      targetType: 'MASTER_PLAN_ROW',
+      targetIdHash: hashAuditValue(path.split('/').pop()),
+    };
+  }
+  if (method === 'DELETE' && /^\/api\/master-plan\/rows\/\d+$/.test(path)) {
+    return {
+      action: 'MASTER_PLAN_DELETE',
+      targetType: 'MASTER_PLAN_ROW',
+      targetIdHash: hashAuditValue(path.split('/').pop()),
+    };
+  }
+  if (method === 'POST' && path === '/api/plans/create') {
+    return { action: 'PLAN_PERIOD_CREATE', targetType: 'PLAN_PERIOD', targetIdHash: null };
+  }
+  if (method === 'POST' && path === '/api/plans/extra') {
+    return { action: 'PLAN_EXTRA_CREATE', targetType: 'PLAN', targetIdHash: null };
+  }
+  if (method === 'PUT' && /^\/api\/plans\/A\d+$/i.test(path)) {
+    return {
+      action: 'PLAN_UPDATE',
+      targetType: 'PLAN',
+      targetIdHash: hashAuditValue(path.split('/').pop()),
+    };
+  }
+  if (method === 'POST' && /^\/api\/plans\/A\d+\/confirm-work-detail$/i.test(path)) {
+    return {
+      action: 'WORK_DETAIL_CONFIRM',
+      targetType: 'PLAN',
+      targetIdHash: hashAuditValue(path.split('/')[3]),
+    };
+  }
+  if (method === 'POST' && /^\/api\/plans\/A\d+\/cancel$/i.test(path)) {
+    return {
+      action: 'PLAN_CANCEL',
+      targetType: 'PLAN',
+      targetIdHash: hashAuditValue(path.split('/')[3]),
+    };
+  }
+  if (method === 'POST' && /^\/api\/plans\/A\d+\/restore$/i.test(path)) {
+    return {
+      action: 'PLAN_RESTORE',
+      targetType: 'PLAN',
+      targetIdHash: hashAuditValue(path.split('/')[3]),
+    };
+  }
+  if (method === 'POST' && path === '/api/trucks/update') {
+    return {
+      action: 'TRUCK_UPDATE',
+      targetType: 'TRUCK',
+      targetIdHash: hashAuditValue(req.body?.truckId),
+    };
+  }
+  if (method === 'POST' && path === '/api/cache/clear') {
+    return { action: 'CACHE_CLEAR', targetType: 'CACHE', targetIdHash: null };
+  }
+  return null;
+}
+
+function writeAuditLog(event) {
+  console.log(JSON.stringify({
+    logType: 'ELIVE_AUDIT',
+    ...event,
+  }));
+}
+
+app.use((req, res, next) => {
+  const descriptor = getAuditDescriptor(req);
+  if (!descriptor) return next();
+
+  const requestId = randomUUID();
+  const startedAt = Date.now();
+  res.setHeader('X-Request-ID', requestId);
+
+  res.on('finish', () => {
+    const actorUsername = req.auth?.username || (
+      descriptor.action === 'AUTH_LOGIN'
+        ? cleanText(req.body?.username).toLowerCase() || null
+        : null
+    );
+    const statusCode = Number(res.statusCode || 500);
+
+    writeAuditLog({
+      requestId,
+      timestamp: new Date().toISOString(),
+      actorUsername,
+      actorRole: req.auth?.role || null,
+      method: req.method,
+      path: req.path,
+      action: descriptor.action,
+      targetType: descriptor.targetType,
+      targetIdHash: descriptor.targetIdHash,
+      result: statusCode >= 200 && statusCode < 400 ? 'SUCCESS' : 'FAILURE',
+      statusCode,
+      durationMs: Math.max(0, Date.now() - startedAt),
+      ipHash: getMaskedRequestIp(req),
+      userAgentHash: hashAuditValue(req.headers['user-agent']),
+    });
+  });
+
+  return next();
+});
 
 function wait(milliseconds) {
   return new Promise(resolve => {
