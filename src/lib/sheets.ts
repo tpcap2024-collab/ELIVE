@@ -193,6 +193,53 @@ interface PlanApiResponse<T> {
   error?: string;
 }
 
+export type EliveUserRole =
+  | 'TV_VIEWER'
+  | 'OPERATOR'
+  | 'PLANNER'
+  | 'SUPERVISOR'
+  | 'ADMIN';
+
+export interface EliveAuthUser {
+  username: string;
+  role: EliveUserRole;
+}
+
+export interface EliveAuthSession {
+  username?: string;
+  role?: EliveUserRole;
+  expiresAt: string;
+}
+
+export interface EliveAuthResult {
+  success: boolean;
+  authenticated?: boolean;
+  user?: EliveAuthUser;
+  session?: EliveAuthSession;
+  compatibilityMode?: boolean;
+  timestamp?: string;
+  message?: string;
+}
+
+export class EliveApiError extends Error {
+  status: number;
+  path: string;
+  data: unknown;
+
+  constructor(
+    message: string,
+    status: number,
+    path: string,
+    data: unknown
+  ) {
+    super(message);
+    this.name = 'EliveApiError';
+    this.status = status;
+    this.path = path;
+    this.data = data;
+  }
+}
+
 const DEFAULT_API_URL = 'https://elive-api.onrender.com';
 
 export const getAppsScriptUrl = (): string => {
@@ -304,6 +351,7 @@ async function fetchApiRequest(
     response = await fetch(`${apiUrl}${normalizedPath}`, {
       cache: 'no-store',
       ...options,
+      credentials: 'include',
       headers: {
         Accept: 'application/json',
         ...(options?.headers || {}),
@@ -321,9 +369,12 @@ async function fetchApiRequest(
   const apiError = getApiError(data);
 
   if (!response.ok || apiError) {
-    throw new Error(
+    throw new EliveApiError(
       apiError ||
-        `ELIVE API request failed (${response.status} ${response.statusText})`
+        `ELIVE API request failed (${response.status} ${response.statusText})`,
+      response.status,
+      normalizedPath,
+      data
     );
   }
 
@@ -1365,6 +1416,57 @@ export async function fetchRouteToTpcap(
       coordinates: validCoordinates,
     },
   };
+}
+
+export async function loginElive(
+  username: string,
+  password: string
+): Promise<EliveAuthResult> {
+  const normalizedUsername = String(username || '').trim();
+  if (!normalizedUsername || !password) {
+    throw new Error('กรุณากรอกชื่อผู้ใช้และรหัสผ่าน');
+  }
+
+  return fetchApiRequest('/api/auth/login', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      username: normalizedUsername,
+      password,
+    }),
+  });
+}
+
+export async function fetchEliveSession(): Promise<EliveAuthResult> {
+  return fetchApiRequest('/api/auth/session', {
+    method: 'GET',
+  });
+}
+
+export async function verifyEliveSession(): Promise<EliveAuthResult> {
+  return fetchApiRequest('/api/auth/verify', {
+    method: 'GET',
+  });
+}
+
+export async function logoutElive(): Promise<EliveAuthResult> {
+  return fetchApiRequest('/api/auth/logout', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({}),
+  });
+}
+
+export function isEliveUnauthorizedError(error: unknown): boolean {
+  return error instanceof EliveApiError && error.status === 401;
+}
+
+export function isEliveForbiddenError(error: unknown): boolean {
+  return error instanceof EliveApiError && error.status === 403;
 }
 
 export async function fetchEliveDashboardData(): Promise<EliveDashboardData> {
