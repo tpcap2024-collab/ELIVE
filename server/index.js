@@ -34,9 +34,10 @@ const LOGIN_FAILURE_DELAY_MS = 650;
 const LOGIN_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
 const LOGIN_RATE_LIMIT_MAX_FAILURES = 5;
 const LOGIN_IP_RATE_LIMIT_MAX_FAILURES = 20;
-const RATE_LIMIT_CLEANUP_INTERVAL_MS = 15 * 60 * 1000;
-const loginFailureBuckets = new Map();
-const loginIpFailureBuckets = new Map();
+const LOGIN_RATE_LIMIT_WINDOW_SECONDS = Math.floor(
+  LOGIN_RATE_LIMIT_WINDOW_MS / 1000
+);
+const LOGIN_RATE_LIMIT_KEY_PREFIX = 'elive:rate-limit:login:';
 const PBKDF2_MIN_ITERATIONS = 210000;
 const PBKDF2_MAX_ITERATIONS = 1000000;
 const PBKDF2_KEY_LENGTH = 32;
@@ -185,98 +186,109 @@ function getRateLimitIpKey(req) {
   return hashAuditValue(getRequestIp(req));
 }
 
-function getActiveRateLimitBucket(store, key, now = Date.now()) {
-  if (!key) return null;
-  const bucket = store.get(key);
-  if (!bucket) return null;
-  if (bucket.resetAt <= now) {
-    store.delete(key);
-    return null;
-  }
-  return bucket;
+function getLoginUserRateLimitKey(req, username) {
+  return `${LOGIN_RATE_LIMIT_KEY_PREFIX}user:${getRateLimitKey(req, username)}`;
 }
 
-function addRateLimitFailure(store, key, now = Date.now()) {
-  if (!key) return;
-  const current = getActiveRateLimitBucket(store, key, now);
-  if (current) {
-    current.count += 1;
-    return;
-  }
-  store.set(key, {
-    count: 1,
-    resetAt: now + LOGIN_RATE_LIMIT_WINDOW_MS,
-  });
+function getLoginIpRateLimitKey(req) {
+  return `${LOGIN_RATE_LIMIT_KEY_PREFIX}ip:${getRateLimitIpKey(req)}`;
 }
 
-function clearLoginRateLimit(req, username) {
-  const userKey = getRateLimitKey(req, username);
-  if (userKey) loginFailureBuckets.delete(userKey);
+async function getRateLimitState(client, key, maximumFailures) {
+  const values = await client.multi().get(key).ttl(key).exec();
+  const count = Number(values[0] || 0);
+  const ttlSeconds = Number(values[1] || LOGIN_RATE_LIMIT_WINDOW_SECONDS);
+  return {
+    count,
+    blocked: count >= maximumFailures,
+    retryAfterSeconds: Math.max(1, ttlSeconds),
+  };
 }
 
-function loginRateLimit(req, res, next) {
-  const username = cleanText(req.body?.username).toLowerCase();
-  const userKey = getRateLimitKey(req, username);
-  const ipKey = getRateLimitIpKey(req);
-  const now = Date.now();
-  const userBucket = getActiveRateLimitBucket(loginFailureBuckets, userKey, now);
-  const ipBucket = getActiveRateLimitBucket(loginIpFailureBuckets, ipKey, now);
-  const blockedBucket =
-    userBucket && userBucket.count >= LOGIN_RATE_LIMIT_MAX_FAILURES
-      ? userBucket
-      : ipBucket && ipBucket.count >= LOGIN_IP_RATE_LIMIT_MAX_FAILURES
-        ? ipBucket
+async function incrementRateLimitFailure(client, key) {
+  await client.eval(
+    `
+      local count = redis.call('INCR', KEYS[1])
+      if count == 1 then
+        redis.call('EXPIRE', KEYS[1], ARGV[1])
+      end
+      return count
+    `,
+    {
+      keys: [key],
+      arguments: [String(LOGIN_RATE_LIMIT_WINDOW_SECONDS)],
+    }
+  );
+}
+
+async function clearLoginRateLimit(req, username) {
+  const client = requireRedisClient();
+  await client.del([
+    getLoginUserRateLimitKey(req, username),
+    getLoginIpRateLimitKey(req),
+  ]);
+}
+
+async function loginRateLimit(req, res, next) {
+  try {
+    const client = requireRedisClient();
+    const username = cleanText(req.body?.username).toLowerCase();
+    const userKey = getLoginUserRateLimitKey(req, username);
+    const ipKey = getLoginIpRateLimitKey(req);
+    const [userState, ipState] = await Promise.all([
+      getRateLimitState(client, userKey, LOGIN_RATE_LIMIT_MAX_FAILURES),
+      getRateLimitState(client, ipKey, LOGIN_IP_RATE_LIMIT_MAX_FAILURES),
+    ]);
+    const blockedState = userState.blocked
+      ? userState
+      : ipState.blocked
+        ? ipState
         : null;
 
-  if (blockedBucket) {
-    const retryAfterSeconds = Math.max(
-      1,
-      Math.ceil((blockedBucket.resetAt - now) / 1000)
-    );
-    res.setHeader('Retry-After', String(retryAfterSeconds));
-    res.setHeader('X-RateLimit-Limit', String(LOGIN_RATE_LIMIT_MAX_FAILURES));
-    res.setHeader('X-RateLimit-Remaining', '0');
-    return res.status(429).json({
-      success: false,
-      error: 'Too many login attempts. Please try again later.',
-      retryAfterSeconds,
+    if (blockedState) {
+      res.setHeader('Retry-After', String(blockedState.retryAfterSeconds));
+      res.setHeader('X-RateLimit-Limit', String(LOGIN_RATE_LIMIT_MAX_FAILURES));
+      res.setHeader('X-RateLimit-Remaining', '0');
+      return res.status(429).json({
+        success: false,
+        error: 'Too many login attempts. Please try again later.',
+        retryAfterSeconds: blockedState.retryAfterSeconds,
+      });
+    }
+
+    res.on('finish', () => {
+      if (res.statusCode === 200) {
+        void clearLoginRateLimit(req, username).catch(error => {
+          console.error('Unable to clear Login Rate Limit:', getErrorMessage(error));
+        });
+        return;
+      }
+      if (res.statusCode === 400 || res.statusCode === 401) {
+        void Promise.all([
+          incrementRateLimitFailure(client, userKey),
+          incrementRateLimitFailure(client, ipKey),
+        ]).catch(error => {
+          console.error('Unable to update Login Rate Limit:', getErrorMessage(error));
+        });
+      }
     });
-  }
 
-  res.on('finish', () => {
-    if (res.statusCode === 200) {
-      clearLoginRateLimit(req, username);
-      return;
+    res.setHeader('X-RateLimit-Limit', String(LOGIN_RATE_LIMIT_MAX_FAILURES));
+    res.setHeader(
+      'X-RateLimit-Remaining',
+      String(Math.max(0, LOGIN_RATE_LIMIT_MAX_FAILURES - userState.count))
+    );
+    return next();
+  } catch (error) {
+    if (getErrorMessage(error) === 'SESSION_STORE_UNAVAILABLE') {
+      return res.status(503).json({
+        success: false,
+        error: 'Security service is temporarily unavailable.',
+      });
     }
-    if (res.statusCode === 400 || res.statusCode === 401) {
-      addRateLimitFailure(loginFailureBuckets, userKey);
-      addRateLimitFailure(loginIpFailureBuckets, ipKey);
-    }
-  });
-
-  const remaining = Math.max(
-    0,
-    LOGIN_RATE_LIMIT_MAX_FAILURES - (userBucket?.count || 0)
-  );
-  res.setHeader('X-RateLimit-Limit', String(LOGIN_RATE_LIMIT_MAX_FAILURES));
-  res.setHeader('X-RateLimit-Remaining', String(remaining));
-  return next();
-}
-
-function cleanupRateLimitBuckets() {
-  const now = Date.now();
-  for (const store of [loginFailureBuckets, loginIpFailureBuckets]) {
-    for (const [key, bucket] of store.entries()) {
-      if (bucket.resetAt <= now) store.delete(key);
-    }
+    return next(error);
   }
 }
-
-const rateLimitCleanupTimer = setInterval(
-  cleanupRateLimitBuckets,
-  RATE_LIMIT_CLEANUP_INTERVAL_MS
-);
-rateLimitCleanupTimer.unref();
 
 function getMaskedRequestIp(req) {
   const forwardedFor = cleanText(req.headers['x-forwarded-for']);
@@ -1192,6 +1204,7 @@ app.get(['/health', '/api/health'], (req, res) => {
       '/api/route-to-tpcap',
     ],
     sessionStore: { type: 'redis', configured: Boolean(REDIS_URL), ready: Boolean(redisReady && redisClient?.isReady), lastError: lastRedisError },
+    rateLimitStore: { type: 'redis', persistentAcrossDeploys: true, windowSeconds: LOGIN_RATE_LIMIT_WINDOW_SECONDS },
     appsScript: {
       configured: Boolean(APPS_SCRIPT_URL),
       signatureConfigured: Boolean(APPS_SCRIPT_SHARED_SECRET && APPS_SCRIPT_SHARED_SECRET.length >= 32),
