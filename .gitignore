@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+
+# Production build outputs
+dist/
+server-dist/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Runtime and cache
+.cache/
+.vite/
+coverage/
+tmp/
+temp/
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Server artifacts and source maps
+server.cjs
+server.cjs.map
+*.cjs.map
+
+# Local test files
+*.local
