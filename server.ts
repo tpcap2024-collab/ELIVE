@@ -1741,7 +1741,7 @@ async function startServer() {
     }
   );
 
-  app.all(
+  app.use(
     [
       '/server.cjs',
       '/server.cjs.map',
