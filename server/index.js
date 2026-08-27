@@ -28,6 +28,12 @@ const MAX_UPLOAD_ROWS = 500;
 const MAX_LOGIN_USERNAME_LENGTH = 100;
 const MAX_LOGIN_PASSWORD_LENGTH = 200;
 const LOGIN_FAILURE_DELAY_MS = 650;
+const LOGIN_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_RATE_LIMIT_MAX_FAILURES = 5;
+const LOGIN_IP_RATE_LIMIT_MAX_FAILURES = 20;
+const RATE_LIMIT_CLEANUP_INTERVAL_MS = 15 * 60 * 1000;
+const loginFailureBuckets = new Map();
+const loginIpFailureBuckets = new Map();
 const PBKDF2_MIN_ITERATIONS = 210000;
 const PBKDF2_MAX_ITERATIONS = 1000000;
 const PBKDF2_KEY_LENGTH = 32;
@@ -98,6 +104,113 @@ function hashAuditValue(value) {
   if (!text) return null;
   return createHash('sha256').update(text).digest('hex').slice(0, 16);
 }
+
+function getRequestIp(req) {
+  const forwardedFor = cleanText(req.headers['x-forwarded-for']);
+  if (forwardedFor) return forwardedFor.split(',')[0].trim();
+  return cleanText(req.socket?.remoteAddress) || 'unknown';
+}
+
+function getRateLimitKey(req, username) {
+  return hashAuditValue(`${getRequestIp(req)}|${cleanText(username).toLowerCase()}`);
+}
+
+function getRateLimitIpKey(req) {
+  return hashAuditValue(getRequestIp(req));
+}
+
+function getActiveRateLimitBucket(store, key, now = Date.now()) {
+  if (!key) return null;
+  const bucket = store.get(key);
+  if (!bucket) return null;
+  if (bucket.resetAt <= now) {
+    store.delete(key);
+    return null;
+  }
+  return bucket;
+}
+
+function addRateLimitFailure(store, key, now = Date.now()) {
+  if (!key) return;
+  const current = getActiveRateLimitBucket(store, key, now);
+  if (current) {
+    current.count += 1;
+    return;
+  }
+  store.set(key, {
+    count: 1,
+    resetAt: now + LOGIN_RATE_LIMIT_WINDOW_MS,
+  });
+}
+
+function clearLoginRateLimit(req, username) {
+  const userKey = getRateLimitKey(req, username);
+  if (userKey) loginFailureBuckets.delete(userKey);
+}
+
+function loginRateLimit(req, res, next) {
+  const username = cleanText(req.body?.username).toLowerCase();
+  const userKey = getRateLimitKey(req, username);
+  const ipKey = getRateLimitIpKey(req);
+  const now = Date.now();
+  const userBucket = getActiveRateLimitBucket(loginFailureBuckets, userKey, now);
+  const ipBucket = getActiveRateLimitBucket(loginIpFailureBuckets, ipKey, now);
+  const blockedBucket =
+    userBucket && userBucket.count >= LOGIN_RATE_LIMIT_MAX_FAILURES
+      ? userBucket
+      : ipBucket && ipBucket.count >= LOGIN_IP_RATE_LIMIT_MAX_FAILURES
+        ? ipBucket
+        : null;
+
+  if (blockedBucket) {
+    const retryAfterSeconds = Math.max(
+      1,
+      Math.ceil((blockedBucket.resetAt - now) / 1000)
+    );
+    res.setHeader('Retry-After', String(retryAfterSeconds));
+    res.setHeader('X-RateLimit-Limit', String(LOGIN_RATE_LIMIT_MAX_FAILURES));
+    res.setHeader('X-RateLimit-Remaining', '0');
+    return res.status(429).json({
+      success: false,
+      error: 'Too many login attempts. Please try again later.',
+      retryAfterSeconds,
+    });
+  }
+
+  res.on('finish', () => {
+    if (res.statusCode === 200) {
+      clearLoginRateLimit(req, username);
+      return;
+    }
+    if (res.statusCode === 400 || res.statusCode === 401) {
+      addRateLimitFailure(loginFailureBuckets, userKey);
+      addRateLimitFailure(loginIpFailureBuckets, ipKey);
+    }
+  });
+
+  const remaining = Math.max(
+    0,
+    LOGIN_RATE_LIMIT_MAX_FAILURES - (userBucket?.count || 0)
+  );
+  res.setHeader('X-RateLimit-Limit', String(LOGIN_RATE_LIMIT_MAX_FAILURES));
+  res.setHeader('X-RateLimit-Remaining', String(remaining));
+  return next();
+}
+
+function cleanupRateLimitBuckets() {
+  const now = Date.now();
+  for (const store of [loginFailureBuckets, loginIpFailureBuckets]) {
+    for (const [key, bucket] of store.entries()) {
+      if (bucket.resetAt <= now) store.delete(key);
+    }
+  }
+}
+
+const rateLimitCleanupTimer = setInterval(
+  cleanupRateLimitBuckets,
+  RATE_LIMIT_CLEANUP_INTERVAL_MS
+);
+rateLimitCleanupTimer.unref();
 
 function getMaskedRequestIp(req) {
   const forwardedFor = cleanText(req.headers['x-forwarded-for']);
@@ -887,7 +1000,7 @@ function sendRouteError(res, error, fallbackMessage, statusCode = 400) {
   });
 }
 
-app.post('/api/auth/login', async (req,res)=>{ try { const username=normalizeLoginUsername(req.body?.username); const password=normalizeLoginPassword(req.body?.password); const users=getConfiguredAuthUsers(); const user=users.find(item=>item.username===username); if(!user||!user.active){ await waitForLoginFailure(); return res.status(401).json({success:false,error:'Username or password is incorrect.'}); } const passwordIsValid=await verifyLoginPassword(password,user); if(!passwordIsValid){ await waitForLoginFailure(); return res.status(401).json({success:false,error:'Username or password is incorrect.'}); } const {token,session}=createSession(user); setSessionCookie(res,token); return res.status(200).json({success:true,user:createLoginUserResponse(user),session:createSessionResponse(session),compatibilityMode:true,timestamp:new Date().toISOString()}); } catch(error){ const errorCode=getErrorMessage(error); if(errorCode==='LOGIN_PAYLOAD_INVALID') return res.status(400).json({success:false,error:'A valid username and password are required.'}); if(errorCode==='AUTH_CONFIG_MISSING'||errorCode==='AUTH_CONFIG_INVALID'){ console.error('Authentication configuration error:',errorCode); return res.status(503).json({success:false,error:'Authentication service is not configured.'}); } console.error('Login endpoint error:',getErrorMessage(error)); return res.status(500).json({success:false,error:'Unable to process login.'}); } });
+app.post('/api/auth/login', loginRateLimit, async (req,res)=>{ try { const username=normalizeLoginUsername(req.body?.username); const password=normalizeLoginPassword(req.body?.password); const users=getConfiguredAuthUsers(); const user=users.find(item=>item.username===username); if(!user||!user.active){ await waitForLoginFailure(); return res.status(401).json({success:false,error:'Username or password is incorrect.'}); } const passwordIsValid=await verifyLoginPassword(password,user); if(!passwordIsValid){ await waitForLoginFailure(); return res.status(401).json({success:false,error:'Username or password is incorrect.'}); } const {token,session}=createSession(user); setSessionCookie(res,token); return res.status(200).json({success:true,user:createLoginUserResponse(user),session:createSessionResponse(session),compatibilityMode:true,timestamp:new Date().toISOString()}); } catch(error){ const errorCode=getErrorMessage(error); if(errorCode==='LOGIN_PAYLOAD_INVALID') return res.status(400).json({success:false,error:'A valid username and password are required.'}); if(errorCode==='AUTH_CONFIG_MISSING'||errorCode==='AUTH_CONFIG_INVALID'){ console.error('Authentication configuration error:',errorCode); return res.status(503).json({success:false,error:'Authentication service is not configured.'}); } console.error('Login endpoint error:',getErrorMessage(error)); return res.status(500).json({success:false,error:'Unable to process login.'}); } });
 
 app.get('/api/auth/verify', requireAuthentication, (req, res) => {
   return res.status(200).json({
@@ -941,27 +1054,7 @@ app.get(
 );
 
 app.get('/api/auth/session',(req,res)=>{ const record=getSessionFromRequest(req); if(!record){ clearSessionCookie(res); return res.status(401).json({success:false,authenticated:false,error:'Authentication required.'}); } return res.status(200).json({success:true,authenticated:true,user:{username:record.session.username,role:record.session.role},session:createSessionResponse(record.session),compatibilityMode:true,timestamp:new Date().toISOString()}); });
-app.post('/api/auth/logout', (req, res) => {
-  const record = getSessionFromRequest(req);
-
-  if (record) {
-    req.auth = {
-      username: record.session.username,
-      role: record.session.role,
-      expiresAt: record.session.expiresAt,
-    };
-
-    sessions.delete(record.tokenHash);
-  }
-
-  clearSessionCookie(res);
-
-  return res.status(200).json({
-    success: true,
-    message: 'Logged out.',
-    timestamp: new Date().toISOString(),
-  });
-});
+app.post('/api/auth/logout',(req,res)=>{ const record=getSessionFromRequest(req); if(record) sessions.delete(record.tokenHash); clearSessionCookie(res); return res.status(200).json({success:true,message:'Logged out.',timestamp:new Date().toISOString()}); });
 
 app.get('/', (req, res) => {
   return res.json({
