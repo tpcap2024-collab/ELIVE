@@ -24,6 +24,7 @@ import {
 import {
   confirmWorkDetail,
   EliveAuthUser,
+  EliveUserRole,
   fetchEliveDashboardData,
   fetchEliveSession,
   getAppsScriptUrl,
@@ -40,7 +41,6 @@ import {
   ClipboardList,
   Clock,
   LayoutDashboard,
-  LockKeyhole,
   Map,
   MapPin,
   Maximize2,
@@ -82,6 +82,21 @@ const DOCK_FILTERS: DockFilter[] = ['ALL', 'M1', 'L1', 'L2', 'R1', 'R2'];
 
 const ROWS_PER_PAGE = 20;
 const REFRESH_INTERVAL = 60000;
+
+const ROLE_LEVELS: Record<EliveUserRole, number> = {
+  TV_VIEWER: 10,
+  OPERATOR: 20,
+  PLANNER: 30,
+  SUPERVISOR: 40,
+  ADMIN: 50,
+};
+
+function hasMinimumRole(
+  role: EliveUserRole,
+  requiredRole: EliveUserRole
+): boolean {
+  return ROLE_LEVELS[role] >= ROLE_LEVELS[requiredRole];
+}
 
 function normalizeLicensePlate(value?: string): string {
   return String(value || '')
@@ -127,9 +142,6 @@ export default function App() {
   const [workDetailTruck, setWorkDetailTruck] = useState<Truck | null>(null);
   const [isConfirmingWorkDetail, setIsConfirmingWorkDetail] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [showPlanAccessDialog, setShowPlanAccessDialog] = useState(false);
-  const [planAccessCode, setPlanAccessCode] = useState('');
-  const [planAccessError, setPlanAccessError] = useState('');
   const [appsScriptUrl, setAppsScriptUrl] = useState(getAppsScriptUrl());
   const [showHiddenRows, setShowHiddenRows] = useState(false);
   const [selectedDockFilters, setSelectedDockFilters] = useState<Exclude<DockFilter, 'ALL'>[]>([
@@ -289,27 +301,6 @@ export default function App() {
   const changeView = (view: CurrentView) => {
     setCurrentView(view);
     closeSidebarOnMobile();
-  };
-
-  const requestPlanManagementAccess = () => {
-    setPlanAccessCode('');
-    setPlanAccessError('');
-    setShowPlanAccessDialog(true);
-    closeSidebarOnMobile();
-  };
-
-  const handlePlanAccessSubmit = (event: React.FormEvent) => {
-    event.preventDefault();
-
-    if (planAccessCode === '12234') {
-      setShowPlanAccessDialog(false);
-      setPlanAccessCode('');
-      setPlanAccessError('');
-      setCurrentView('plan-management');
-      return;
-    }
-
-    setPlanAccessError('รหัสไม่ถูกต้อง กรุณาลองใหม่');
   };
 
   const handleOpenGps = (truckId: string) => {
@@ -582,7 +573,6 @@ export default function App() {
       setLoginError('');
       setCurrentView('dashboard');
       setShowSettings(false);
-      setShowPlanAccessDialog(false);
       setActionDialog({ isOpen: false, truck: null });
       setWorkDetailTruck(null);
       closeGpsPopup();
@@ -668,28 +658,50 @@ export default function App() {
     );
   }
 
+  const currentUserRole = authenticatedUser.role;
+  const canOperate = hasMinimumRole(currentUserRole, 'OPERATOR');
+  const canPlan = hasMinimumRole(currentUserRole, 'PLANNER');
+
   const navItems: Array<{
     view: CurrentView;
     label: string;
     icon: React.ComponentType<{ className?: string }>;
+    minimumRole: EliveUserRole;
     activeClass?: string;
   }> = [
-    { view: 'dashboard', label: 'Live Dashboard', icon: LayoutDashboard },
-    { view: 'diagram', label: 'Platform Dashboard', icon: Network },
-    { view: 'warehouse', label: 'Stamp ETA/ETD', icon: TabletSmartphone },
+    {
+      view: 'dashboard',
+      label: 'Live Dashboard',
+      icon: LayoutDashboard,
+      minimumRole: 'TV_VIEWER',
+    },
+    {
+      view: 'diagram',
+      label: 'Platform Dashboard',
+      icon: Network,
+      minimumRole: 'TV_VIEWER',
+    },
+    {
+      view: 'warehouse',
+      label: 'Stamp ETA/ETD',
+      icon: TabletSmartphone,
+      minimumRole: 'OPERATOR',
+    },
     {
       view: 'plan-management',
       label: 'Plan Management',
       icon: ClipboardList,
+      minimumRole: 'PLANNER',
       activeClass: 'bg-emerald-50 font-semibold text-emerald-700',
     },
     {
       view: 'incident',
       label: 'Action Center',
       icon: ShieldAlert,
+      minimumRole: 'OPERATOR',
       activeClass: 'bg-red-50 font-semibold text-red-600',
     },
-  ];
+  ].filter(item => hasMinimumRole(currentUserRole, item.minimumRole));
 
   return (
     <div className="flex min-h-screen flex-col bg-slate-50 font-sans md:flex-row">
@@ -730,13 +742,7 @@ export default function App() {
                 <button
                   key={view}
                   type="button"
-                  onClick={() => {
-                    if (view === 'plan-management') {
-                      requestPlanManagementAccess();
-                    } else {
-                      changeView(view);
-                    }
-                  }}
+                  onClick={() => changeView(view)}
                   className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors ${
                     currentView === view
                       ? activeClass || 'bg-blue-50 font-semibold text-blue-600'
@@ -822,7 +828,7 @@ export default function App() {
           </div>
         )}
 
-        {currentView === 'plan-management' ? (
+        {canPlan && currentView === 'plan-management' ? (
           <main className="min-h-0 flex-1 overflow-auto">
             <PlanManagement
               onPlanCreated={async () => {
@@ -953,7 +959,7 @@ export default function App() {
                             <td className="whitespace-nowrap px-3 py-1.5 font-bold text-slate-800">{truck.licensePlate}</td>
                             <td className="whitespace-nowrap px-3 py-1.5 font-medium text-slate-700">{truck.dropPoint}</td>
                             <td className="px-3 py-1.5 text-center">
-                              {truck.workDetail && !truck.workDetailConfirmed ? (
+                              {canOperate && truck.workDetail && !truck.workDetailConfirmed ? (
                                 <button
                                   type="button"
                                   onClick={() => setWorkDetailTruck(truck)}
@@ -982,9 +988,13 @@ export default function App() {
                               </button>
                             </td>
                             <td className="px-3 py-1.5 text-center">
-                              <button type="button" onClick={() => setActionDialog({ isOpen: true, truck })} className={`inline-flex h-9 w-9 items-center justify-center rounded-lg border-2 text-white shadow-sm transition active:scale-95 ${truck.actionProblem ? 'border-red-900 bg-red-700 hover:bg-red-800' : 'border-amber-700 bg-amber-500 hover:bg-amber-600'}`}>
-                                <MessageSquare className="h-5 w-5" />
-                              </button>
+                              {canOperate ? (
+                                <button type="button" onClick={() => setActionDialog({ isOpen: true, truck })} className={`inline-flex h-9 w-9 items-center justify-center rounded-lg border-2 text-white shadow-sm transition active:scale-95 ${truck.actionProblem ? 'border-red-900 bg-red-700 hover:bg-red-800' : 'border-amber-700 bg-amber-500 hover:bg-amber-600'}`}>
+                                  <MessageSquare className="h-5 w-5" />
+                                </button>
+                              ) : (
+                                <span className="text-slate-300">-</span>
+                              )}
                             </td>
                           </tr>
                         ))}
@@ -1014,10 +1024,10 @@ export default function App() {
             {currentView === 'diagram' && (
               <main className="min-w-0 flex-1 overflow-hidden bg-white"><PlatformDiagram trucks={filteredTrucks} /></main>
             )}
-            {currentView === 'incident' && (
+            {canOperate && currentView === 'incident' && (
               <main className="flex-1 overflow-hidden"><IncidentCenter trucks={filteredTrucks} onUpdateTruck={handleUpdateTruck} /></main>
             )}
-            {currentView === 'warehouse' && (
+            {canOperate && currentView === 'warehouse' && (
               <main className="flex-1 overflow-hidden"><WarehouseStamp trucks={inboundTrucks} onUpdateTruck={handleUpdateTruck} /></main>
             )}
           </>
@@ -1031,87 +1041,6 @@ export default function App() {
           <span className="opacity-60">© 2026 ELIVE Logistics</span>
         </footer>
       </div>
-
-      {showPlanAccessDialog && (
-        <div
-          className="fixed inset-0 z-[1300] flex items-center justify-center bg-slate-950/70 p-4"
-          onMouseDown={event => {
-            if (event.target === event.currentTarget) {
-              setShowPlanAccessDialog(false);
-              setPlanAccessCode('');
-              setPlanAccessError('');
-            }
-          }}
-        >
-          <form
-            onSubmit={handlePlanAccessSubmit}
-            className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl"
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className="rounded-xl bg-emerald-100 p-3 text-emerald-700">
-                  <LockKeyhole className="h-6 w-6" />
-                </div>
-                <div>
-                  <h2 className="text-lg font-bold text-slate-800">
-                    Plan Management
-                  </h2>
-                  <p className="text-sm text-slate-500">
-                    กรุณาใส่รหัสเพื่อเข้าใช้งาน
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowPlanAccessDialog(false);
-                  setPlanAccessCode('');
-                  setPlanAccessError('');
-                }}
-                className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
-                title="ปิด"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <label className="mt-6 block text-sm font-medium text-slate-700">
-              รหัสเข้าใช้งาน
-              <input
-                type="password"
-                inputMode="numeric"
-                autoFocus
-                autoComplete="off"
-                value={planAccessCode}
-                onChange={event => {
-                  setPlanAccessCode(event.target.value);
-                  if (planAccessError) setPlanAccessError('');
-                }}
-                placeholder="กรอกรหัส"
-                className={`mt-1.5 w-full rounded-xl border px-3 py-2.5 text-center text-lg tracking-[0.35em] outline-none focus:ring-2 ${
-                  planAccessError
-                    ? 'border-red-300 focus:border-red-500 focus:ring-red-500/20'
-                    : 'border-slate-300 focus:border-emerald-500 focus:ring-emerald-500/20'
-                }`}
-              />
-            </label>
-
-            {planAccessError && (
-              <div className="mt-3 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                <AlertTriangle className="h-4 w-4 shrink-0" />
-                {planAccessError}
-              </div>
-            )}
-
-            <button
-              type="submit"
-              className="mt-5 w-full rounded-xl bg-emerald-600 px-4 py-2.5 font-bold text-white transition-colors hover:bg-emerald-700"
-            >
-              เข้า Plan Management
-            </button>
-          </form>
-        </div>
-      )}
 
       {isGpsPopupOpen &&
         selectedGpsTruckId &&
