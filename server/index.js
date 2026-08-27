@@ -1,5 +1,7 @@
 import express from 'express';
 import cors from 'cors';
+import { randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
+import { promisify } from 'node:util';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
@@ -23,6 +25,17 @@ const APPS_SCRIPT_TIMEOUT_MS = 60000;
 const ROUTE_TIMEOUT_MS = 15000;
 const APPS_SCRIPT_MAX_ATTEMPTS = 3;
 const MAX_UPLOAD_ROWS = 500;
+const MAX_LOGIN_USERNAME_LENGTH = 100;
+const MAX_LOGIN_PASSWORD_LENGTH = 200;
+const LOGIN_FAILURE_DELAY_MS = 650;
+const SCRYPT_KEY_LENGTH = 64;
+const SCRYPT_OPTIONS = {
+  N: 16384,
+  r: 8,
+  p: 1,
+  maxmem: 64 * 1024 * 1024,
+};
+const scryptAsync = promisify(scryptCallback);
 
 const RETRYABLE_STATUS_CODES = new Set([
   404,
@@ -86,6 +99,96 @@ function getErrorMessage(error) {
 
 function cleanText(value) {
   return String(value ?? '').trim();
+}
+
+function waitForLoginFailure() {
+  return wait(LOGIN_FAILURE_DELAY_MS + Math.floor(Math.random() * 250));
+}
+
+function normalizeLoginUsername(value) {
+  const username = cleanText(value).toLowerCase();
+  if (!username || username.length > MAX_LOGIN_USERNAME_LENGTH) {
+    throw new Error('LOGIN_PAYLOAD_INVALID');
+  }
+  return username;
+}
+
+function normalizeLoginPassword(value) {
+  if (typeof value !== 'string') {
+    throw new Error('LOGIN_PAYLOAD_INVALID');
+  }
+  if (!value || value.length > MAX_LOGIN_PASSWORD_LENGTH) {
+    throw new Error('LOGIN_PAYLOAD_INVALID');
+  }
+  return value;
+}
+
+function getConfiguredAuthUsers() {
+  const rawUsers = cleanText(process.env.ELIVE_AUTH_USERS);
+  if (!rawUsers) {
+    throw new Error('AUTH_CONFIG_MISSING');
+  }
+
+  let parsedUsers;
+  try {
+    parsedUsers = JSON.parse(rawUsers);
+  } catch {
+    throw new Error('AUTH_CONFIG_INVALID');
+  }
+
+  if (!Array.isArray(parsedUsers) || parsedUsers.length === 0) {
+    throw new Error('AUTH_CONFIG_INVALID');
+  }
+
+  const usernames = new Set();
+  return parsedUsers.map(user => {
+    const username = cleanText(user?.username).toLowerCase();
+    const passwordHash = cleanText(user?.passwordHash).toLowerCase();
+    const salt = cleanText(user?.salt).toLowerCase();
+    const role = cleanText(user?.role).toUpperCase();
+    const active = user?.active !== false;
+
+    if (
+      !username ||
+      username.length > MAX_LOGIN_USERNAME_LENGTH ||
+      !/^[a-f0-9]{128}$/.test(passwordHash) ||
+      !/^[a-f0-9]{32,128}$/.test(salt) ||
+      !['TV_VIEWER', 'OPERATOR', 'PLANNER', 'SUPERVISOR', 'ADMIN'].includes(role) ||
+      usernames.has(username)
+    ) {
+      throw new Error('AUTH_CONFIG_INVALID');
+    }
+
+    usernames.add(username);
+    return {
+      username,
+      passwordHash,
+      salt,
+      role,
+      active,
+    };
+  });
+}
+
+async function verifyLoginPassword(password, user) {
+  const calculatedHash = await scryptAsync(
+    password,
+    Buffer.from(user.salt, 'hex'),
+    SCRYPT_KEY_LENGTH,
+    SCRYPT_OPTIONS
+  );
+  const expectedHash = Buffer.from(user.passwordHash, 'hex');
+  return (
+    expectedHash.length === calculatedHash.length &&
+    timingSafeEqual(expectedHash, calculatedHash)
+  );
+}
+
+function createLoginUserResponse(user) {
+  return {
+    username: user.username,
+    role: user.role,
+  };
 }
 
 function validateAppsScriptUrl() {
@@ -647,6 +750,60 @@ function sendRouteError(res, error, fallbackMessage, statusCode = 400) {
   });
 }
 
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const username = normalizeLoginUsername(req.body?.username);
+    const password = normalizeLoginPassword(req.body?.password);
+    const users = getConfiguredAuthUsers();
+    const user = users.find(item => item.username === username);
+
+    if (!user || !user.active) {
+      await waitForLoginFailure();
+      return res.status(401).json({
+        success: false,
+        error: 'Username or password is incorrect.',
+      });
+    }
+
+    const passwordIsValid = await verifyLoginPassword(password, user);
+    if (!passwordIsValid) {
+      await waitForLoginFailure();
+      return res.status(401).json({
+        success: false,
+        error: 'Username or password is incorrect.',
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      user: createLoginUserResponse(user),
+      session: null,
+      compatibilityMode: true,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    const errorCode = getErrorMessage(error);
+    if (errorCode === 'LOGIN_PAYLOAD_INVALID') {
+      return res.status(400).json({
+        success: false,
+        error: 'A valid username and password are required.',
+      });
+    }
+    if (errorCode === 'AUTH_CONFIG_MISSING' || errorCode === 'AUTH_CONFIG_INVALID') {
+      console.error('Authentication configuration error:', errorCode);
+      return res.status(503).json({
+        success: false,
+        error: 'Authentication service is not configured.',
+      });
+    }
+    console.error('Login endpoint error:', getErrorMessage(error));
+    return res.status(500).json({
+      success: false,
+      error: 'Unable to process login.',
+    });
+  }
+});
+
 app.get('/', (req, res) => {
   return res.json({
     status: 'success',
@@ -668,6 +825,7 @@ app.get(['/health', '/api/health'], (req, res) => {
     routes: [
       '/health',
       '/api/health',
+      '/api/auth/login',
       '/api/trucks',
       '/api/trucks/update',
       '/api/master-plan',
