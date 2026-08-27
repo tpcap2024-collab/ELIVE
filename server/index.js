@@ -131,6 +131,33 @@ app.use(
 
 app.use(express.json({ limit: '10mb' }));
 
+function requireTrustedMutationOrigin(req, res, next) {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+    return next();
+  }
+
+  const origin = cleanText(req.headers.origin);
+  const fetchSite = cleanText(req.headers['sec-fetch-site']).toLowerCase();
+
+  if (!origin || !allowedOrigins.includes(origin)) {
+    return res.status(403).json({
+      success: false,
+      error: 'Request origin is not allowed.',
+    });
+  }
+
+  if (fetchSite && !['same-origin', 'same-site', 'cross-site'].includes(fetchSite)) {
+    return res.status(403).json({
+      success: false,
+      error: 'Request context is not allowed.',
+    });
+  }
+
+  return next();
+}
+
+app.use(requireTrustedMutationOrigin);
+
 function hashAuditValue(value) {
   const text = cleanText(value);
   if (!text) return null;
