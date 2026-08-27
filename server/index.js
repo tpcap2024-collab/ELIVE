@@ -1,6 +1,6 @@
 import express from 'express';
 import cors from 'cors';
-import { pbkdf2 as pbkdf2Callback, timingSafeEqual } from 'node:crypto';
+import { createHash, pbkdf2 as pbkdf2Callback, randomBytes, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 
 const app = express();
@@ -33,6 +33,10 @@ const PBKDF2_MAX_ITERATIONS = 1000000;
 const PBKDF2_KEY_LENGTH = 32;
 const PBKDF2_DIGEST = 'sha256';
 const pbkdf2Async = promisify(pbkdf2Callback);
+const SESSION_COOKIE_NAME = '__Host-elive_session';
+const SESSION_DURATION_MS = 12 * 60 * 60 * 1000;
+const SESSION_CLEANUP_INTERVAL_MS = 15 * 60 * 1000;
+const sessions = new Map();
 
 const RETRYABLE_STATUS_CODES = new Set([
   404,
@@ -75,6 +79,7 @@ app.use(
     },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Accept'],
+    credentials: true,
   })
 );
 
@@ -98,108 +103,27 @@ function cleanText(value) {
   return String(value ?? '').trim();
 }
 
-function waitForLoginFailure() {
-  return wait(LOGIN_FAILURE_DELAY_MS + Math.floor(Math.random() * 250));
-}
-
-function normalizeLoginUsername(value) {
-  const username = cleanText(value).toLowerCase();
-  if (!username || username.length > MAX_LOGIN_USERNAME_LENGTH) {
-    throw new Error('LOGIN_PAYLOAD_INVALID');
-  }
-  return username;
-}
-
-function normalizeLoginPassword(value) {
-  if (
-    typeof value !== 'string' ||
-    !value ||
-    value.length > MAX_LOGIN_PASSWORD_LENGTH
-  ) {
-    throw new Error('LOGIN_PAYLOAD_INVALID');
-  }
-  return value;
-}
-
+function waitForLoginFailure() { return wait(LOGIN_FAILURE_DELAY_MS + Math.floor(Math.random() * 250)); }
+function normalizeLoginUsername(value) { const username=cleanText(value).toLowerCase(); if(!username||username.length>MAX_LOGIN_USERNAME_LENGTH) throw new Error('LOGIN_PAYLOAD_INVALID'); return username; }
+function normalizeLoginPassword(value) { if(typeof value!=='string'||!value||value.length>MAX_LOGIN_PASSWORD_LENGTH) throw new Error('LOGIN_PAYLOAD_INVALID'); return value; }
 function getConfiguredAuthUsers() {
-  const rawUsers = cleanText(process.env.ELIVE_AUTH_USERS);
-  if (!rawUsers) {
-    throw new Error('AUTH_CONFIG_MISSING');
-  }
-
-  let parsedUsers;
-  try {
-    parsedUsers = JSON.parse(rawUsers);
-  } catch {
-    throw new Error('AUTH_CONFIG_INVALID');
-  }
-
-  if (!Array.isArray(parsedUsers) || parsedUsers.length === 0) {
-    throw new Error('AUTH_CONFIG_INVALID');
-  }
-
-  const usernames = new Set();
-  return parsedUsers.map(user => {
-    const username = cleanText(user?.username).toLowerCase();
-    const passwordHash = cleanText(user?.passwordHash).toLowerCase();
-    const salt = cleanText(user?.salt).toLowerCase();
-    const iterations = Number(user?.iterations);
-    const role = cleanText(user?.role).toUpperCase();
-    const active = user?.active !== false;
-
-    if (
-      !username ||
-      username.length > MAX_LOGIN_USERNAME_LENGTH ||
-      !/^[a-f0-9]{64}$/.test(passwordHash) ||
-      !/^[a-f0-9]{64}$/.test(salt) ||
-      !Number.isInteger(iterations) ||
-      iterations < PBKDF2_MIN_ITERATIONS ||
-      iterations > PBKDF2_MAX_ITERATIONS ||
-      ![
-        'TV_VIEWER',
-        'OPERATOR',
-        'PLANNER',
-        'SUPERVISOR',
-        'ADMIN',
-      ].includes(role) ||
-      usernames.has(username)
-    ) {
-      throw new Error('AUTH_CONFIG_INVALID');
-    }
-
-    usernames.add(username);
-    return {
-      username,
-      passwordHash,
-      salt,
-      iterations,
-      role,
-      active,
-    };
-  });
+  const rawUsers=cleanText(process.env.ELIVE_AUTH_USERS); if(!rawUsers) throw new Error('AUTH_CONFIG_MISSING');
+  let parsedUsers; try { parsedUsers=JSON.parse(rawUsers); } catch { throw new Error('AUTH_CONFIG_INVALID'); }
+  if(!Array.isArray(parsedUsers)||!parsedUsers.length) throw new Error('AUTH_CONFIG_INVALID');
+  const usernames=new Set(); return parsedUsers.map(user=>{ const username=cleanText(user?.username).toLowerCase(); const passwordHash=cleanText(user?.passwordHash).toLowerCase(); const salt=cleanText(user?.salt).toLowerCase(); const iterations=Number(user?.iterations); const role=cleanText(user?.role).toUpperCase(); const active=user?.active!==false; if(!username||username.length>MAX_LOGIN_USERNAME_LENGTH||!/^[a-f0-9]{64}$/.test(passwordHash)||!/^[a-f0-9]{64}$/.test(salt)||!Number.isInteger(iterations)||iterations<PBKDF2_MIN_ITERATIONS||iterations>PBKDF2_MAX_ITERATIONS||!['TV_VIEWER','OPERATOR','PLANNER','SUPERVISOR','ADMIN'].includes(role)||usernames.has(username)) throw new Error('AUTH_CONFIG_INVALID'); usernames.add(username); return {username,passwordHash,salt,iterations,role,active}; });
 }
+async function verifyLoginPassword(password,user){ const calculatedHash=await pbkdf2Async(password,Buffer.from(user.salt,'hex'),user.iterations,PBKDF2_KEY_LENGTH,PBKDF2_DIGEST); const expectedHash=Buffer.from(user.passwordHash,'hex'); return expectedHash.length===calculatedHash.length&&timingSafeEqual(expectedHash,calculatedHash); }
+function createLoginUserResponse(user){ return {username:user.username,role:user.role}; }
 
-async function verifyLoginPassword(password, user) {
-  const calculatedHash = await pbkdf2Async(
-    password,
-    Buffer.from(user.salt, 'hex'),
-    user.iterations,
-    PBKDF2_KEY_LENGTH,
-    PBKDF2_DIGEST
-  );
-  const expectedHash = Buffer.from(user.passwordHash, 'hex');
-  return (
-    expectedHash.length === calculatedHash.length &&
-    timingSafeEqual(expectedHash, calculatedHash)
-  );
-}
-
-function createLoginUserResponse(user) {
-  return {
-    username: user.username,
-    role: user.role,
-  };
-}
+function hashSessionToken(token){ return createHash('sha256').update(token).digest('hex'); }
+function parseCookies(cookieHeader){ const cookies={}; for(const part of String(cookieHeader||'').split(';')){ const i=part.indexOf('='); if(i<=0) continue; const name=part.slice(0,i).trim(); const value=part.slice(i+1).trim(); if(!name) continue; try{ cookies[name]=decodeURIComponent(value); }catch{ cookies[name]=value; } } return cookies; }
+function createSession(user){ const token=randomBytes(48).toString('base64url'); const tokenHash=hashSessionToken(token); const now=Date.now(); const session={username:user.username,role:user.role,createdAt:now,expiresAt:now+SESSION_DURATION_MS}; sessions.set(tokenHash,session); return {token,session}; }
+function getSessionFromRequest(req){ const token=parseCookies(req.headers.cookie)[SESSION_COOKIE_NAME]; if(!token) return null; const tokenHash=hashSessionToken(token); const session=sessions.get(tokenHash); if(!session) return null; if(session.expiresAt<=Date.now()){ sessions.delete(tokenHash); return null; } return {tokenHash,session}; }
+function setSessionCookie(res,token){ res.cookie(SESSION_COOKIE_NAME,token,{httpOnly:true,secure:true,sameSite:'none',path:'/',maxAge:SESSION_DURATION_MS}); }
+function clearSessionCookie(res){ res.clearCookie(SESSION_COOKIE_NAME,{httpOnly:true,secure:true,sameSite:'none',path:'/'}); }
+function createSessionResponse(session){ return {username:session.username,role:session.role,expiresAt:new Date(session.expiresAt).toISOString()}; }
+function cleanupExpiredSessions(){ const now=Date.now(); for(const [tokenHash,session] of sessions.entries()){ if(session.expiresAt<=now) sessions.delete(tokenHash); } }
+const sessionCleanupTimer=setInterval(cleanupExpiredSessions,SESSION_CLEANUP_INTERVAL_MS); sessionCleanupTimer.unref();
 
 function validateAppsScriptUrl() {
   if (!APPS_SCRIPT_URL) {
@@ -760,62 +684,10 @@ function sendRouteError(res, error, fallbackMessage, statusCode = 400) {
   });
 }
 
-app.post('/api/auth/login', async (req, res) => {
-  try {
-    const username = normalizeLoginUsername(req.body?.username);
-    const password = normalizeLoginPassword(req.body?.password);
-    const users = getConfiguredAuthUsers();
-    const user = users.find(item => item.username === username);
+app.post('/api/auth/login', async (req,res)=>{ try { const username=normalizeLoginUsername(req.body?.username); const password=normalizeLoginPassword(req.body?.password); const users=getConfiguredAuthUsers(); const user=users.find(item=>item.username===username); if(!user||!user.active){ await waitForLoginFailure(); return res.status(401).json({success:false,error:'Username or password is incorrect.'}); } const passwordIsValid=await verifyLoginPassword(password,user); if(!passwordIsValid){ await waitForLoginFailure(); return res.status(401).json({success:false,error:'Username or password is incorrect.'}); } const {token,session}=createSession(user); setSessionCookie(res,token); return res.status(200).json({success:true,user:createLoginUserResponse(user),session:createSessionResponse(session),compatibilityMode:true,timestamp:new Date().toISOString()}); } catch(error){ const errorCode=getErrorMessage(error); if(errorCode==='LOGIN_PAYLOAD_INVALID') return res.status(400).json({success:false,error:'A valid username and password are required.'}); if(errorCode==='AUTH_CONFIG_MISSING'||errorCode==='AUTH_CONFIG_INVALID'){ console.error('Authentication configuration error:',errorCode); return res.status(503).json({success:false,error:'Authentication service is not configured.'}); } console.error('Login endpoint error:',getErrorMessage(error)); return res.status(500).json({success:false,error:'Unable to process login.'}); } });
 
-    if (!user || !user.active) {
-      await waitForLoginFailure();
-      return res.status(401).json({
-        success: false,
-        error: 'Username or password is incorrect.',
-      });
-    }
-
-    const passwordIsValid = await verifyLoginPassword(password, user);
-    if (!passwordIsValid) {
-      await waitForLoginFailure();
-      return res.status(401).json({
-        success: false,
-        error: 'Username or password is incorrect.',
-      });
-    }
-
-    return res.status(200).json({
-      success: true,
-      user: createLoginUserResponse(user),
-      session: null,
-      compatibilityMode: true,
-      timestamp: new Date().toISOString(),
-    });
-  } catch (error) {
-    const errorCode = getErrorMessage(error);
-    if (errorCode === 'LOGIN_PAYLOAD_INVALID') {
-      return res.status(400).json({
-        success: false,
-        error: 'A valid username and password are required.',
-      });
-    }
-    if (
-      errorCode === 'AUTH_CONFIG_MISSING' ||
-      errorCode === 'AUTH_CONFIG_INVALID'
-    ) {
-      console.error('Authentication configuration error:', errorCode);
-      return res.status(503).json({
-        success: false,
-        error: 'Authentication service is not configured.',
-      });
-    }
-    console.error('Login endpoint error:', getErrorMessage(error));
-    return res.status(500).json({
-      success: false,
-      error: 'Unable to process login.',
-    });
-  }
-});
+app.get('/api/auth/session',(req,res)=>{ const record=getSessionFromRequest(req); if(!record){ clearSessionCookie(res); return res.status(401).json({success:false,authenticated:false,error:'Authentication required.'}); } return res.status(200).json({success:true,authenticated:true,user:{username:record.session.username,role:record.session.role},session:createSessionResponse(record.session),compatibilityMode:true,timestamp:new Date().toISOString()}); });
+app.post('/api/auth/logout',(req,res)=>{ const record=getSessionFromRequest(req); if(record) sessions.delete(record.tokenHash); clearSessionCookie(res); return res.status(200).json({success:true,message:'Logged out.',timestamp:new Date().toISOString()}); });
 
 app.get('/', (req, res) => {
   return res.json({
@@ -839,6 +711,8 @@ app.get(['/health', '/api/health'], (req, res) => {
       '/health',
       '/api/health',
       '/api/auth/login',
+      '/api/auth/session',
+      '/api/auth/logout',
       '/api/trucks',
       '/api/trucks/update',
       '/api/master-plan',
