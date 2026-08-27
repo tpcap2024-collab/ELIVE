@@ -1,6 +1,6 @@
 import express from 'express';
 import cors from 'cors';
-import { randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
+import { pbkdf2 as pbkdf2Callback, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 
 const app = express();
@@ -28,14 +28,11 @@ const MAX_UPLOAD_ROWS = 500;
 const MAX_LOGIN_USERNAME_LENGTH = 100;
 const MAX_LOGIN_PASSWORD_LENGTH = 200;
 const LOGIN_FAILURE_DELAY_MS = 650;
-const SCRYPT_KEY_LENGTH = 64;
-const SCRYPT_OPTIONS = {
-  N: 16384,
-  r: 8,
-  p: 1,
-  maxmem: 64 * 1024 * 1024,
-};
-const scryptAsync = promisify(scryptCallback);
+const PBKDF2_MIN_ITERATIONS = 210000;
+const PBKDF2_MAX_ITERATIONS = 1000000;
+const PBKDF2_KEY_LENGTH = 32;
+const PBKDF2_DIGEST = 'sha256';
+const pbkdf2Async = promisify(pbkdf2Callback);
 
 const RETRYABLE_STATUS_CODES = new Set([
   404,
@@ -114,10 +111,11 @@ function normalizeLoginUsername(value) {
 }
 
 function normalizeLoginPassword(value) {
-  if (typeof value !== 'string') {
-    throw new Error('LOGIN_PAYLOAD_INVALID');
-  }
-  if (!value || value.length > MAX_LOGIN_PASSWORD_LENGTH) {
+  if (
+    typeof value !== 'string' ||
+    !value ||
+    value.length > MAX_LOGIN_PASSWORD_LENGTH
+  ) {
     throw new Error('LOGIN_PAYLOAD_INVALID');
   }
   return value;
@@ -145,15 +143,25 @@ function getConfiguredAuthUsers() {
     const username = cleanText(user?.username).toLowerCase();
     const passwordHash = cleanText(user?.passwordHash).toLowerCase();
     const salt = cleanText(user?.salt).toLowerCase();
+    const iterations = Number(user?.iterations);
     const role = cleanText(user?.role).toUpperCase();
     const active = user?.active !== false;
 
     if (
       !username ||
       username.length > MAX_LOGIN_USERNAME_LENGTH ||
-      !/^[a-f0-9]{128}$/.test(passwordHash) ||
-      !/^[a-f0-9]{32,128}$/.test(salt) ||
-      !['TV_VIEWER', 'OPERATOR', 'PLANNER', 'SUPERVISOR', 'ADMIN'].includes(role) ||
+      !/^[a-f0-9]{64}$/.test(passwordHash) ||
+      !/^[a-f0-9]{64}$/.test(salt) ||
+      !Number.isInteger(iterations) ||
+      iterations < PBKDF2_MIN_ITERATIONS ||
+      iterations > PBKDF2_MAX_ITERATIONS ||
+      ![
+        'TV_VIEWER',
+        'OPERATOR',
+        'PLANNER',
+        'SUPERVISOR',
+        'ADMIN',
+      ].includes(role) ||
       usernames.has(username)
     ) {
       throw new Error('AUTH_CONFIG_INVALID');
@@ -164,6 +172,7 @@ function getConfiguredAuthUsers() {
       username,
       passwordHash,
       salt,
+      iterations,
       role,
       active,
     };
@@ -171,11 +180,12 @@ function getConfiguredAuthUsers() {
 }
 
 async function verifyLoginPassword(password, user) {
-  const calculatedHash = await scryptAsync(
+  const calculatedHash = await pbkdf2Async(
     password,
     Buffer.from(user.salt, 'hex'),
-    SCRYPT_KEY_LENGTH,
-    SCRYPT_OPTIONS
+    user.iterations,
+    PBKDF2_KEY_LENGTH,
+    PBKDF2_DIGEST
   );
   const expectedHash = Buffer.from(user.passwordHash, 'hex');
   return (
@@ -789,7 +799,10 @@ app.post('/api/auth/login', async (req, res) => {
         error: 'A valid username and password are required.',
       });
     }
-    if (errorCode === 'AUTH_CONFIG_MISSING' || errorCode === 'AUTH_CONFIG_INVALID') {
+    if (
+      errorCode === 'AUTH_CONFIG_MISSING' ||
+      errorCode === 'AUTH_CONFIG_INVALID'
+    ) {
       console.error('Authentication configuration error:', errorCode);
       return res.status(503).json({
         success: false,
