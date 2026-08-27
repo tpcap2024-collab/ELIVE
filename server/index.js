@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import { createHash, pbkdf2 as pbkdf2Callback, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
+import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
@@ -41,8 +42,12 @@ const PBKDF2_DIGEST = 'sha256';
 const pbkdf2Async = promisify(pbkdf2Callback);
 const SESSION_COOKIE_NAME = '__Host-elive_session';
 const SESSION_DURATION_MS = 12 * 60 * 60 * 1000;
-const SESSION_CLEANUP_INTERVAL_MS = 15 * 60 * 1000;
-const sessions = new Map();
+const SESSION_TTL_SECONDS = Math.floor(SESSION_DURATION_MS / 1000);
+const SESSION_KEY_PREFIX = 'elive:session:';
+const REDIS_URL = String(process.env.REDIS_URL || '').trim();
+let redisClient = null;
+let redisReady = false;
+let lastRedisError = null;
 const ROLE_LEVELS = Object.freeze({
   TV_VIEWER: 10,
   OPERATOR: 20,
@@ -433,31 +438,38 @@ function createLoginUserResponse(user){ return {username:user.username,role:user
 
 function hashSessionToken(token){ return createHash('sha256').update(token).digest('hex'); }
 function parseCookies(cookieHeader){ const cookies={}; for(const part of String(cookieHeader||'').split(';')){ const i=part.indexOf('='); if(i<=0) continue; const name=part.slice(0,i).trim(); const value=part.slice(i+1).trim(); if(!name) continue; try{ cookies[name]=decodeURIComponent(value); }catch{ cookies[name]=value; } } return cookies; }
-function createSession(user){ const token=randomBytes(48).toString('base64url'); const tokenHash=hashSessionToken(token); const now=Date.now(); const session={username:user.username,role:user.role,createdAt:now,expiresAt:now+SESSION_DURATION_MS}; sessions.set(tokenHash,session); return {token,session}; }
-function getSessionFromRequest(req){ const token=parseCookies(req.headers.cookie)[SESSION_COOKIE_NAME]; if(!token) return null; const tokenHash=hashSessionToken(token); const session=sessions.get(tokenHash); if(!session) return null; if(session.expiresAt<=Date.now()){ sessions.delete(tokenHash); return null; } return {tokenHash,session}; }
+async function initializeRedis() {
+  if (!REDIS_URL) throw new Error('REDIS_URL is not configured on Render.');
+  redisClient = createClient({ url: REDIS_URL, socket: { connectTimeout: 10000, reconnectStrategy: retries => Math.min(250 * 2 ** retries, 5000) } });
+  redisClient.on('error', error => { redisReady = false; lastRedisError = getErrorMessage(error); console.error('Redis client error:', lastRedisError); });
+  redisClient.on('ready', () => { redisReady = true; lastRedisError = null; console.log('ELIVE session store is ready.'); });
+  redisClient.on('end', () => { redisReady = false; console.warn('ELIVE session store connection ended.'); });
+  await redisClient.connect();
+  redisReady = redisClient.isReady;
+}
+function requireRedisClient() { if (!redisClient || !redisReady || !redisClient.isReady) throw new Error('SESSION_STORE_UNAVAILABLE'); return redisClient; }
+function getSessionKey(tokenHash) { return `${SESSION_KEY_PREFIX}${tokenHash}`; }
+async function createSession(user) {
+  const client=requireRedisClient(); const token=randomBytes(48).toString('base64url'); const tokenHash=hashSessionToken(token); const now=Date.now();
+  const session={username:user.username,role:user.role,createdAt:now,expiresAt:now+SESSION_DURATION_MS};
+  await client.set(getSessionKey(tokenHash),JSON.stringify(session),{EX:SESSION_TTL_SECONDS}); return {token,session};
+}
+async function getSessionFromRequest(req) {
+  const token=parseCookies(req.headers.cookie)[SESSION_COOKIE_NAME]; if(!token) return null;
+  const client=requireRedisClient(); const tokenHash=hashSessionToken(token); const raw=await client.get(getSessionKey(tokenHash)); if(!raw) return null;
+  let session; try { session=JSON.parse(raw); } catch { await client.del(getSessionKey(tokenHash)); return null; }
+  if(!session?.username||!session?.role||!Number.isFinite(Number(session.expiresAt))||Number(session.expiresAt)<=Date.now()){ await client.del(getSessionKey(tokenHash)); return null; }
+  return {tokenHash,session:{username:cleanText(session.username).toLowerCase(),role:cleanText(session.role).toUpperCase(),createdAt:Number(session.createdAt||0),expiresAt:Number(session.expiresAt)}};
+}
 function setSessionCookie(res,token){ res.cookie(SESSION_COOKIE_NAME,token,{httpOnly:true,secure:true,sameSite:'none',path:'/',maxAge:SESSION_DURATION_MS}); }
 function clearSessionCookie(res){ res.clearCookie(SESSION_COOKIE_NAME,{httpOnly:true,secure:true,sameSite:'none',path:'/'}); }
 function createSessionResponse(session){ return {username:session.username,role:session.role,expiresAt:new Date(session.expiresAt).toISOString()}; }
-function requireAuthentication(req, res, next) {
-  const sessionRecord = getSessionFromRequest(req);
-  if (!sessionRecord) {
-    clearSessionCookie(res);
-    return res.status(401).json({
-      success: false,
-      authenticated: false,
-      error: 'Authentication required.',
-    });
-  }
-
-  req.auth = {
-    username: sessionRecord.session.username,
-    role: sessionRecord.session.role,
-    expiresAt: sessionRecord.session.expiresAt,
-  };
-  req.authSessionTokenHash = sessionRecord.tokenHash;
-  return next();
+async function deleteSession(tokenHash){ await requireRedisClient().del(getSessionKey(tokenHash)); }
+async function requireAuthentication(req,res,next){
+  try { const record=await getSessionFromRequest(req); if(!record){ clearSessionCookie(res); return res.status(401).json({success:false,authenticated:false,error:'Authentication required.'}); }
+    req.auth={username:record.session.username,role:record.session.role,expiresAt:record.session.expiresAt}; req.authSessionTokenHash=record.tokenHash; return next();
+  } catch(error){ if(getErrorMessage(error)==='SESSION_STORE_UNAVAILABLE') return res.status(503).json({success:false,error:'Session service is temporarily unavailable.'}); return next(error); }
 }
-
 function normalizeRoleName(value) {
   const role = cleanText(value).toUpperCase();
   if (!Object.prototype.hasOwnProperty.call(ROLE_LEVELS, role)) {
@@ -497,8 +509,6 @@ function requireMinimumRole(requiredRole) {
   };
 }
 
-function cleanupExpiredSessions(){ const now=Date.now(); for(const [tokenHash,session] of sessions.entries()){ if(session.expiresAt<=now) sessions.delete(tokenHash); } }
-const sessionCleanupTimer=setInterval(cleanupExpiredSessions,SESSION_CLEANUP_INTERVAL_MS); sessionCleanupTimer.unref();
 
 function validateAppsScriptUrl() {
   if (!APPS_SCRIPT_URL) {
@@ -1059,7 +1069,7 @@ function sendRouteError(res, error, fallbackMessage, statusCode = 400) {
   });
 }
 
-app.post('/api/auth/login', loginRateLimit, async (req,res)=>{ try { const username=normalizeLoginUsername(req.body?.username); const password=normalizeLoginPassword(req.body?.password); const users=getConfiguredAuthUsers(); const user=users.find(item=>item.username===username); if(!user||!user.active){ await waitForLoginFailure(); return res.status(401).json({success:false,error:'Username or password is incorrect.'}); } const passwordIsValid=await verifyLoginPassword(password,user); if(!passwordIsValid){ await waitForLoginFailure(); return res.status(401).json({success:false,error:'Username or password is incorrect.'}); } const {token,session}=createSession(user); setSessionCookie(res,token); return res.status(200).json({success:true,user:createLoginUserResponse(user),session:createSessionResponse(session),compatibilityMode:true,timestamp:new Date().toISOString()}); } catch(error){ const errorCode=getErrorMessage(error); if(errorCode==='LOGIN_PAYLOAD_INVALID') return res.status(400).json({success:false,error:'A valid username and password are required.'}); if(errorCode==='AUTH_CONFIG_MISSING'||errorCode==='AUTH_CONFIG_INVALID'){ console.error('Authentication configuration error:',errorCode); return res.status(503).json({success:false,error:'Authentication service is not configured.'}); } console.error('Login endpoint error:',getErrorMessage(error)); return res.status(500).json({success:false,error:'Unable to process login.'}); } });
+app.post('/api/auth/login', loginRateLimit, async (req,res)=>{ try { const username=normalizeLoginUsername(req.body?.username); const password=normalizeLoginPassword(req.body?.password); const users=getConfiguredAuthUsers(); const user=users.find(item=>item.username===username); if(!user||!user.active){ await waitForLoginFailure(); return res.status(401).json({success:false,error:'Username or password is incorrect.'}); } const passwordIsValid=await verifyLoginPassword(password,user); if(!passwordIsValid){ await waitForLoginFailure(); return res.status(401).json({success:false,error:'Username or password is incorrect.'}); } const {token,session}=await createSession(user); setSessionCookie(res,token); return res.status(200).json({success:true,user:createLoginUserResponse(user),session:createSessionResponse(session),compatibilityMode:true,timestamp:new Date().toISOString()}); } catch(error){ const errorCode=getErrorMessage(error); if(errorCode==='LOGIN_PAYLOAD_INVALID') return res.status(400).json({success:false,error:'A valid username and password are required.'}); if(errorCode==='AUTH_CONFIG_MISSING'||errorCode==='AUTH_CONFIG_INVALID'){ console.error('Authentication configuration error:',errorCode); return res.status(503).json({success:false,error:'Authentication service is not configured.'}); } console.error('Login endpoint error:',getErrorMessage(error)); return res.status(500).json({success:false,error:'Unable to process login.'}); } });
 
 app.get('/api/auth/verify', requireAuthentication, (req, res) => {
   return res.status(200).json({
@@ -1112,29 +1122,8 @@ app.get(
   }
 );
 
-app.get('/api/auth/session',(req,res)=>{ const record=getSessionFromRequest(req); if(!record){ clearSessionCookie(res); return res.status(401).json({success:false,authenticated:false,error:'Authentication required.'}); } return res.status(200).json({success:true,authenticated:true,user:{username:record.session.username,role:record.session.role},session:createSessionResponse(record.session),compatibilityMode:true,timestamp:new Date().toISOString()}); });
-app.post('/api/auth/logout', (req, res) => {
-  const record = getSessionFromRequest(req);
-
-  if (record) {
-    req.auth = {
-      username: record.session.username,
-      role: record.session.role,
-      expiresAt: record.session.expiresAt,
-    };
-
-    sessions.delete(record.tokenHash);
-  }
-
-  clearSessionCookie(res);
-
-  return res.status(200).json({
-    success: true,
-    message: 'Logged out.',
-    timestamp: new Date().toISOString(),
-  });
-});
-
+app.get('/api/auth/session', async (req,res)=>{ try { const record=await getSessionFromRequest(req); if(!record){ clearSessionCookie(res); return res.status(401).json({success:false,authenticated:false,error:'Authentication required.'}); } return res.status(200).json({success:true,authenticated:true,user:{username:record.session.username,role:record.session.role},session:createSessionResponse(record.session),compatibilityMode:false,timestamp:new Date().toISOString()}); } catch(error){ if(getErrorMessage(error)==='SESSION_STORE_UNAVAILABLE') return res.status(503).json({success:false,error:'Session service is temporarily unavailable.'}); return sendRouteError(res,error,'Unable to read Session.',500); } });
+app.post('/api/auth/logout', async (req,res)=>{ try { const record=await getSessionFromRequest(req); if(record){ req.auth={username:record.session.username,role:record.session.role,expiresAt:record.session.expiresAt}; await deleteSession(record.tokenHash); } clearSessionCookie(res); return res.status(200).json({success:true,message:'Logged out.',timestamp:new Date().toISOString()}); } catch(error){ if(getErrorMessage(error)==='SESSION_STORE_UNAVAILABLE') return res.status(503).json({success:false,error:'Session service is temporarily unavailable.'}); return sendRouteError(res,error,'Unable to logout.',500); } });
 app.get('/', (req, res) => {
   return res.json({
     status: 'success',
@@ -1176,6 +1165,7 @@ app.get(['/health', '/api/health'], (req, res) => {
       '/api/plans/:codeRun/confirm-work-detail',
       '/api/route-to-tpcap',
     ],
+    sessionStore: { type: 'redis', configured: Boolean(REDIS_URL), ready: Boolean(redisReady && redisClient?.isReady), lastError: lastRedisError },
     appsScript: {
       configured: Boolean(APPS_SCRIPT_URL),
       validFormat: Boolean(
@@ -1534,6 +1524,5 @@ try {
   console.error('Apps Script configuration warning:', getErrorMessage(error));
 }
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`ELIVE API version ${API_VERSION} is running on port ${PORT}`);
-});
+async function startServer(){ await initializeRedis(); app.listen(PORT,'0.0.0.0',()=>{ console.log(`ELIVE API version ${API_VERSION} is running on port ${PORT}`); }); }
+startServer().catch(error=>{ console.error('Unable to start ELIVE API:',getErrorMessage(error)); process.exit(1); });
