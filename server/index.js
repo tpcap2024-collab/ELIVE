@@ -63,6 +63,17 @@ const RETRYABLE_STATUS_CODES = new Set([
   504,
 ]);
 
+const SECURITY_HEADERS = Object.freeze({
+  'Content-Security-Policy': "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
+  'Cross-Origin-Opener-Policy': 'same-origin',
+  'Referrer-Policy': 'no-referrer',
+  'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
+  'X-Content-Type-Options': 'nosniff',
+  'X-DNS-Prefetch-Control': 'off',
+  'X-Download-Options': 'noopen',
+  'X-Frame-Options': 'DENY',
+  'X-Permitted-Cross-Domain-Policies': 'none',
+});
 const allowedOrigins = [
   'https://elive.onrender.com',
   'http://localhost:5173',
@@ -80,6 +91,27 @@ let masterPlanRequestPromise = null;
 let lastAppsScriptSuccessTime = null;
 let lastAppsScriptErrorTime = null;
 let lastAppsScriptError = null;
+
+app.disable('x-powered-by');
+app.set('trust proxy', 1);
+app.use((req, res, next) => {
+  for (const [headerName, headerValue] of Object.entries(SECURITY_HEADERS)) {
+    res.setHeader(headerName, headerValue);
+  }
+
+  res.setHeader(
+    'Permissions-Policy',
+    'camera=(), microphone=(), geolocation=(), payment=(), usb=()'
+  );
+
+  if (req.path.startsWith('/api/auth/')) {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+  }
+
+  return next();
+});
 
 app.use(
   cors({
