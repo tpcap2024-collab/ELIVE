@@ -4,8 +4,6 @@ import {
   createServer as createViteServer,
 } from 'vite';
 
-const DEFAULT_APPS_SCRIPT_URL =
-  'https://script.google.com/macros/s/AKfycbwV9sfFxE-9lN4A08EKGq55_RlBjlVcvK6Bdeddj8GT0-6huxxnz8oyT7zunl69PK3qJA/exec';
 
 const SERVER_VERSION = '10';
 const TPCAP_LATITUDE = 13.623729606202758;
@@ -55,15 +53,32 @@ type EditablePlanInput = {
 };
 
 function getAppsScriptUrl(): string {
-  const configuredUrl =
-    process.env.APPS_SCRIPT_URL ||
-    DEFAULT_APPS_SCRIPT_URL;
-
-  return String(configuredUrl)
+  const configuredUrl = String(
+    process.env.APPS_SCRIPT_URL || ''
+  )
     .trim()
-    .replace(/^['"]|['"];?$/g, '')
+    .replace(/^['"]|['"]?;?$/g, '')
     .replace(/[;\s]+$/g, '')
     .replace(/\/+$/, '');
+
+  if (!configuredUrl) {
+    throw new Error(
+      'APPS_SCRIPT_URL is not configured.'
+    );
+  }
+
+  if (
+    !configuredUrl.startsWith(
+      'https://script.google.com/macros/s/'
+    ) ||
+    !configuredUrl.endsWith('/exec')
+  ) {
+    throw new Error(
+      'APPS_SCRIPT_URL configuration is invalid.'
+    );
+  }
+
+  return configuredUrl;
 }
 
 function isValidLatitude(
