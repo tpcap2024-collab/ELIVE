@@ -37,6 +37,14 @@ const SESSION_COOKIE_NAME = '__Host-elive_session';
 const SESSION_DURATION_MS = 12 * 60 * 60 * 1000;
 const SESSION_CLEANUP_INTERVAL_MS = 15 * 60 * 1000;
 const sessions = new Map();
+const ROLE_LEVELS = Object.freeze({
+  TV_VIEWER: 10,
+  OPERATOR: 20,
+  PLANNER: 30,
+  SUPERVISOR: 40,
+  ADMIN: 50,
+});
+const ROLE_NAMES = Object.freeze(Object.keys(ROLE_LEVELS));
 
 const RETRYABLE_STATUS_CODES = new Set([
   404,
@@ -140,6 +148,45 @@ function requireAuthentication(req, res, next) {
   };
   req.authSessionTokenHash = sessionRecord.tokenHash;
   return next();
+}
+
+function normalizeRoleName(value) {
+  const role = cleanText(value).toUpperCase();
+  if (!Object.prototype.hasOwnProperty.call(ROLE_LEVELS, role)) {
+    throw new Error('ROLE_INVALID');
+  }
+  return role;
+}
+
+function requireMinimumRole(requiredRole) {
+  const normalizedRequiredRole = normalizeRoleName(requiredRole);
+  return (req, res, next) => {
+    if (!req.auth) {
+      return res.status(401).json({
+        success: false,
+        authenticated: false,
+        error: 'Authentication required.',
+      });
+    }
+
+    const currentRoleLevel = ROLE_LEVELS[req.auth.role] || 0;
+    const requiredRoleLevel = ROLE_LEVELS[normalizedRequiredRole];
+    if (currentRoleLevel < requiredRoleLevel) {
+      return res.status(403).json({
+        success: false,
+        authenticated: true,
+        authorized: false,
+        error: 'Insufficient permission.',
+        requiredRole: normalizedRequiredRole,
+      });
+    }
+
+    req.authorization = {
+      requiredRole: normalizedRequiredRole,
+      currentRole: req.auth.role,
+    };
+    return next();
+  };
 }
 
 function cleanupExpiredSessions(){ const now=Date.now(); for(const [tokenHash,session] of sessions.entries()){ if(session.expiresAt<=now) sessions.delete(tokenHash); } }
@@ -722,6 +769,41 @@ app.get('/api/auth/verify', requireAuthentication, (req, res) => {
   });
 });
 
+app.get(
+  '/api/auth/role-test/:requiredRole',
+  requireAuthentication,
+  (req, res, next) => {
+    let roleMiddleware;
+    try {
+      roleMiddleware = requireMinimumRole(req.params.requiredRole);
+    } catch (error) {
+      if (getErrorMessage(error) === 'ROLE_INVALID') {
+        return res.status(400).json({
+          success: false,
+          error: 'Role is invalid.',
+          allowedRoles: ROLE_NAMES,
+        });
+      }
+      return next(error);
+    }
+    return roleMiddleware(req, res, next);
+  },
+  (req, res) => {
+    return res.status(200).json({
+      success: true,
+      authenticated: true,
+      authorized: true,
+      user: {
+        username: req.auth.username,
+        role: req.auth.role,
+      },
+      requiredRole: req.authorization.requiredRole,
+      compatibilityMode: true,
+      timestamp: new Date().toISOString(),
+    });
+  }
+);
+
 app.get('/api/auth/session',(req,res)=>{ const record=getSessionFromRequest(req); if(!record){ clearSessionCookie(res); return res.status(401).json({success:false,authenticated:false,error:'Authentication required.'}); } return res.status(200).json({success:true,authenticated:true,user:{username:record.session.username,role:record.session.role},session:createSessionResponse(record.session),compatibilityMode:true,timestamp:new Date().toISOString()}); });
 app.post('/api/auth/logout',(req,res)=>{ const record=getSessionFromRequest(req); if(record) sessions.delete(record.tokenHash); clearSessionCookie(res); return res.status(200).json({success:true,message:'Logged out.',timestamp:new Date().toISOString()}); });
 
@@ -748,6 +830,7 @@ app.get(['/health', '/api/health'], (req, res) => {
       '/api/health',
       '/api/auth/login',
       '/api/auth/verify',
+      '/api/auth/role-test/:requiredRole',
       '/api/auth/session',
       '/api/auth/logout',
       '/api/trucks',
