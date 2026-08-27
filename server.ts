@@ -1741,6 +1741,39 @@ async function startServer() {
     }
   );
 
+  app.use(
+    [
+      '/server.cjs',
+      '/server.cjs.map',
+      '/server-dist/server.cjs',
+      '/server-dist/server.cjs.map',
+    ],
+    (
+      req,
+      res
+    ) => {
+      res.setHeader(
+        'Cache-Control',
+        'no-store, no-cache, must-revalidate'
+      );
+      res.setHeader(
+        'Pragma',
+        'no-cache'
+      );
+      res.setHeader(
+        'X-Content-Type-Options',
+        'nosniff'
+      );
+      return res
+        .status(404)
+        .type('application/json')
+        .send({
+          success: false,
+          error: 'Not found.',
+        });
+    }
+  );
+
   if (
     process.env.NODE_ENV !==
     'production'
