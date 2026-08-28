@@ -609,6 +609,7 @@ async function createSession(user) {
     role: user.role,
     createdAt: now,
     expiresAt: now + SESSION_DURATION_MS,
+    lastUserActivityAt: now,
   };
   const indexKey = getSessionUserIndexKey(user.username);
 
@@ -785,6 +786,7 @@ async function getSessionFromRequest(req) {
     role: cleanText(session.role).toUpperCase(),
     createdAt: Number(session.createdAt || 0),
     expiresAt: Number(session.expiresAt),
+    lastUserActivityAt: Number(session.lastUserActivityAt || session.createdAt || 0),
   };
   const accountValidation = getCurrentSessionUser(normalizedSession);
 
@@ -803,6 +805,22 @@ async function getSessionFromRequest(req) {
 
   return { tokenHash, session: normalizedSession, invalidReason: null };
 }
+async function recordSessionUserActivity(tokenHash, session) {
+  const client = requireRedisClient();
+  const now = Date.now();
+  const updatedSession = { ...session, lastUserActivityAt: now };
+  const remainingTtlSeconds = Math.max(
+    1,
+    Math.ceil((Number(session.expiresAt) - now) / 1000)
+  );
+  await client.set(
+    getSessionKey(tokenHash),
+    JSON.stringify(updatedSession),
+    { EX: remainingTtlSeconds }
+  );
+  return updatedSession;
+}
+
 function setSessionCookie(res,token){ res.cookie(SESSION_COOKIE_NAME,token,{httpOnly:true,secure:true,sameSite:'none',path:'/',maxAge:SESSION_DURATION_MS}); }
 function clearSessionCookie(res){ res.clearCookie(SESSION_COOKIE_NAME,{httpOnly:true,secure:true,sameSite:'none',path:'/'}); }
 function createSessionResponse(session){ return {username:session.username,role:session.role,expiresAt:new Date(session.expiresAt).toISOString()}; }
@@ -828,7 +846,7 @@ async function requireAuthentication(req,res,next){
           : 'Authentication required.'
       });
     }
-    req.auth={username:record.session.username,role:record.session.role,expiresAt:record.session.expiresAt}; req.authSessionTokenHash=record.tokenHash; return next();
+    req.auth={username:record.session.username,role:record.session.role,createdAt:record.session.createdAt,expiresAt:record.session.expiresAt,lastUserActivityAt:record.session.lastUserActivityAt}; req.authSessionTokenHash=record.tokenHash; return next();
   } catch(error){
     const errorCode=getErrorMessage(error);
     if(errorCode==='SESSION_STORE_UNAVAILABLE') return res.status(503).json({success:false,error:'Session service is temporarily unavailable.'});
@@ -1513,6 +1531,28 @@ app.get(
 );
 
 app.get('/api/auth/session', async (req,res)=>{ try { const record=await getSessionFromRequest(req); if(!record||record.invalidReason){ if(record?.invalidReason) writeSessionRevocationAudit(req,record); clearSessionCookie(res); return res.status(401).json({success:false,authenticated:false,error:record?.invalidReason==='ACCOUNT_ROLE_CHANGED'?'Account permission changed. Please sign in again.':'Authentication required.'}); } return res.status(200).json({success:true,authenticated:true,user:{username:record.session.username,role:record.session.role},session:createSessionResponse(record.session),compatibilityMode:false,timestamp:new Date().toISOString()}); } catch(error){ const errorCode=getErrorMessage(error); if(errorCode==='SESSION_STORE_UNAVAILABLE') return res.status(503).json({success:false,error:'Session service is temporarily unavailable.'}); if(errorCode==='AUTH_CONFIG_MISSING'||errorCode==='AUTH_CONFIG_INVALID') return res.status(503).json({success:false,error:'Authentication service is not configured.'}); return sendRouteError(res,error,'Unable to read Session.',500); } });
+app.post('/api/auth/activity', requireAuthentication, async (req, res) => {
+  try {
+    const updatedSession = await recordSessionUserActivity(
+      req.authSessionTokenHash,
+      req.auth
+    );
+    return res.status(200).json({
+      success: true,
+      lastUserActivityAt: new Date(updatedSession.lastUserActivityAt).toISOString(),
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    if (getErrorMessage(error) === 'SESSION_STORE_UNAVAILABLE') {
+      return res.status(503).json({
+        success: false,
+        error: 'Session service is temporarily unavailable.',
+      });
+    }
+    return sendRouteError(res, error, 'Unable to record user activity.', 500);
+  }
+});
+
 app.post('/api/auth/logout', async (req,res)=>{ try { const record=await getSessionFromRequest(req); if(record){ req.auth={username:record.session.username,role:record.session.role,expiresAt:record.session.expiresAt}; await deleteSession(record.tokenHash, record.session); } clearSessionCookie(res); return res.status(200).json({success:true,message:'Logged out.',timestamp:new Date().toISOString()}); } catch(error){ const errorCode=getErrorMessage(error); if(errorCode==='SESSION_STORE_UNAVAILABLE') return res.status(503).json({success:false,error:'Session service is temporarily unavailable.'}); if(errorCode==='AUTH_CONFIG_MISSING'||errorCode==='AUTH_CONFIG_INVALID'){ clearSessionCookie(res); return res.status(200).json({success:true,message:'Logged out.',timestamp:new Date().toISOString()}); } return sendRouteError(res,error,'Unable to logout.',500); } });
 app.get('/', (req, res) => {
   return res.json({
@@ -1540,6 +1580,7 @@ app.get(['/health', '/api/health'], (req, res) => {
       '/api/auth/role-test/:requiredRole',
       '/api/auth/session',
       '/api/auth/logout',
+      '/api/auth/activity',
       '/api/admin/sessions',
       '/api/admin/sessions/revoke-user',
       '/api/admin/sessions/revoke-all',
@@ -1569,6 +1610,7 @@ app.get(['/health', '/api/health'], (req, res) => {
     },
     adminSessionRevocation: { enabled: true, currentAdminSessionPreserved: true },
     adminSessionInventory: { enabled: true, exposesSecrets: false },
+    userActivitySignal: { enabled: true, endpoint: '/api/auth/activity', frontendThrottleSeconds: 60 },
     appsScript: {
       configured: Boolean(APPS_SCRIPT_URL),
       signatureConfigured: Boolean(APPS_SCRIPT_SHARED_SECRET && APPS_SCRIPT_SHARED_SECRET.length >= 32),
