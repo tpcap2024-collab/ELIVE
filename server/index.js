@@ -468,21 +468,72 @@ async function createSession(user) {
   const session={username:user.username,role:user.role,createdAt:now,expiresAt:now+SESSION_DURATION_MS};
   await client.set(getSessionKey(tokenHash),JSON.stringify(session),{EX:SESSION_TTL_SECONDS}); return {token,session};
 }
+function getCurrentSessionUser(session) {
+  const users = getConfiguredAuthUsers();
+  const username = cleanText(session?.username).toLowerCase();
+  const sessionRole = cleanText(session?.role).toUpperCase();
+  const user = users.find(item => item.username === username);
+
+  if (!user || !user.active) {
+    return { valid: false, reason: 'ACCOUNT_INACTIVE_OR_REMOVED', user: null };
+  }
+
+  if (user.role !== sessionRole) {
+    return { valid: false, reason: 'ACCOUNT_ROLE_CHANGED', user };
+  }
+
+  return { valid: true, reason: null, user };
+}
+
 async function getSessionFromRequest(req) {
   const token=parseCookies(req.headers.cookie)[SESSION_COOKIE_NAME]; if(!token) return null;
   const client=requireRedisClient(); const tokenHash=hashSessionToken(token); const raw=await client.get(getSessionKey(tokenHash)); if(!raw) return null;
   let session; try { session=JSON.parse(raw); } catch { await client.del(getSessionKey(tokenHash)); return null; }
   if(!session?.username||!session?.role||!Number.isFinite(Number(session.expiresAt))||Number(session.expiresAt)<=Date.now()){ await client.del(getSessionKey(tokenHash)); return null; }
-  return {tokenHash,session:{username:cleanText(session.username).toLowerCase(),role:cleanText(session.role).toUpperCase(),createdAt:Number(session.createdAt||0),expiresAt:Number(session.expiresAt)}};
+
+  const normalizedSession = {
+    username: cleanText(session.username).toLowerCase(),
+    role: cleanText(session.role).toUpperCase(),
+    createdAt: Number(session.createdAt || 0),
+    expiresAt: Number(session.expiresAt),
+  };
+  const accountValidation = getCurrentSessionUser(normalizedSession);
+
+  if (!accountValidation.valid) {
+    await client.del(getSessionKey(tokenHash));
+    return {
+      tokenHash,
+      session: normalizedSession,
+      invalidReason: accountValidation.reason,
+    };
+  }
+
+  return { tokenHash, session: normalizedSession, invalidReason: null };
 }
 function setSessionCookie(res,token){ res.cookie(SESSION_COOKIE_NAME,token,{httpOnly:true,secure:true,sameSite:'none',path:'/',maxAge:SESSION_DURATION_MS}); }
 function clearSessionCookie(res){ res.clearCookie(SESSION_COOKIE_NAME,{httpOnly:true,secure:true,sameSite:'none',path:'/'}); }
 function createSessionResponse(session){ return {username:session.username,role:session.role,expiresAt:new Date(session.expiresAt).toISOString()}; }
 async function deleteSession(tokenHash){ await requireRedisClient().del(getSessionKey(tokenHash)); }
 async function requireAuthentication(req,res,next){
-  try { const record=await getSessionFromRequest(req); if(!record){ clearSessionCookie(res); return res.status(401).json({success:false,authenticated:false,error:'Authentication required.'}); }
+  try {
+    const record=await getSessionFromRequest(req);
+    if(!record || record.invalidReason){
+      clearSessionCookie(res);
+      return res.status(401).json({
+        success:false,
+        authenticated:false,
+        error: record?.invalidReason === 'ACCOUNT_ROLE_CHANGED'
+          ? 'Account permission changed. Please sign in again.'
+          : 'Authentication required.'
+      });
+    }
     req.auth={username:record.session.username,role:record.session.role,expiresAt:record.session.expiresAt}; req.authSessionTokenHash=record.tokenHash; return next();
-  } catch(error){ if(getErrorMessage(error)==='SESSION_STORE_UNAVAILABLE') return res.status(503).json({success:false,error:'Session service is temporarily unavailable.'}); return next(error); }
+  } catch(error){
+    const errorCode=getErrorMessage(error);
+    if(errorCode==='SESSION_STORE_UNAVAILABLE') return res.status(503).json({success:false,error:'Session service is temporarily unavailable.'});
+    if(errorCode==='AUTH_CONFIG_MISSING'||errorCode==='AUTH_CONFIG_INVALID') return res.status(503).json({success:false,error:'Authentication service is not configured.'});
+    return next(error);
+  }
 }
 function normalizeRoleName(value) {
   const role = cleanText(value).toUpperCase();
@@ -1160,8 +1211,8 @@ app.get(
   }
 );
 
-app.get('/api/auth/session', async (req,res)=>{ try { const record=await getSessionFromRequest(req); if(!record){ clearSessionCookie(res); return res.status(401).json({success:false,authenticated:false,error:'Authentication required.'}); } return res.status(200).json({success:true,authenticated:true,user:{username:record.session.username,role:record.session.role},session:createSessionResponse(record.session),compatibilityMode:false,timestamp:new Date().toISOString()}); } catch(error){ if(getErrorMessage(error)==='SESSION_STORE_UNAVAILABLE') return res.status(503).json({success:false,error:'Session service is temporarily unavailable.'}); return sendRouteError(res,error,'Unable to read Session.',500); } });
-app.post('/api/auth/logout', async (req,res)=>{ try { const record=await getSessionFromRequest(req); if(record){ req.auth={username:record.session.username,role:record.session.role,expiresAt:record.session.expiresAt}; await deleteSession(record.tokenHash); } clearSessionCookie(res); return res.status(200).json({success:true,message:'Logged out.',timestamp:new Date().toISOString()}); } catch(error){ if(getErrorMessage(error)==='SESSION_STORE_UNAVAILABLE') return res.status(503).json({success:false,error:'Session service is temporarily unavailable.'}); return sendRouteError(res,error,'Unable to logout.',500); } });
+app.get('/api/auth/session', async (req,res)=>{ try { const record=await getSessionFromRequest(req); if(!record||record.invalidReason){ clearSessionCookie(res); return res.status(401).json({success:false,authenticated:false,error:record?.invalidReason==='ACCOUNT_ROLE_CHANGED'?'Account permission changed. Please sign in again.':'Authentication required.'}); } return res.status(200).json({success:true,authenticated:true,user:{username:record.session.username,role:record.session.role},session:createSessionResponse(record.session),compatibilityMode:false,timestamp:new Date().toISOString()}); } catch(error){ const errorCode=getErrorMessage(error); if(errorCode==='SESSION_STORE_UNAVAILABLE') return res.status(503).json({success:false,error:'Session service is temporarily unavailable.'}); if(errorCode==='AUTH_CONFIG_MISSING'||errorCode==='AUTH_CONFIG_INVALID') return res.status(503).json({success:false,error:'Authentication service is not configured.'}); return sendRouteError(res,error,'Unable to read Session.',500); } });
+app.post('/api/auth/logout', async (req,res)=>{ try { const record=await getSessionFromRequest(req); if(record){ req.auth={username:record.session.username,role:record.session.role,expiresAt:record.session.expiresAt}; await deleteSession(record.tokenHash); } clearSessionCookie(res); return res.status(200).json({success:true,message:'Logged out.',timestamp:new Date().toISOString()}); } catch(error){ const errorCode=getErrorMessage(error); if(errorCode==='SESSION_STORE_UNAVAILABLE') return res.status(503).json({success:false,error:'Session service is temporarily unavailable.'}); if(errorCode==='AUTH_CONFIG_MISSING'||errorCode==='AUTH_CONFIG_INVALID'){ clearSessionCookie(res); return res.status(200).json({success:true,message:'Logged out.',timestamp:new Date().toISOString()}); } return sendRouteError(res,error,'Unable to logout.',500); } });
 app.get('/', (req, res) => {
   return res.json({
     status: 'success',
@@ -1205,6 +1256,7 @@ app.get(['/health', '/api/health'], (req, res) => {
     ],
     sessionStore: { type: 'redis', configured: Boolean(REDIS_URL), ready: Boolean(redisReady && redisClient?.isReady), lastError: lastRedisError },
     rateLimitStore: { type: 'redis', persistentAcrossDeploys: true, windowSeconds: LOGIN_RATE_LIMIT_WINDOW_SECONDS },
+    sessionAccountValidation: { enabled: true, invalidatesOnInactive: true, invalidatesOnRoleChange: true },
     appsScript: {
       configured: Boolean(APPS_SCRIPT_URL),
       signatureConfigured: Boolean(APPS_SCRIPT_SHARED_SECRET && APPS_SCRIPT_SHARED_SECRET.length >= 32),
