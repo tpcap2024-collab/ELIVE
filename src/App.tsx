@@ -82,6 +82,7 @@ const DOCK_FILTERS: DockFilter[] = ['ALL', 'M1', 'L1', 'L2', 'R1', 'R2'];
 
 const ROWS_PER_PAGE = 20;
 const REFRESH_INTERVAL = 60000;
+const USER_ACTIVITY_THROTTLE_MS = 60000;
 
 const ROLE_LEVELS: Record<EliveUserRole, number> = {
   TV_VIEWER: 10,
@@ -170,6 +171,8 @@ export default function App() {
   const dashboardFullscreenRef = useRef<HTMLElement | null>(null);
   const updateQueueRef = useRef<Promise<void>>(Promise.resolve());
   const trucksRef = useRef<Truck[]>(trucks);
+  const lastActivitySignalAtRef = useRef(0);
+  const activityRequestRunningRef = useRef(false);
 
   useEffect(() => {
     trucksRef.current = trucks;
@@ -203,6 +206,58 @@ export default function App() {
       isActive = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!isAppLoggedIn) return;
+
+    const sendActivitySignal = async () => {
+      const now = Date.now();
+      if (
+        document.visibilityState !== 'visible' ||
+        activityRequestRunningRef.current ||
+        now - lastActivitySignalAtRef.current < USER_ACTIVITY_THROTTLE_MS
+      ) return;
+
+      lastActivitySignalAtRef.current = now;
+      activityRequestRunningRef.current = true;
+      try {
+        const response = await fetch(`${getAppsScriptUrl()}/api/auth/activity`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { Accept: 'application/json' },
+        });
+        if (response.status === 401) setAuthenticatedUser(null);
+      } catch (error) {
+        console.error('Unable to send ELIVE user activity signal:', error);
+      } finally {
+        activityRequestRunningRef.current = false;
+      }
+    };
+
+    const handleUserActivity = () => void sendActivitySignal();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') void sendActivitySignal();
+    };
+    const eventNames: Array<keyof WindowEventMap> = [
+      'pointerdown',
+      'keydown',
+      'scroll',
+      'touchstart',
+    ];
+
+    for (const eventName of eventNames) {
+      window.addEventListener(eventName, handleUserActivity, { passive: true });
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    void sendActivitySignal();
+
+    return () => {
+      for (const eventName of eventNames) {
+        window.removeEventListener(eventName, handleUserActivity);
+      }
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [isAppLoggedIn]);
 
   const loadData = useCallback(async () => {
     if (requestRunningRef.current) return;
