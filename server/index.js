@@ -383,6 +383,28 @@ function writeAuditLog(event) {
   }));
 }
 
+function writeSessionRevocationAudit(req, record) {
+  if (!record?.invalidReason || !record?.session) return;
+
+  writeAuditLog({
+    requestId: randomUUID(),
+    timestamp: new Date().toISOString(),
+    actorUsername: record.session.username,
+    actorRole: record.session.role,
+    method: req.method,
+    path: req.path,
+    action: 'SESSION_REVOKED',
+    targetType: 'SESSION',
+    targetIdHash: hashAuditValue(record.session.username),
+    reason: record.invalidReason,
+    result: 'SUCCESS',
+    statusCode: 401,
+    durationMs: 0,
+    ipHash: getMaskedRequestIp(req),
+    userAgentHash: hashAuditValue(req.headers['user-agent']),
+  });
+}
+
 app.use((req, res, next) => {
   const descriptor = getAuditDescriptor(req);
   if (!descriptor) return next();
@@ -518,6 +540,7 @@ async function requireAuthentication(req,res,next){
   try {
     const record=await getSessionFromRequest(req);
     if(!record || record.invalidReason){
+      if (record?.invalidReason) writeSessionRevocationAudit(req, record);
       clearSessionCookie(res);
       return res.status(401).json({
         success:false,
@@ -1211,7 +1234,7 @@ app.get(
   }
 );
 
-app.get('/api/auth/session', async (req,res)=>{ try { const record=await getSessionFromRequest(req); if(!record||record.invalidReason){ clearSessionCookie(res); return res.status(401).json({success:false,authenticated:false,error:record?.invalidReason==='ACCOUNT_ROLE_CHANGED'?'Account permission changed. Please sign in again.':'Authentication required.'}); } return res.status(200).json({success:true,authenticated:true,user:{username:record.session.username,role:record.session.role},session:createSessionResponse(record.session),compatibilityMode:false,timestamp:new Date().toISOString()}); } catch(error){ const errorCode=getErrorMessage(error); if(errorCode==='SESSION_STORE_UNAVAILABLE') return res.status(503).json({success:false,error:'Session service is temporarily unavailable.'}); if(errorCode==='AUTH_CONFIG_MISSING'||errorCode==='AUTH_CONFIG_INVALID') return res.status(503).json({success:false,error:'Authentication service is not configured.'}); return sendRouteError(res,error,'Unable to read Session.',500); } });
+app.get('/api/auth/session', async (req,res)=>{ try { const record=await getSessionFromRequest(req); if(!record||record.invalidReason){ if(record?.invalidReason) writeSessionRevocationAudit(req,record); clearSessionCookie(res); return res.status(401).json({success:false,authenticated:false,error:record?.invalidReason==='ACCOUNT_ROLE_CHANGED'?'Account permission changed. Please sign in again.':'Authentication required.'}); } return res.status(200).json({success:true,authenticated:true,user:{username:record.session.username,role:record.session.role},session:createSessionResponse(record.session),compatibilityMode:false,timestamp:new Date().toISOString()}); } catch(error){ const errorCode=getErrorMessage(error); if(errorCode==='SESSION_STORE_UNAVAILABLE') return res.status(503).json({success:false,error:'Session service is temporarily unavailable.'}); if(errorCode==='AUTH_CONFIG_MISSING'||errorCode==='AUTH_CONFIG_INVALID') return res.status(503).json({success:false,error:'Authentication service is not configured.'}); return sendRouteError(res,error,'Unable to read Session.',500); } });
 app.post('/api/auth/logout', async (req,res)=>{ try { const record=await getSessionFromRequest(req); if(record){ req.auth={username:record.session.username,role:record.session.role,expiresAt:record.session.expiresAt}; await deleteSession(record.tokenHash); } clearSessionCookie(res); return res.status(200).json({success:true,message:'Logged out.',timestamp:new Date().toISOString()}); } catch(error){ const errorCode=getErrorMessage(error); if(errorCode==='SESSION_STORE_UNAVAILABLE') return res.status(503).json({success:false,error:'Session service is temporarily unavailable.'}); if(errorCode==='AUTH_CONFIG_MISSING'||errorCode==='AUTH_CONFIG_INVALID'){ clearSessionCookie(res); return res.status(200).json({success:true,message:'Logged out.',timestamp:new Date().toISOString()}); } return sendRouteError(res,error,'Unable to logout.',500); } });
 app.get('/', (req, res) => {
   return res.json({
@@ -1257,6 +1280,7 @@ app.get(['/health', '/api/health'], (req, res) => {
     sessionStore: { type: 'redis', configured: Boolean(REDIS_URL), ready: Boolean(redisReady && redisClient?.isReady), lastError: lastRedisError },
     rateLimitStore: { type: 'redis', persistentAcrossDeploys: true, windowSeconds: LOGIN_RATE_LIMIT_WINDOW_SECONDS },
     sessionAccountValidation: { enabled: true, invalidatesOnInactive: true, invalidatesOnRoleChange: true },
+    sessionRevocationAudit: { enabled: true, action: 'SESSION_REVOKED' },
     appsScript: {
       configured: Boolean(APPS_SCRIPT_URL),
       signatureConfigured: Boolean(APPS_SCRIPT_SHARED_SECRET && APPS_SCRIPT_SHARED_SECRET.length >= 32),
