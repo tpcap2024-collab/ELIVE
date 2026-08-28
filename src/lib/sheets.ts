@@ -241,6 +241,20 @@ export class EliveApiError extends Error {
 }
 
 const DEFAULT_API_URL = 'https://elive-api.onrender.com';
+export const ELIVE_UNAUTHORIZED_EVENT = 'elive:unauthorized';
+
+function dispatchEliveUnauthorized(error: EliveApiError): void {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(
+    new CustomEvent(ELIVE_UNAUTHORIZED_EVENT, {
+      detail: {
+        message: error.message,
+        path: error.path,
+      },
+    })
+  );
+}
+
 
 export const getAppsScriptUrl = (): string => {
   const environment = (import.meta as any).env;
@@ -369,13 +383,15 @@ async function fetchApiRequest(
   const apiError = getApiError(data);
 
   if (!response.ok || apiError) {
-    throw new EliveApiError(
+    const error = new EliveApiError(
       apiError ||
         `ELIVE API request failed (${response.status} ${response.statusText})`,
       response.status,
       normalizedPath,
       data
     );
+    if (response.status === 401) dispatchEliveUnauthorized(error);
+    throw error;
   }
 
   return data;
