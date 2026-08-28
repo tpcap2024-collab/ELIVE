@@ -47,6 +47,14 @@ const SESSION_COOKIE_NAME = '__Host-elive_session';
 const SESSION_DURATION_MS = 12 * 60 * 60 * 1000;
 const SESSION_TTL_SECONDS = Math.floor(SESSION_DURATION_MS / 1000);
 const SESSION_KEY_PREFIX = 'elive:session:';
+const SESSION_USER_INDEX_PREFIX = 'elive:session-user:';
+const SESSION_LIMITS_BY_ROLE = Object.freeze({
+  TV_VIEWER: 3,
+  OPERATOR: 2,
+  PLANNER: 2,
+  SUPERVISOR: 2,
+  ADMIN: 1,
+});
 const REDIS_URL = String(process.env.REDIS_URL || '').trim();
 let redisClient = null;
 let redisReady = false;
@@ -485,11 +493,122 @@ async function initializeRedis() {
 }
 function requireRedisClient() { if (!redisClient || !redisReady || !redisClient.isReady) throw new Error('SESSION_STORE_UNAVAILABLE'); return redisClient; }
 function getSessionKey(tokenHash) { return `${SESSION_KEY_PREFIX}${tokenHash}`; }
-async function createSession(user) {
-  const client=requireRedisClient(); const token=randomBytes(48).toString('base64url'); const tokenHash=hashSessionToken(token); const now=Date.now();
-  const session={username:user.username,role:user.role,createdAt:now,expiresAt:now+SESSION_DURATION_MS};
-  await client.set(getSessionKey(tokenHash),JSON.stringify(session),{EX:SESSION_TTL_SECONDS}); return {token,session};
+function getSessionUserIndexKey(username) {
+  return `${SESSION_USER_INDEX_PREFIX}${createHash('sha256')
+    .update(cleanText(username).toLowerCase())
+    .digest('hex')}`;
 }
+
+function getConcurrentSessionLimit(role) {
+  return SESSION_LIMITS_BY_ROLE[cleanText(role).toUpperCase()] || 1;
+}
+
+function writeConcurrentSessionRevocationAudit(user, revokedCount) {
+  if (!revokedCount) return;
+  writeAuditLog({
+    requestId: randomUUID(),
+    timestamp: new Date().toISOString(),
+    actorUsername: user.username,
+    actorRole: user.role,
+    method: 'SYSTEM',
+    path: '/api/auth/login',
+    action: 'SESSION_REVOKED',
+    targetType: 'SESSION',
+    targetIdHash: hashAuditValue(user.username),
+    reason: 'CONCURRENT_SESSION_LIMIT',
+    revokedCount,
+    result: 'SUCCESS',
+    statusCode: 200,
+    durationMs: 0,
+    ipHash: null,
+    userAgentHash: null,
+  });
+}
+
+async function enforceConcurrentSessionLimit(client, user, pendingTokenHash) {
+  const indexKey = getSessionUserIndexKey(user.username);
+  const maximumSessions = getConcurrentSessionLimit(user.role);
+  const indexedTokenHashes = await client.zRange(indexKey, 0, -1);
+  const validSessions = [];
+
+  for (const tokenHash of indexedTokenHashes) {
+    const rawSession = await client.get(getSessionKey(tokenHash));
+    if (!rawSession) {
+      await client.zRem(indexKey, tokenHash);
+      continue;
+    }
+    let session;
+    try {
+      session = JSON.parse(rawSession);
+    } catch {
+      await client.del(getSessionKey(tokenHash));
+      await client.zRem(indexKey, tokenHash);
+      continue;
+    }
+    if (Number(session.expiresAt || 0) <= Date.now()) {
+      await client.del(getSessionKey(tokenHash));
+      await client.zRem(indexKey, tokenHash);
+      continue;
+    }
+    validSessions.push({
+      tokenHash,
+      createdAt: Number(session.createdAt || 0),
+    });
+  }
+
+  validSessions.push({ tokenHash: pendingTokenHash, createdAt: Date.now() });
+  validSessions.sort((first, second) => first.createdAt - second.createdAt);
+  const sessionsToRevoke = validSessions.slice(
+    0,
+    Math.max(0, validSessions.length - maximumSessions)
+  );
+
+  if (sessionsToRevoke.length) {
+    const transaction = client.multi();
+    for (const session of sessionsToRevoke) {
+      transaction.del(getSessionKey(session.tokenHash));
+      transaction.zRem(indexKey, session.tokenHash);
+    }
+    await transaction.exec();
+  }
+
+  return sessionsToRevoke.filter(
+    session => session.tokenHash !== pendingTokenHash
+  ).length;
+}
+
+async function createSession(user) {
+  const client = requireRedisClient();
+  const token = randomBytes(48).toString('base64url');
+  const tokenHash = hashSessionToken(token);
+  const now = Date.now();
+  const session = {
+    username: user.username,
+    role: user.role,
+    createdAt: now,
+    expiresAt: now + SESSION_DURATION_MS,
+  };
+  const indexKey = getSessionUserIndexKey(user.username);
+
+  await client
+    .multi()
+    .set(getSessionKey(tokenHash), JSON.stringify(session), {
+      EX: SESSION_TTL_SECONDS,
+    })
+    .zAdd(indexKey, [{ score: now, value: tokenHash }])
+    .expire(indexKey, SESSION_TTL_SECONDS)
+    .exec();
+
+  const revokedCount = await enforceConcurrentSessionLimit(
+    client,
+    user,
+    tokenHash
+  );
+  writeConcurrentSessionRevocationAudit(user, revokedCount);
+
+  return { token, session };
+}
+
 function getCurrentSessionUser(session) {
   const users = getConfiguredAuthUsers();
   const username = cleanText(session?.username).toLowerCase();
@@ -522,7 +641,11 @@ async function getSessionFromRequest(req) {
   const accountValidation = getCurrentSessionUser(normalizedSession);
 
   if (!accountValidation.valid) {
-    await client.del(getSessionKey(tokenHash));
+    await client
+      .multi()
+      .del(getSessionKey(tokenHash))
+      .zRem(getSessionUserIndexKey(normalizedSession.username), tokenHash)
+      .exec();
     return {
       tokenHash,
       session: normalizedSession,
@@ -535,7 +658,14 @@ async function getSessionFromRequest(req) {
 function setSessionCookie(res,token){ res.cookie(SESSION_COOKIE_NAME,token,{httpOnly:true,secure:true,sameSite:'none',path:'/',maxAge:SESSION_DURATION_MS}); }
 function clearSessionCookie(res){ res.clearCookie(SESSION_COOKIE_NAME,{httpOnly:true,secure:true,sameSite:'none',path:'/'}); }
 function createSessionResponse(session){ return {username:session.username,role:session.role,expiresAt:new Date(session.expiresAt).toISOString()}; }
-async function deleteSession(tokenHash){ await requireRedisClient().del(getSessionKey(tokenHash)); }
+async function deleteSession(tokenHash, session = null) {
+  const client = requireRedisClient();
+  const transaction = client.multi().del(getSessionKey(tokenHash));
+  if (session?.username) {
+    transaction.zRem(getSessionUserIndexKey(session.username), tokenHash);
+  }
+  await transaction.exec();
+}
 async function requireAuthentication(req,res,next){
   try {
     const record=await getSessionFromRequest(req);
@@ -1235,7 +1365,7 @@ app.get(
 );
 
 app.get('/api/auth/session', async (req,res)=>{ try { const record=await getSessionFromRequest(req); if(!record||record.invalidReason){ if(record?.invalidReason) writeSessionRevocationAudit(req,record); clearSessionCookie(res); return res.status(401).json({success:false,authenticated:false,error:record?.invalidReason==='ACCOUNT_ROLE_CHANGED'?'Account permission changed. Please sign in again.':'Authentication required.'}); } return res.status(200).json({success:true,authenticated:true,user:{username:record.session.username,role:record.session.role},session:createSessionResponse(record.session),compatibilityMode:false,timestamp:new Date().toISOString()}); } catch(error){ const errorCode=getErrorMessage(error); if(errorCode==='SESSION_STORE_UNAVAILABLE') return res.status(503).json({success:false,error:'Session service is temporarily unavailable.'}); if(errorCode==='AUTH_CONFIG_MISSING'||errorCode==='AUTH_CONFIG_INVALID') return res.status(503).json({success:false,error:'Authentication service is not configured.'}); return sendRouteError(res,error,'Unable to read Session.',500); } });
-app.post('/api/auth/logout', async (req,res)=>{ try { const record=await getSessionFromRequest(req); if(record){ req.auth={username:record.session.username,role:record.session.role,expiresAt:record.session.expiresAt}; await deleteSession(record.tokenHash); } clearSessionCookie(res); return res.status(200).json({success:true,message:'Logged out.',timestamp:new Date().toISOString()}); } catch(error){ const errorCode=getErrorMessage(error); if(errorCode==='SESSION_STORE_UNAVAILABLE') return res.status(503).json({success:false,error:'Session service is temporarily unavailable.'}); if(errorCode==='AUTH_CONFIG_MISSING'||errorCode==='AUTH_CONFIG_INVALID'){ clearSessionCookie(res); return res.status(200).json({success:true,message:'Logged out.',timestamp:new Date().toISOString()}); } return sendRouteError(res,error,'Unable to logout.',500); } });
+app.post('/api/auth/logout', async (req,res)=>{ try { const record=await getSessionFromRequest(req); if(record){ req.auth={username:record.session.username,role:record.session.role,expiresAt:record.session.expiresAt}; await deleteSession(record.tokenHash, record.session); } clearSessionCookie(res); return res.status(200).json({success:true,message:'Logged out.',timestamp:new Date().toISOString()}); } catch(error){ const errorCode=getErrorMessage(error); if(errorCode==='SESSION_STORE_UNAVAILABLE') return res.status(503).json({success:false,error:'Session service is temporarily unavailable.'}); if(errorCode==='AUTH_CONFIG_MISSING'||errorCode==='AUTH_CONFIG_INVALID'){ clearSessionCookie(res); return res.status(200).json({success:true,message:'Logged out.',timestamp:new Date().toISOString()}); } return sendRouteError(res,error,'Unable to logout.',500); } });
 app.get('/', (req, res) => {
   return res.json({
     status: 'success',
@@ -1281,6 +1411,11 @@ app.get(['/health', '/api/health'], (req, res) => {
     rateLimitStore: { type: 'redis', persistentAcrossDeploys: true, windowSeconds: LOGIN_RATE_LIMIT_WINDOW_SECONDS },
     sessionAccountValidation: { enabled: true, invalidatesOnInactive: true, invalidatesOnRoleChange: true },
     sessionRevocationAudit: { enabled: true, action: 'SESSION_REVOKED' },
+    concurrentSessionControl: {
+      enabled: true,
+      policy: 'revoke-oldest',
+      limitsByRole: SESSION_LIMITS_BY_ROLE,
+    },
     appsScript: {
       configured: Boolean(APPS_SCRIPT_URL),
       signatureConfigured: Boolean(APPS_SCRIPT_SHARED_SECRET && APPS_SCRIPT_SHARED_SECRET.length >= 32),
