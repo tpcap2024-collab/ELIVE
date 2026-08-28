@@ -23,6 +23,7 @@ import {
 
 import {
   confirmWorkDetail,
+  ELIVE_UNAUTHORIZED_EVENT,
   EliveAuthUser,
   EliveUserRole,
   fetchEliveDashboardData,
@@ -165,6 +166,7 @@ export default function App() {
   const [isCheckingSession, setIsCheckingSession] = useState(true);
   const [isSubmittingLogin, setIsSubmittingLogin] = useState(false);
   const [loginError, setLoginError] = useState('');
+  const [sessionEndedMessage, setSessionEndedMessage] = useState('');
   const isAppLoggedIn = authenticatedUser !== null;
 
   const requestRunningRef = useRef(false);
@@ -173,10 +175,42 @@ export default function App() {
   const trucksRef = useRef<Truck[]>(trucks);
   const lastActivitySignalAtRef = useRef(0);
   const activityRequestRunningRef = useRef(false);
+  const authenticationGenerationRef = useRef(0);
 
   useEffect(() => {
     trucksRef.current = trucks;
   }, [trucks]);
+
+  useEffect(() => {
+    const handleUnauthorized = (event: Event) => {
+      const detail = (event as CustomEvent<{ message?: string }>).detail;
+      authenticationGenerationRef.current += 1;
+      requestRunningRef.current = false;
+      activityRequestRunningRef.current = false;
+      setAuthenticatedUser(null);
+      setTrucks([]);
+      trucksRef.current = [];
+      setGpsLocations([]);
+      setSheetError(null);
+      setHasLoadedSuccessfully(false);
+      setIsRefreshing(false);
+      setCurrentView('dashboard');
+      setShowSettings(false);
+      setActionDialog({ isOpen: false, truck: null });
+      setWorkDetailTruck(null);
+      setIsGpsPopupOpen(false);
+      setSelectedGpsTruckId(null);
+      setSessionEndedMessage(
+        detail?.message || 'Session หมดอายุ กรุณาเข้าสู่ระบบใหม่'
+      );
+    };
+
+    window.addEventListener(ELIVE_UNAUTHORIZED_EVENT, handleUnauthorized);
+    return () => window.removeEventListener(
+      ELIVE_UNAUTHORIZED_EVENT,
+      handleUnauthorized
+    );
+  }, []);
 
   useEffect(() => {
     let isActive = true;
@@ -261,12 +295,14 @@ export default function App() {
 
   const loadData = useCallback(async () => {
     if (requestRunningRef.current) return;
+    const authenticationGeneration = authenticationGenerationRef.current;
 
     requestRunningRef.current = true;
     setIsRefreshing(true);
 
     try {
       const data = await fetchEliveDashboardData();
+      if (authenticationGeneration !== authenticationGenerationRef.current) return;
 
       if (data.trucks.length > 0) {
         setTrucks(data.trucks);
@@ -285,13 +321,16 @@ export default function App() {
       setSheetError(null);
       setHasLoadedSuccessfully(true);
     } catch (error) {
+      if (isEliveUnauthorizedError(error)) return;
       console.error('Failed to fetch ELIVE data:', error);
       setSheetError(
         error instanceof Error ? error.message : 'Failed to fetch ELIVE data'
       );
     } finally {
-      requestRunningRef.current = false;
-      setIsRefreshing(false);
+      if (authenticationGeneration === authenticationGenerationRef.current) {
+        requestRunningRef.current = false;
+        setIsRefreshing(false);
+      }
     }
   }, []);
 
@@ -600,6 +639,8 @@ export default function App() {
       if (!result.success || !result.user) {
         throw new Error('ไม่สามารถเข้าสู่ระบบได้');
       }
+      authenticationGenerationRef.current += 1;
+      setSessionEndedMessage('');
       setAuthenticatedUser(result.user);
       setAppLoginPw('');
     } catch (error) {
@@ -690,6 +731,12 @@ export default function App() {
                 placeholder="กรอก Password"
               />
             </label>
+            {sessionEndedMessage && !loginError && (
+              <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>{sessionEndedMessage}</span>
+              </div>
+            )}
             {loginError && (
               <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
