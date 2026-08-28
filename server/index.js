@@ -525,7 +525,7 @@ function writeConcurrentSessionRevocationAudit(user, revokedCount) {
   });
 }
 
-async function enforceConcurrentSessionLimit(client, user, pendingTokenHash) {
+async function enforceConcurrentSessionLimit(client, user) {
   const indexKey = getSessionUserIndexKey(user.username);
   const maximumSessions = getConcurrentSessionLimit(user.role);
   const indexedTokenHashes = await client.zRange(indexKey, 0, -1);
@@ -537,6 +537,7 @@ async function enforceConcurrentSessionLimit(client, user, pendingTokenHash) {
       await client.zRem(indexKey, tokenHash);
       continue;
     }
+
     let session;
     try {
       session = JSON.parse(rawSession);
@@ -545,18 +546,19 @@ async function enforceConcurrentSessionLimit(client, user, pendingTokenHash) {
       await client.zRem(indexKey, tokenHash);
       continue;
     }
+
     if (Number(session.expiresAt || 0) <= Date.now()) {
       await client.del(getSessionKey(tokenHash));
       await client.zRem(indexKey, tokenHash);
       continue;
     }
+
     validSessions.push({
       tokenHash,
       createdAt: Number(session.createdAt || 0),
     });
   }
 
-  validSessions.push({ tokenHash: pendingTokenHash, createdAt: Date.now() });
   validSessions.sort((first, second) => first.createdAt - second.createdAt);
   const sessionsToRevoke = validSessions.slice(
     0,
@@ -572,9 +574,7 @@ async function enforceConcurrentSessionLimit(client, user, pendingTokenHash) {
     await transaction.exec();
   }
 
-  return sessionsToRevoke.filter(
-    session => session.tokenHash !== pendingTokenHash
-  ).length;
+  return sessionsToRevoke.length;
 }
 
 async function createSession(user) {
@@ -599,11 +599,7 @@ async function createSession(user) {
     .expire(indexKey, SESSION_TTL_SECONDS)
     .exec();
 
-  const revokedCount = await enforceConcurrentSessionLimit(
-    client,
-    user,
-    tokenHash
-  );
+  const revokedCount = await enforceConcurrentSessionLimit(client, user);
   writeConcurrentSessionRevocationAudit(user, revokedCount);
 
   return { token, session };
