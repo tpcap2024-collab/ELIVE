@@ -45,6 +45,7 @@ const PBKDF2_DIGEST = 'sha256';
 const pbkdf2Async = promisify(pbkdf2Callback);
 const SESSION_COOKIE_NAME = '__Host-elive_session';
 const SESSION_DURATION_MS = 12 * 60 * 60 * 1000;
+const SESSION_IDLE_TIMEOUT_MS = 60 * 60 * 1000;
 const SESSION_TTL_SECONDS = Math.floor(SESSION_DURATION_MS / 1000);
 const SESSION_KEY_PREFIX = 'elive:session:';
 const SESSION_USER_INDEX_PREFIX = 'elive:session-user:';
@@ -788,6 +789,20 @@ async function getSessionFromRequest(req) {
     expiresAt: Number(session.expiresAt),
     lastUserActivityAt: Number(session.lastUserActivityAt || session.createdAt || 0),
   };
+  const idleDurationMs = Date.now() - normalizedSession.lastUserActivityAt;
+  if (idleDurationMs >= SESSION_IDLE_TIMEOUT_MS) {
+    await client
+      .multi()
+      .del(getSessionKey(tokenHash))
+      .zRem(getSessionUserIndexKey(normalizedSession.username), tokenHash)
+      .exec();
+    return {
+      tokenHash,
+      session: normalizedSession,
+      invalidReason: 'IDLE_TIMEOUT',
+    };
+  }
+
   const accountValidation = getCurrentSessionUser(normalizedSession);
 
   if (!accountValidation.valid) {
@@ -843,7 +858,9 @@ async function requireAuthentication(req,res,next){
         authenticated:false,
         error: record?.invalidReason === 'ACCOUNT_ROLE_CHANGED'
           ? 'Account permission changed. Please sign in again.'
-          : 'Authentication required.'
+          : record?.invalidReason === 'IDLE_TIMEOUT'
+            ? 'Session expired due to inactivity. Please sign in again.'
+            : 'Authentication required.'
       });
     }
     req.auth={username:record.session.username,role:record.session.role,createdAt:record.session.createdAt,expiresAt:record.session.expiresAt,lastUserActivityAt:record.session.lastUserActivityAt}; req.authSessionTokenHash=record.tokenHash; return next();
@@ -1530,7 +1547,7 @@ app.get(
   }
 );
 
-app.get('/api/auth/session', async (req,res)=>{ try { const record=await getSessionFromRequest(req); if(!record||record.invalidReason){ if(record?.invalidReason) writeSessionRevocationAudit(req,record); clearSessionCookie(res); return res.status(401).json({success:false,authenticated:false,error:record?.invalidReason==='ACCOUNT_ROLE_CHANGED'?'Account permission changed. Please sign in again.':'Authentication required.'}); } return res.status(200).json({success:true,authenticated:true,user:{username:record.session.username,role:record.session.role},session:createSessionResponse(record.session),compatibilityMode:false,timestamp:new Date().toISOString()}); } catch(error){ const errorCode=getErrorMessage(error); if(errorCode==='SESSION_STORE_UNAVAILABLE') return res.status(503).json({success:false,error:'Session service is temporarily unavailable.'}); if(errorCode==='AUTH_CONFIG_MISSING'||errorCode==='AUTH_CONFIG_INVALID') return res.status(503).json({success:false,error:'Authentication service is not configured.'}); return sendRouteError(res,error,'Unable to read Session.',500); } });
+app.get('/api/auth/session', async (req,res)=>{ try { const record=await getSessionFromRequest(req); if(!record||record.invalidReason){ if(record?.invalidReason) writeSessionRevocationAudit(req,record); clearSessionCookie(res); return res.status(401).json({success:false,authenticated:false,error:record?.invalidReason==='ACCOUNT_ROLE_CHANGED'?'Account permission changed. Please sign in again.':record?.invalidReason==='IDLE_TIMEOUT'?'Session expired due to inactivity. Please sign in again.':'Authentication required.'}); } return res.status(200).json({success:true,authenticated:true,user:{username:record.session.username,role:record.session.role},session:createSessionResponse(record.session),compatibilityMode:false,timestamp:new Date().toISOString()}); } catch(error){ const errorCode=getErrorMessage(error); if(errorCode==='SESSION_STORE_UNAVAILABLE') return res.status(503).json({success:false,error:'Session service is temporarily unavailable.'}); if(errorCode==='AUTH_CONFIG_MISSING'||errorCode==='AUTH_CONFIG_INVALID') return res.status(503).json({success:false,error:'Authentication service is not configured.'}); return sendRouteError(res,error,'Unable to read Session.',500); } });
 app.post('/api/auth/activity', requireAuthentication, async (req, res) => {
   try {
     const updatedSession = await recordSessionUserActivity(
@@ -1611,6 +1628,7 @@ app.get(['/health', '/api/health'], (req, res) => {
     adminSessionRevocation: { enabled: true, currentAdminSessionPreserved: true },
     adminSessionInventory: { enabled: true, exposesSecrets: false },
     userActivitySignal: { enabled: true, endpoint: '/api/auth/activity', frontendThrottleSeconds: 60 },
+    sessionIdleTimeout: { enabled: true, timeoutSeconds: Math.floor(SESSION_IDLE_TIMEOUT_MS / 1000), enforcedServerSide: true, absoluteLifetimeSeconds: SESSION_TTL_SECONDS },
     appsScript: {
       configured: Boolean(APPS_SCRIPT_URL),
       signatureConfigured: Boolean(APPS_SCRIPT_SHARED_SECRET && APPS_SCRIPT_SHARED_SECRET.length >= 32),
