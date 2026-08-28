@@ -378,6 +378,20 @@ function getAuditDescriptor(req) {
       targetIdHash: hashAuditValue(req.body?.truckId),
     };
   }
+  if (method === 'POST' && path === '/api/admin/sessions/revoke-user') {
+    return {
+      action: 'ADMIN_SESSION_REVOKE_USER',
+      targetType: 'AUTH_USER',
+      targetIdHash: hashAuditValue(req.body?.username),
+    };
+  }
+  if (method === 'POST' && path === '/api/admin/sessions/revoke-all') {
+    return {
+      action: 'ADMIN_SESSION_REVOKE_ALL',
+      targetType: 'SESSION',
+      targetIdHash: null,
+    };
+  }
   if (method === 'POST' && path === '/api/cache/clear') {
     return { action: 'CACHE_CLEAR', targetType: 'CACHE', targetIdHash: null };
   }
@@ -439,6 +453,7 @@ app.use((req, res, next) => {
       action: descriptor.action,
       targetType: descriptor.targetType,
       targetIdHash: descriptor.targetIdHash,
+      ...(req.auditDetails || {}),
       result: statusCode >= 200 && statusCode < 400 ? 'SUCCESS' : 'FAILURE',
       statusCode,
       durationMs: Math.max(0, Date.now() - startedAt),
@@ -603,6 +618,93 @@ async function createSession(user) {
   writeConcurrentSessionRevocationAudit(user, revokedCount);
 
   return { token, session };
+}
+
+async function getIndexedUserSessions(client, username) {
+  const indexKey = getSessionUserIndexKey(username);
+  const tokenHashes = await client.zRange(indexKey, 0, -1);
+  const sessions = [];
+
+  for (const tokenHash of tokenHashes) {
+    const rawSession = await client.get(getSessionKey(tokenHash));
+    if (!rawSession) {
+      await client.zRem(indexKey, tokenHash);
+      continue;
+    }
+
+    let session;
+    try {
+      session = JSON.parse(rawSession);
+    } catch {
+      await client.del(getSessionKey(tokenHash));
+      await client.zRem(indexKey, tokenHash);
+      continue;
+    }
+
+    sessions.push({ tokenHash, session });
+  }
+
+  return { indexKey, sessions };
+}
+
+async function revokeUserSessions(username, excludedTokenHash = null) {
+  const client = requireRedisClient();
+  const normalizedUsername = normalizeLoginUsername(username);
+  const { indexKey, sessions } = await getIndexedUserSessions(
+    client,
+    normalizedUsername
+  );
+  const sessionsToRevoke = sessions.filter(
+    item => item.tokenHash !== excludedTokenHash
+  );
+
+  if (!sessionsToRevoke.length) {
+    return { username: normalizedUsername, revokedCount: 0 };
+  }
+
+  const transaction = client.multi();
+  for (const item of sessionsToRevoke) {
+    transaction.del(getSessionKey(item.tokenHash));
+    transaction.zRem(indexKey, item.tokenHash);
+  }
+  await transaction.exec();
+
+  return {
+    username: normalizedUsername,
+    revokedCount: sessionsToRevoke.length,
+  };
+}
+
+async function revokeAllSessions(excludedTokenHash = null) {
+  const client = requireRedisClient();
+  let cursor = '0';
+  let revokedCount = 0;
+
+  do {
+    const result = await client.scan(cursor, {
+      MATCH: `${SESSION_USER_INDEX_PREFIX}*`,
+      COUNT: 100,
+    });
+    cursor = String(result.cursor);
+
+    for (const indexKey of result.keys) {
+      const tokenHashes = await client.zRange(indexKey, 0, -1);
+      const transaction = client.multi();
+      let operationCount = 0;
+
+      for (const tokenHash of tokenHashes) {
+        if (tokenHash === excludedTokenHash) continue;
+        transaction.del(getSessionKey(tokenHash));
+        transaction.zRem(indexKey, tokenHash);
+        revokedCount += 1;
+        operationCount += 2;
+      }
+
+      if (operationCount > 0) await transaction.exec();
+    }
+  } while (cursor !== '0');
+
+  return { revokedCount };
 }
 
 function getCurrentSessionUser(session) {
@@ -1388,6 +1490,8 @@ app.get(['/health', '/api/health'], (req, res) => {
       '/api/auth/role-test/:requiredRole',
       '/api/auth/session',
       '/api/auth/logout',
+      '/api/admin/sessions/revoke-user',
+      '/api/admin/sessions/revoke-all',
       '/api/trucks',
       '/api/trucks/update',
       '/api/master-plan',
@@ -1412,6 +1516,7 @@ app.get(['/health', '/api/health'], (req, res) => {
       policy: 'revoke-oldest',
       limitsByRole: SESSION_LIMITS_BY_ROLE,
     },
+    adminSessionRevocation: { enabled: true, currentAdminSessionPreserved: true },
     appsScript: {
       configured: Boolean(APPS_SCRIPT_URL),
       signatureConfigured: Boolean(APPS_SCRIPT_SHARED_SECRET && APPS_SCRIPT_SHARED_SECRET.length >= 32),
@@ -1736,6 +1841,55 @@ app.get('/api/route-to-tpcap', requireAuthentication, requireMinimumRole('TV_VIE
     return sendRouteError(res, error, 'Unable to calculate route.', 502);
   }
 });
+
+app.post(
+  '/api/admin/sessions/revoke-user',
+  requireAuthentication,
+  requireMinimumRole('ADMIN'),
+  async (req, res) => {
+    try {
+      const result = await revokeUserSessions(
+        req.body?.username,
+        req.authSessionTokenHash
+      );
+      req.auditDetails = { revokedCount: result.revokedCount };
+      return res.status(200).json({
+        success: true,
+        username: result.username,
+        revokedCount: result.revokedCount,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      if (getErrorMessage(error) === 'LOGIN_PAYLOAD_INVALID') {
+        return res.status(400).json({
+          success: false,
+          error: 'A valid username is required.',
+        });
+      }
+      return sendRouteError(res, error, 'Unable to revoke user Sessions.', 500);
+    }
+  }
+);
+
+app.post(
+  '/api/admin/sessions/revoke-all',
+  requireAuthentication,
+  requireMinimumRole('ADMIN'),
+  async (req, res) => {
+    try {
+      const result = await revokeAllSessions(req.authSessionTokenHash);
+      req.auditDetails = { revokedCount: result.revokedCount };
+      return res.status(200).json({
+        success: true,
+        revokedCount: result.revokedCount,
+        currentAdminSessionPreserved: true,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      return sendRouteError(res, error, 'Unable to revoke all Sessions.', 500);
+    }
+  }
+);
 
 app.post('/api/cache/clear', requireAuthentication, requireMinimumRole('ADMIN'), (req, res) => {
   clearTruckCache();
