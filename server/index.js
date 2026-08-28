@@ -378,6 +378,13 @@ function getAuditDescriptor(req) {
       targetIdHash: hashAuditValue(req.body?.truckId),
     };
   }
+  if (method === 'GET' && path === '/api/admin/sessions') {
+    return {
+      action: 'ADMIN_SESSION_LIST',
+      targetType: 'SESSION',
+      targetIdHash: null,
+    };
+  }
   if (method === 'POST' && path === '/api/admin/sessions/revoke-user') {
     return {
       action: 'ADMIN_SESSION_REVOKE_USER',
@@ -645,6 +652,49 @@ async function getIndexedUserSessions(client, username) {
   }
 
   return { indexKey, sessions };
+}
+
+async function listActiveSessions() {
+  const client = requireRedisClient();
+  const configuredUsers = getConfiguredAuthUsers();
+  const users = [];
+  let activeSessionCount = 0;
+
+  for (const user of configuredUsers) {
+    const { sessions } = await getIndexedUserSessions(client, user.username);
+    const activeSessions = sessions
+      .map(item => ({
+        createdAt: Number(item.session?.createdAt || 0),
+        expiresAt: Number(item.session?.expiresAt || 0),
+      }))
+      .filter(item => item.expiresAt > Date.now())
+      .sort((first, second) => first.createdAt - second.createdAt);
+
+    if (!activeSessions.length) continue;
+    activeSessionCount += activeSessions.length;
+    users.push({
+      username: user.username,
+      role: user.role,
+      accountActive: user.active,
+      activeSessionCount: activeSessions.length,
+      oldestSessionCreatedAt: new Date(
+        activeSessions[0].createdAt
+      ).toISOString(),
+      newestSessionCreatedAt: new Date(
+        activeSessions[activeSessions.length - 1].createdAt
+      ).toISOString(),
+      nearestExpiryAt: new Date(
+        Math.min(...activeSessions.map(item => item.expiresAt))
+      ).toISOString(),
+    });
+  }
+
+  users.sort((first, second) => first.username.localeCompare(second.username));
+  return {
+    activeUserCount: users.length,
+    activeSessionCount,
+    users,
+  };
 }
 
 async function revokeUserSessions(username, excludedTokenHash = null) {
@@ -1490,6 +1540,7 @@ app.get(['/health', '/api/health'], (req, res) => {
       '/api/auth/role-test/:requiredRole',
       '/api/auth/session',
       '/api/auth/logout',
+      '/api/admin/sessions',
       '/api/admin/sessions/revoke-user',
       '/api/admin/sessions/revoke-all',
       '/api/trucks',
@@ -1517,6 +1568,7 @@ app.get(['/health', '/api/health'], (req, res) => {
       limitsByRole: SESSION_LIMITS_BY_ROLE,
     },
     adminSessionRevocation: { enabled: true, currentAdminSessionPreserved: true },
+    adminSessionInventory: { enabled: true, exposesSecrets: false },
     appsScript: {
       configured: Boolean(APPS_SCRIPT_URL),
       signatureConfigured: Boolean(APPS_SCRIPT_SHARED_SECRET && APPS_SCRIPT_SHARED_SECRET.length >= 32),
@@ -1841,6 +1893,33 @@ app.get('/api/route-to-tpcap', requireAuthentication, requireMinimumRole('TV_VIE
     return sendRouteError(res, error, 'Unable to calculate route.', 502);
   }
 });
+
+app.get(
+  '/api/admin/sessions',
+  requireAuthentication,
+  requireMinimumRole('ADMIN'),
+  async (req, res) => {
+    try {
+      const result = await listActiveSessions();
+      req.auditDetails = {
+        activeUsers: result.activeUserCount,
+        activeSessions: result.activeSessionCount,
+      };
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(200).json({
+        success: true,
+        summary: {
+          activeUsers: result.activeUserCount,
+          activeSessions: result.activeSessionCount,
+        },
+        users: result.users,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      return sendRouteError(res, error, 'Unable to list active Sessions.', 500);
+    }
+  }
+);
 
 app.post(
   '/api/admin/sessions/revoke-user',
