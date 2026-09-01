@@ -1157,6 +1157,9 @@ async function requestAppsScriptPost(action, payload = {}) {
   try {
     console.log(`Calling Apps Script POST ${action}, single attempt`);
 
+    const signedPayload = JSON.parse(JSON.stringify({ action, ...payload }));
+    const auth = createAppsScriptSignature('POST', action, signedPayload);
+
     const response = await fetchWithTimeout(
       APPS_SCRIPT_URL,
       {
@@ -1168,9 +1171,8 @@ async function requestAppsScriptPost(action, payload = {}) {
           'User-Agent': `ELIVE-API/${API_VERSION}.0`,
         },
         body: JSON.stringify({
-          action,
-          ...payload,
-          _auth: createAppsScriptSignature('POST', action, { action, ...payload }),
+          ...signedPayload,
+          _auth: auth,
         }),
         cache: 'no-store',
       },
