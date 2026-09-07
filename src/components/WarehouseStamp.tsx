@@ -56,6 +56,15 @@ function getPlanEtaSortValue(value?: string): number {
   return hour * 60 + minute;
 }
 
+function getCurrentBangkokDateString(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Bangkok',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
+
 function getCurrentTimeString(): string {
   const now = new Date();
 
@@ -227,7 +236,13 @@ export function WarehouseStamp({
     if (truck.stampEta || truck.actualEta) return;
 
     const time = getCurrentTimeString();
-    const performanceStatus = calculatePerformanceStatus(truck.planEta, time);
+    const performanceStatus = calculatePerformanceStatus(
+      truck.planEta,
+      truck.planEtd,
+      time,
+      truck.planDate,
+      getCurrentBangkokDateString()
+    );
 
     runBackgroundSave(truck.id, {
       stampEta: time,
