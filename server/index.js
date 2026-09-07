@@ -344,6 +344,13 @@ function getAuditDescriptor(req) {
   if (method === 'POST' && path === '/api/plans/extra') {
     return { action: 'PLAN_EXTRA_CREATE', targetType: 'PLAN', targetIdHash: null };
   }
+  if (method === 'DELETE' && /^\/api\/plans\/A\d+$/i.test(path)) {
+    return {
+      action: 'PLAN_DELETE',
+      targetType: 'PLAN',
+      targetIdHash: hashAuditValue(path.split('/').pop()),
+    };
+  }
   if (method === 'PUT' && /^\/api\/plans\/A\d+$/i.test(path)) {
     return {
       action: 'PLAN_UPDATE',
@@ -1613,6 +1620,7 @@ app.get(['/health', '/api/health'], (req, res) => {
       '/api/plans/daily',
       '/api/plans/extra',
       '/api/plans/:codeRun',
+      'DELETE /api/plans/:codeRun',
       '/api/plans/:codeRun/cancel',
       '/api/plans/:codeRun/restore',
       '/api/plans/:codeRun/confirm-work-detail',
@@ -1816,6 +1824,17 @@ app.put('/api/plans/:codeRun', requireAuthentication, requireMinimumRole('PLANNE
     return res.status(200).json(result);
   } catch (error) {
     return sendRouteError(res, error, 'Unable to update Plan.');
+  }
+});
+
+app.delete('/api/plans/:codeRun', requireAuthentication, requireMinimumRole('SUPERVISOR'), async (req, res) => {
+  try {
+    const codeRun = normalizeCodeRun(req.params.codeRun);
+    const result = await requestAppsScriptPost('deletePlan', { codeRun });
+    clearTruckCache();
+    return res.status(200).json(result);
+  } catch (error) {
+    return sendRouteError(res, error, 'Unable to delete Plan.');
   }
 });
 
