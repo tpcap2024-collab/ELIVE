@@ -585,132 +585,77 @@ export function PlatformDiagram({ trucks }: PlatformDiagramProps) {
         <AnimatePresence>
           {selectedTruck && (
             <div
-              className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/50 p-4"
+              className="fixed inset-0 z-[1000] flex items-center justify-center bg-slate-950/60 p-3 backdrop-blur-sm sm:p-6"
               onMouseDown={event => {
                 if (event.target === event.currentTarget) setSelectedTruck(null);
               }}
             >
               <motion.div
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                className="w-full max-w-sm overflow-hidden rounded-xl bg-white shadow-2xl"
+                initial={{ opacity: 0, scale: 0.96, y: 12 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.96, y: 12 }}
+                className="flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
               >
-                <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 p-4">
-                  <h3 className="text-sm font-bold text-slate-800">Truck Details</h3>
+                <div className="flex shrink-0 items-center justify-between border-b border-slate-200 bg-slate-50 px-5 py-4 sm:px-7 sm:py-5">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-blue-600 text-white shadow-sm">
+                      <TruckIcon className="h-6 w-6" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-bold text-slate-900 sm:text-xl">Truck Details</h3>
+                      <p className="mt-0.5 text-xs text-slate-500 sm:text-sm">
+                        {selectedTruck.route || '-'} · {selectedTruck.licensePlate || '-'}
+                      </p>
+                    </div>
+                  </div>
                   <button
                     type="button"
                     onClick={() => setSelectedTruck(null)}
-                    className="rounded-lg p-1 text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-600"
+                    className="rounded-xl p-2.5 text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-700"
+                    aria-label="Close truck details"
                   >
-                    <X className="h-5 w-5" />
+                    <X className="h-6 w-6" />
                   </button>
                 </div>
 
-                <div className="space-y-4 p-4">
-                  <div>
-                    <div className="mb-1 text-xs font-bold uppercase tracking-wider text-slate-500">
-                      License Plate
-                    </div>
-                    <div className="text-sm font-medium text-slate-800">
-                      {selectedTruck.licensePlate}
-                    </div>
-                  </div>
-
-                  <div>
-                    <div className="mb-1 text-xs font-bold uppercase tracking-wider text-slate-500">
-                      Route
-                    </div>
-                    <div className="text-sm text-slate-700">{selectedTruck.route}</div>
-                  </div>
-
-                  <div>
-                    <div className="mb-1 text-xs font-bold uppercase tracking-wider text-slate-500">
-                      Supplier
-                    </div>
-                    <div className="text-sm text-slate-700">
-                      {selectedTruck.supplierName || '-'}
-                    </div>
-                  </div>
-
-                  <div>
-                    <div className="mb-1 text-xs font-bold uppercase tracking-wider text-slate-500">
-                      Project
-                    </div>
-                    <div className="text-sm text-slate-700">
-                      {selectedTruck.project || '-'}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="mb-1 text-xs font-bold uppercase tracking-wider text-slate-500">
-                      Drop Point
-                    </div>
-                    <div className="text-sm text-slate-700">
-                      {selectedTruck.dropPoint || '-'}
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <div className="mb-1 text-xs font-bold uppercase tracking-wider text-slate-500">
-                        Status
+                <div className="min-h-0 flex-1 overflow-y-auto p-5 sm:p-7">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    {[
+                      ['License Plate', selectedTruck.licensePlate || '-'],
+                      ['Route', selectedTruck.route || '-'],
+                      ['Supplier', selectedTruck.supplierName || '-'],
+                      ['Project', selectedTruck.project || '-'],
+                      ['Drop Point', selectedTruck.dropPoint || '-'],
+                      ['Status', selectedTruck.status || '-'],
+                      ['Performance', selectedTruck.performanceStatus || '-'],
+                      ['Plan ETA', selectedTruck.planEta || '-'],
+                      ['Plan ETD', selectedTruck.planEtd || '-'],
+                      ['Actual ETA', selectedTruck.stampEta || selectedTruck.actualEta || '-'],
+                      ['Actual ETD', selectedTruck.stampEtd || '-'],
+                    ].map(([label, value]) => (
+                      <div
+                        key={label}
+                        className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3.5"
+                      >
+                        <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                          {label}
+                        </div>
+                        <div className={`break-words text-base font-semibold text-slate-800 ${
+                          label.includes('ETA') || label.includes('ETD') ? 'font-mono' : ''
+                        }`}>
+                          {value}
+                        </div>
                       </div>
-                      <div className="text-sm text-slate-700">{selectedTruck.status}</div>
-                    </div>
-
-                    <div>
-                      <div className="mb-1 text-xs font-bold uppercase tracking-wider text-slate-500">
-                        Performance
-                      </div>
-                      <div className="text-sm text-slate-700">
-                        {selectedTruck.performanceStatus || '-'}
-                      </div>
-                    </div>
-
-                    <div>
-                      <div className="mb-1 text-xs font-bold uppercase tracking-wider text-slate-500">
-                        Plan ETA
-                      </div>
-                      <div className="font-mono text-sm text-slate-700">
-                        {selectedTruck.planEta || '-'}
-                      </div>
-                    </div>
-
-                    <div>
-                      <div className="mb-1 text-xs font-bold uppercase tracking-wider text-slate-500">
-                        Plan ETD
-                      </div>
-                      <div className="font-mono text-sm text-slate-700">
-                        {selectedTruck.planEtd || '-'}
-                      </div>
-                    </div>
-
-                    <div>
-                      <div className="mb-1 text-xs font-bold uppercase tracking-wider text-slate-500">
-                        Actual ETA
-                      </div>
-                      <div className="font-mono text-sm text-slate-700">
-                        {selectedTruck.stampEta || selectedTruck.actualEta || '-'}
-                      </div>
-                    </div>
-
-                    <div>
-                      <div className="mb-1 text-xs font-bold uppercase tracking-wider text-slate-500">
-                        Actual ETD
-                      </div>
-                      <div className="font-mono text-sm text-slate-700">
-                        {selectedTruck.stampEtd || '-'}
-                      </div>
-                    </div>
+                    ))}
                   </div>
 
                   {selectedTruck.actionProblem && (
-                    <div className="rounded-lg border border-red-100 bg-red-50 p-3">
-                      <div className="mb-1 flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-red-700">
-                        <AlertTriangle className="h-3.5 w-3.5" />
+                    <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 sm:p-5">
+                      <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-red-700">
+                        <AlertTriangle className="h-4 w-4" />
                         Action / Problem
                       </div>
-                      <div className="whitespace-pre-wrap break-words text-sm text-red-800">
+                      <div className="whitespace-pre-wrap break-words text-sm leading-6 text-red-800 sm:text-base">
                         {selectedTruck.actionProblem}
                       </div>
                     </div>
