@@ -961,6 +961,44 @@ export async function updateDailyPlan(
   };
 }
 
+export interface BatchDeletePlansResult {
+  success: boolean;
+  message: string;
+  requestedCount: number;
+  deletedPlanCount: number;
+  deletedActualCount: number;
+  deletedCodeRuns: string[];
+  notFoundCodeRuns: string[];
+}
+
+export async function deleteDailyPlansBatch(
+  codeRuns: string[]
+): Promise<BatchDeletePlansResult> {
+  const validCodeRuns = [...new Set((Array.isArray(codeRuns) ? codeRuns : []).map(normalizeCodeRun))];
+  if (!validCodeRuns.length) throw new Error('Select at least one Plan.');
+  if (validCodeRuns.length > 200) throw new Error('Batch delete cannot exceed 200 Plans.');
+  const data: PlanApiResponse<BatchDeletePlansResult> = await fetchApiRequest(
+    '/api/plans/delete-batch',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ codeRuns: validCodeRuns }),
+    }
+  );
+  if (data.success !== true || !data.result) {
+    throw new Error(data.error || 'The server did not confirm batch Plan deletion.');
+  }
+  return {
+    success: true,
+    message: String(data.result.message || 'ลบ Plan ที่เลือกสำเร็จ'),
+    requestedCount: Number(data.result.requestedCount || validCodeRuns.length),
+    deletedPlanCount: Number(data.result.deletedPlanCount || 0),
+    deletedActualCount: Number(data.result.deletedActualCount || 0),
+    deletedCodeRuns: Array.isArray(data.result.deletedCodeRuns) ? data.result.deletedCodeRuns.map(String) : [],
+    notFoundCodeRuns: Array.isArray(data.result.notFoundCodeRuns) ? data.result.notFoundCodeRuns.map(String) : [],
+  };
+}
+
 export async function deleteDailyPlan(
   codeRun: string
 ): Promise<DailyPlanMutationResult> {
