@@ -17,7 +17,7 @@ interface PlatformDiagramProps {
   trucks: Truck[];
 }
 
-type GroupFilter = 'M1' | 'L1' | 'L2' | 'R1' | 'R2';
+type GroupFilter = 'M1' | 'L1' | 'L2' | 'L3' | 'R1' | 'R2';
 
 type DockDefinition = {
   id: string;
@@ -42,16 +42,13 @@ const HOURS = Array.from(
 const MINUTES = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60];
 const TOTAL_MINS = (END_HOUR - START_HOUR + 1) * 60;
 
-const GROUP_FILTER_OPTIONS: GroupFilter[] = ['M1', 'L1', 'L2', 'R1', 'R2'];
+const GROUP_FILTER_OPTIONS: GroupFilter[] = ['M1', 'L1', 'L2', 'L3', 'R2', 'R1'];
 
 const ROW_GROUPS: RowGroup[] = [
   {
     groupName: 'M1',
     title: 'MOTOR OIL',
-    docks: [
-      { id: '1', mappedPoint: 'M1-1' },
-      { id: '2', mappedPoint: 'M1-2' },
-    ],
+    docks: [{ id: '1', mappedPoint: 'M1-1' }],
   },
   {
     groupName: 'L1',
@@ -59,16 +56,22 @@ const ROW_GROUPS: RowGroup[] = [
     docks: [
       { id: '1', mappedPoint: 'L1-1' },
       { id: '2', mappedPoint: 'L1-2' },
-      { id: '3', mappedPoint: 'L1-3' },
     ],
   },
   {
     groupName: 'L2',
     title: '(L2) LSP MON-FRI',
     docks: [
+      { id: '3', mappedPoint: 'L2-3' },
       { id: '4', mappedPoint: 'L2-4' },
-      { id: '5', mappedPoint: 'L2-5' },
-      { id: '6', mappedPoint: 'L2-6' },
+    ],
+  },
+  {
+    groupName: 'L3',
+    title: '(L3) LSP MON-FRI',
+    docks: [
+      { id: '5', mappedPoint: 'L3-5' },
+      { id: '6', mappedPoint: 'L3-6' },
     ],
   },
   {
