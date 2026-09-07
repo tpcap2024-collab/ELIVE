@@ -28,6 +28,7 @@ import {
   createMasterPlanRow,
   createPlanPeriod,
   deleteMasterPlanRow,
+  deleteDailyPlan,
   fetchDailyPlans,
   fetchMasterPlan,
   previewPlanPeriod,
@@ -399,6 +400,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
   const [planForm, setPlanForm] = useState<EditablePlan>({ ...EMPTY_PLAN, date: today });
   const [isSavingPlan, setIsSavingPlan] = useState(false);
   const [cancelTarget, setCancelTarget] = useState<DailyPlan | null>(null);
+  const [deletePlanTarget, setDeletePlanTarget] = useState<DailyPlan | null>(null);
   const [restoreTarget, setRestoreTarget] = useState<DailyPlan | null>(null);
 
   const [masterRows, setMasterRows] = useState<MasterPlanRow[]>([]);
@@ -788,6 +790,23 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
       } catch (refreshError) {
         console.error('Unable to refresh daily Plans:', refreshError);
       }
+      setNotice({ type: 'error', message: getErrorMessage(error) });
+    } finally {
+      setIsSavingPlan(false);
+    }
+  };
+
+  const handleDeletePlan = async () => {
+    if (!deletePlanTarget || isSavingPlan) return;
+    const target = deletePlanTarget;
+    setIsSavingPlan(true);
+    setNotice(null);
+    try {
+      await deleteDailyPlan(target.codeRun);
+      setDeletePlanTarget(null);
+      await loadDailyPlans(dailyDate, { showMessage: false, clearResultOnError: false });
+      setNotice({ type: 'success', message: `ลบ ${target.codeRun} และข้อมูล Actual ที่เกี่ยวข้องสำเร็จ` });
+    } catch (error) {
       setNotice({ type: 'error', message: getErrorMessage(error) });
     } finally {
       setIsSavingPlan(false);
@@ -1398,7 +1417,10 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                                       <button type="button" onClick={() => openEditDialog(plan)} disabled={isSavingPlan} className="rounded-lg bg-blue-50 p-2 text-blue-600 disabled:opacity-50" title="แก้ไข">
                                         <Edit3 className="h-4 w-4" />
                                       </button>
-                                      <button type="button" onClick={() => setCancelTarget(plan)} disabled={isSavingPlan} className="rounded-lg bg-red-50 p-2 text-red-600 disabled:opacity-50" title="ยกเลิก">
+                                      <button type="button" onClick={() => setCancelTarget(plan)} disabled={isSavingPlan} className="rounded-lg bg-amber-50 p-2 text-amber-700 disabled:opacity-50" title="ยกเลิกแผนโดยเปลี่ยนเป็น CANCEL">
+                                        <XCircle className="h-4 w-4" />
+                                      </button>
+                                      <button type="button" onClick={() => setDeletePlanTarget(plan)} disabled={isSavingPlan} className="rounded-lg bg-red-600 p-2 text-white disabled:opacity-50" title="ลบแผนถาวร">
                                         <Trash2 className="h-4 w-4" />
                                       </button>
                                     </>
@@ -1556,20 +1578,21 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                   )}
                 </label>
               ))}
-              {(planDialogMode === 'extra' || planForm.remark === 'EXTRA') && (
-                <label className="text-sm font-medium text-slate-700 sm:col-span-2 lg:col-span-3">
-                  เหตุผล / รายละเอียดงาน
-                  <textarea
-                    value={planForm.workDetail || ''}
-                    onChange={event => setPlanFormField('workDetail', event.target.value)}
-                    required
-                    disabled={isSavingPlan}
-                    rows={4}
-                    placeholder="เช่น ลงงานเสร็จให้ขึ้นพาเลทเปล่า 20 ตัว"
-                    className="mt-1.5 w-full resize-y rounded-xl border border-slate-300 px-3 py-2.5 disabled:bg-slate-100"
-                  />
-                </label>
-              )}
+              <label className="text-sm font-medium text-slate-700 sm:col-span-2 lg:col-span-3">
+                รายละเอียดงาน / Work Detail
+                <textarea
+                  value={planForm.workDetail || ''}
+                  onChange={event => setPlanFormField('workDetail', event.target.value)}
+                  disabled={isSavingPlan}
+                  rows={4}
+                  maxLength={1000}
+                  placeholder="ระบุรายละเอียดงาน เช่น ลงงานเสร็จให้ขึ้นพาเลทเปล่า 20 ตัว"
+                  className="mt-1.5 w-full resize-y rounded-xl border border-slate-300 px-3 py-2.5 disabled:bg-slate-100"
+                />
+                <span className="mt-1 block text-right text-xs text-slate-400">
+                  {(planForm.workDetail || '').length}/1000
+                </span>
+              </label>
 
               {planDialogMode === 'edit' && (
                 <label className="text-sm font-medium text-slate-700">
@@ -1649,6 +1672,28 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
         </div>
       )}
 
+      {deletePlanTarget && (
+        <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-slate-950/70 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="flex gap-3">
+              <div className="rounded-full bg-red-100 p-2 text-red-700"><Trash2 className="h-6 w-6" /></div>
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">ยืนยันลบแผนถาวร</h2>
+                <p className="mt-1 text-sm text-slate-500">{deletePlanTarget.codeRun} | {deletePlanTarget.route} | {deletePlanTarget.truckName}</p>
+              </div>
+            </div>
+            <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+              ระบบจะลบแถวจากชีต Plan และลบข้อมูล Actual data ที่มี Code run เดียวกัน การดำเนินการนี้ไม่สามารถย้อนกลับได้
+            </div>
+            <div className="mt-6 flex justify-end gap-3">
+              <button type="button" onClick={() => !isSavingPlan && setDeletePlanTarget(null)} disabled={isSavingPlan} className="rounded-xl border px-5 py-2.5 disabled:opacity-50">กลับ</button>
+              <button type="button" onClick={() => void handleDeletePlan()} disabled={isSavingPlan} className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-5 py-2.5 font-semibold text-white disabled:opacity-60">
+                {isSavingPlan && <Loader2 className="h-4 w-4 animate-spin" />} ยืนยันลบถาวร
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {cancelTarget && (
         <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-slate-950/60 p-4">
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
