@@ -29,6 +29,7 @@ import {
   createPlanPeriod,
   deleteMasterPlanRow,
   deleteDailyPlan,
+  deleteDailyPlansBatch,
   fetchDailyPlans,
   fetchMasterPlan,
   previewPlanPeriod,
@@ -369,6 +370,7 @@ function Notice({ notice }: { notice: NoticeState }) {
 export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
   const today = useMemo(getBangkokDate, []);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const batchDeleteRunningRef = useRef(false);
 
   const [tab, setTab] = useState<MainTab>('create');
   const [createView, setCreateView] = useState<CreateView>('source');
@@ -401,6 +403,8 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
   const [isSavingPlan, setIsSavingPlan] = useState(false);
   const [cancelTarget, setCancelTarget] = useState<DailyPlan | null>(null);
   const [deletePlanTarget, setDeletePlanTarget] = useState<DailyPlan | null>(null);
+  const [selectedPlanCodes, setSelectedPlanCodes] = useState<string[]>([]);
+  const [showBatchDeleteConfirmation, setShowBatchDeleteConfirmation] = useState(false);
   const [restoreTarget, setRestoreTarget] = useState<DailyPlan | null>(null);
 
   const [masterRows, setMasterRows] = useState<MasterPlanRow[]>([]);
@@ -443,6 +447,25 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
     });
   }, [dailyResult, dailyFilter, dailySearch]);
 
+  const displayedPlanCodes = useMemo(
+    () => filteredDailyRows.map(plan => plan.codeRun),
+    [filteredDailyRows]
+  );
+  const allDisplayedPlansSelected = displayedPlanCodes.length > 0 &&
+    displayedPlanCodes.every(codeRun => selectedPlanCodes.includes(codeRun));
+  const toggleSelectPlan = (codeRun: string) => {
+    setSelectedPlanCodes(current => current.includes(codeRun)
+      ? current.filter(item => item !== codeRun)
+      : [...current, codeRun]);
+  };
+  const toggleSelectAllDisplayed = () => {
+    setSelectedPlanCodes(current => {
+      if (allDisplayedPlansSelected) {
+        return current.filter(codeRun => !displayedPlanCodes.includes(codeRun));
+      }
+      return [...new Set([...current, ...displayedPlanCodes])];
+    });
+  };
   const filteredMasterRows = useMemo(() => {
     const query = masterSearch.trim().toLowerCase();
     if (!query) return masterRows;
@@ -704,6 +727,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
     try {
       const result = await fetchDailyPlans(date);
       setDailyResult(result);
+      setSelectedPlanCodes([]);
       if (showMessage) {
         setNotice({
           type: 'success',
@@ -792,6 +816,31 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
       }
       setNotice({ type: 'error', message: getErrorMessage(error) });
     } finally {
+      setIsSavingPlan(false);
+    }
+  };
+
+  const handleBatchDeletePlans = async () => {
+    if (!selectedPlanCodes.length || isSavingPlan || batchDeleteRunningRef.current) return;
+    const codeRuns = [...selectedPlanCodes];
+    batchDeleteRunningRef.current = true;
+    setShowBatchDeleteConfirmation(false);
+    setIsSavingPlan(true);
+    setNotice(null);
+    try {
+      const result = await deleteDailyPlansBatch(codeRuns);
+      setSelectedPlanCodes([]);
+      await loadDailyPlans(dailyDate, { showMessage: false, clearResultOnError: false });
+      setNotice({
+        type: result.notFoundCodeRuns.length ? 'info' : 'success',
+        message: result.notFoundCodeRuns.length
+          ? `ลบสำเร็จ ${result.deletedPlanCount} รายการ ไม่พบ ${result.notFoundCodeRuns.length} รายการ`
+          : `ลบแผนที่เลือกสำเร็จ ${result.deletedPlanCount} รายการ`,
+      });
+    } catch (error) {
+      setNotice({ type: 'error', message: getErrorMessage(error) });
+    } finally {
+      batchDeleteRunningRef.current = false;
       setIsSavingPlan(false);
     }
   };
@@ -1382,10 +1431,24 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                       <option value="CANCEL">CANCEL</option>
                     </select>
                   </div>
+                  <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 sm:flex-row sm:items-center">
+                    <label className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-slate-700">
+                      <input type="checkbox" checked={allDisplayedPlansSelected} onChange={toggleSelectAllDisplayed} disabled={!displayedPlanCodes.length || isSavingPlan} className="h-4 w-4 rounded border-slate-300 text-blue-600" />
+                      เลือกทั้งหมดที่แสดง ({displayedPlanCodes.length})
+                    </label>
+                    <span className="text-sm text-slate-500">เลือกแล้ว {selectedPlanCodes.length} รายการ</span>
+                    <div className="flex gap-2 sm:ml-auto">
+                      <button type="button" onClick={() => setSelectedPlanCodes([])} disabled={!selectedPlanCodes.length || isSavingPlan} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-600 disabled:opacity-40">ล้างการเลือก</button>
+                      <button type="button" onClick={() => setShowBatchDeleteConfirmation(true)} disabled={!selectedPlanCodes.length || isSavingPlan} className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-40"><Trash2 className="h-4 w-4" />ลบรายการที่เลือก ({selectedPlanCodes.length})</button>
+                    </div>
+                  </div>
                   <div className="overflow-x-auto rounded-xl border border-slate-200">
                     <table className="min-w-full divide-y divide-slate-200 text-sm">
                       <thead className="bg-slate-100 text-left text-xs font-semibold uppercase text-slate-600">
                         <tr>
+                          <th className="w-12 px-4 py-3 text-center">
+                            <input type="checkbox" checked={allDisplayedPlansSelected} onChange={toggleSelectAllDisplayed} disabled={!displayedPlanCodes.length || isSavingPlan} className="h-4 w-4 rounded border-slate-300 text-blue-600" aria-label="เลือกทั้งหมดที่แสดง" />
+                          </th>
                           {['Code Run', 'Type', 'Route', 'Company', 'Truck Name', 'Drop Point', 'รายละเอียดงาน', 'ETA', 'ETD', 'Action'].map(heading => (
                             <th key={heading} className="whitespace-nowrap px-4 py-3">{heading}</th>
                           ))}
@@ -1393,10 +1456,13 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                       </thead>
                       <tbody className="divide-y divide-slate-100 bg-white">
                         {filteredDailyRows.length === 0 ? (
-                          <tr><td colSpan={10} className="px-4 py-10 text-center text-slate-500">ไม่พบแผนในวันที่เลือก</td></tr>
+                          <tr><td colSpan={11} className="px-4 py-10 text-center text-slate-500">ไม่พบแผนในวันที่เลือก</td></tr>
                         ) : (
                           filteredDailyRows.map(plan => (
                             <tr key={plan.codeRun} className={plan.remark === 'CANCEL' ? 'bg-red-50/50 text-slate-500' : 'hover:bg-blue-50/40'}>
+                              <td className="px-4 py-3 text-center">
+                                <input type="checkbox" checked={selectedPlanCodes.includes(plan.codeRun)} onChange={() => toggleSelectPlan(plan.codeRun)} disabled={isSavingPlan} className="h-4 w-4 rounded border-slate-300 text-blue-600" aria-label={`เลือก ${plan.codeRun}`} />
+                              </td>
                               <td className="whitespace-nowrap px-4 py-3 font-bold text-slate-900">{plan.codeRun}</td>
                               <td className="whitespace-nowrap px-4 py-3"><RemarkBadge remark={plan.remark} /></td>
                               <td className="whitespace-nowrap px-4 py-3">{plan.route}</td>
@@ -1672,6 +1738,22 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
         </div>
       )}
 
+      {showBatchDeleteConfirmation && selectedPlanCodes.length > 0 && (
+        <div className="fixed inset-0 z-[1250] flex items-center justify-center bg-slate-950/70 p-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="flex gap-3">
+              <div className="rounded-full bg-red-100 p-2 text-red-700"><Trash2 className="h-6 w-6" /></div>
+              <div><h2 className="text-lg font-bold text-slate-900">ยืนยันลบแผน {selectedPlanCodes.length} รายการ</h2><p className="mt-1 text-sm text-slate-500">ลบจาก Plan และ Actual data ที่เกี่ยวข้อง</p></div>
+            </div>
+            <div className="mt-4 max-h-48 overflow-auto rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm font-mono text-slate-700">{selectedPlanCodes.join(', ')}</div>
+            <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">การดำเนินการนี้ไม่สามารถย้อนกลับได้ ระบบจะส่งคำสั่ง Batch เพียง 1 Request</div>
+            <div className="mt-6 flex justify-end gap-3">
+              <button type="button" onClick={() => !isSavingPlan && setShowBatchDeleteConfirmation(false)} disabled={isSavingPlan} className="rounded-xl border px-5 py-2.5 disabled:opacity-50">กลับ</button>
+              <button type="button" onClick={() => void handleBatchDeletePlans()} disabled={isSavingPlan || batchDeleteRunningRef.current} className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-5 py-2.5 font-semibold text-white disabled:opacity-60">{isSavingPlan && <Loader2 className="h-4 w-4 animate-spin" />} ยืนยันลบ {selectedPlanCodes.length} รายการ</button>
+            </div>
+          </div>
+        </div>
+      )}
       {deletePlanTarget && (
         <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-slate-950/70 p-4">
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
