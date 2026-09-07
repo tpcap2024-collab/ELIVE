@@ -961,6 +961,27 @@ export async function updateDailyPlan(
   };
 }
 
+export async function deleteDailyPlan(
+  codeRun: string
+): Promise<DailyPlanMutationResult> {
+  const validCodeRun = normalizeCodeRun(codeRun);
+  const data: PlanApiResponse<DailyPlanMutationResult> = await fetchApiRequest(
+    `/api/plans/${encodeURIComponent(validCodeRun)}`,
+    { method: 'DELETE' }
+  );
+  if (data.success !== true || !data.result) {
+    throw new Error(data.error || 'The server did not confirm Plan deletion.');
+  }
+  return {
+    success: true,
+    message: String(data.result.message || 'ลบ Plan สำเร็จ'),
+    codeRun: String(data.result.codeRun || validCodeRun),
+    rowNumber: Number.isFinite(Number(data.result.rowNumber))
+      ? Number(data.result.rowNumber)
+      : undefined,
+  };
+}
+
 export async function cancelDailyPlan(
   codeRun: string
 ): Promise<DailyPlanMutationResult> {
