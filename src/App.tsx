@@ -77,9 +77,9 @@ interface ActionDialogState {
   truck: Truck | null;
 }
 
-type DockFilter = 'ALL' | 'M1' | 'L1' | 'L2' | 'R1' | 'R2';
+type DockFilter = 'ALL' | 'M1' | 'L1' | 'L2' | 'L3' | 'R1' | 'R2';
 
-const DOCK_FILTERS: DockFilter[] = ['ALL', 'M1', 'L1', 'L2', 'R1', 'R2'];
+const DOCK_FILTERS: DockFilter[] = ['ALL', 'M1', 'L1', 'L2', 'L3', 'R2', 'R1'];
 
 const ROWS_PER_PAGE = 20;
 const REFRESH_INTERVAL = 60000;
@@ -110,7 +110,7 @@ function normalizeLicensePlate(value?: string): string {
 
 function getDockGroup(value?: string): Exclude<DockFilter, 'ALL'> | '' {
   const normalized = String(value || '').replace(/\s+/g, '').toUpperCase();
-  const match = normalized.match(/^(M1|L1|L2|R1|R2)/);
+  const match = normalized.match(/^(M1|L1|L2|L3|R1|R2)(?:-|$)/);
   return match ? (match[1] as Exclude<DockFilter, 'ALL'>) : '';
 }
 
@@ -150,8 +150,9 @@ export default function App() {
     'M1',
     'L1',
     'L2',
-    'R1',
+    'L3',
     'R2',
+    'R1',
   ]);
   const [dashboardSearch, setDashboardSearch] = useState('');
   const [isDashboardFullscreen, setIsDashboardFullscreen] = useState(false);
@@ -347,15 +348,36 @@ export default function App() {
   }, [selectedDate, showHiddenRows, selectedDockFilters, dashboardSearch]);
 
   useEffect(() => {
-    const handleFullscreenChange = () => {
+    const syncDashboardFullscreenState = () => {
+      const dashboardElement = dashboardFullscreenRef.current;
       setIsDashboardFullscreen(
-        document.fullscreenElement === dashboardFullscreenRef.current
+        Boolean(dashboardElement && document.fullscreenElement === dashboardElement)
       );
     };
 
-    document.addEventListener('fullscreenchange', handleFullscreenChange);
-    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
-  }, []);
+    document.addEventListener('fullscreenchange', syncDashboardFullscreenState);
+    syncDashboardFullscreenState();
+
+    return () => {
+      document.removeEventListener('fullscreenchange', syncDashboardFullscreenState);
+    };
+  }, [currentView]);
+
+  useEffect(() => {
+    if (currentView !== 'dashboard') {
+      setIsDashboardFullscreen(false);
+      return;
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      const dashboardElement = dashboardFullscreenRef.current;
+      setIsDashboardFullscreen(
+        Boolean(dashboardElement && document.fullscreenElement === dashboardElement)
+      );
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [currentView]);
 
   const handleUpdateTruck = (
     id: string,
@@ -393,6 +415,12 @@ export default function App() {
   };
 
   const changeView = (view: CurrentView) => {
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(error => {
+        console.error('Unable to exit fullscreen before changing view:', error);
+      });
+    }
+    setIsDashboardFullscreen(false);
     setCurrentView(view);
     closeSidebarOnMobile();
   };
@@ -435,7 +463,7 @@ export default function App() {
   const toggleDockFilter = (filter: DockFilter) => {
     if (filter === 'ALL') {
       setSelectedDockFilters(
-        allDockFiltersSelected ? [] : ['M1', 'L1', 'L2', 'R1', 'R2']
+        allDockFiltersSelected ? [] : ['M1', 'L1', 'L2', 'L3', 'R2', 'R1']
       );
       return;
     }
@@ -449,7 +477,7 @@ export default function App() {
 
   const getActionReasonOptions = (dropPoint?: string): string[] => {
     const dockGroup = getDockGroup(dropPoint);
-    if (dockGroup === 'L1' || dockGroup === 'L2') {
+    if (dockGroup === 'L1' || dockGroup === 'L2' || dockGroup === 'L3') {
       return ['LSP ไม่มีงานลง', 'LSP งานไม่พร้อม', 'LSP ช่องลงงานไม่พร้อม', 'อื่น ๆ'];
     }
     if (dockGroup === 'R1' || dockGroup === 'R2') {
@@ -955,7 +983,7 @@ export default function App() {
               <main
                 ref={dashboardFullscreenRef}
                 className={`flex flex-1 flex-col overflow-auto bg-slate-50 p-2 md:p-3 ${
-                  isDashboardFullscreen ? 'h-screen w-screen' : ''
+                  isDashboardFullscreen ? 'h-screen w-screen' : 'min-h-0 min-w-0 w-full'
                 }`}
               >
                 <div className="mb-3 flex shrink-0 flex-col justify-between gap-4 rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-sm sm:flex-row sm:items-center">
