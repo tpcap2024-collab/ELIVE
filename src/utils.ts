@@ -156,94 +156,79 @@ export const calculateMinutesDifference = (
 };
 
 /**
- * คำนวณ Performance จาก Stamp ETA เท่านั้น
+ * คำนวณ Performance จากวันที่และเวลา Stamp ETA
  *
- * Stamp ETA ก่อน Plan ETA = EARLY
- * Stamp ETA ตั้งแต่ Plan ETA ถึง Plan ETD = ON_PLAN
- * Stamp ETA หลัง Plan ETD = DELAY
+ * Actual ก่อน Plan ETA = EARLY
+ * Actual ตั้งแต่ Plan ETA ถึง Plan ETD = ON_PLAN
+ * Actual หลัง Plan ETD = DELAY
  *
- * Stamp ETA ตรง Plan ETA = ON_PLAN
- * Stamp ETA ตรง Plan ETD = ON_PLAN
- *
- * Stamp ETD ไม่มีผลต่อ Performance
+ * รองรับ Plan ข้ามเที่ยงคืน และข้อมูลเดิมที่ไม่มีวันที่ Stamp
  */
+function parseDateText(value?: string): string | null {
+  const text = String(value || '').trim();
+  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) return null;
+  return `${match[1]}-${match[2]}-${match[3]}`;
+}
+
+function dateTimeToEpochMinutes(dateValue?: string, timeValue?: string): number | null {
+  const dateText = parseDateText(dateValue);
+  const minutes = timeToMinutes(timeValue);
+  if (!dateText || minutes === null) return null;
+  const [year, month, day] = dateText.split('-').map(Number);
+  return Math.floor(Date.UTC(year, month - 1, day) / 60000) + minutes;
+}
+
 export const calculatePerformanceStatus = (
   planEta: string,
   planEtd: string,
-  stampEta: string
+  stampEta: string,
+  planDate?: string,
+  stampDate?: string
 ): PerformanceStatus => {
-  const planEtaMinutes =
-    timeToMinutes(planEta);
+  const planEtaDateTime = dateTimeToEpochMinutes(planDate, planEta);
+  let planEtdDateTime = dateTimeToEpochMinutes(planDate, planEtd);
+  const stampEtaDateTime = dateTimeToEpochMinutes(stampDate, stampEta);
 
-  const planEtdMinutes =
-    timeToMinutes(planEtd);
+  if (
+    planEtaDateTime !== null &&
+    planEtdDateTime !== null &&
+    stampEtaDateTime !== null
+  ) {
+    if (planEtdDateTime < planEtaDateTime) {
+      planEtdDateTime += 24 * 60;
+    }
+    if (stampEtaDateTime < planEtaDateTime) return 'EARLY';
+    if (stampEtaDateTime <= planEtdDateTime) return 'ON_PLAN';
+    return 'DELAY';
+  }
 
-  const stampEtaMinutes =
-    timeToMinutes(stampEta);
-
+  const planEtaMinutes = timeToMinutes(planEta);
+  const planEtdMinutes = timeToMinutes(planEtd);
+  const stampEtaMinutes = timeToMinutes(stampEta);
   if (
     planEtaMinutes === null ||
     planEtdMinutes === null ||
     stampEtaMinutes === null
-  ) {
-    return 'ON_PLAN';
-  }
+  ) return 'ON_PLAN';
 
-  let adjustedPlanEtd =
-    planEtdMinutes;
-
-  let adjustedStampEta =
-    stampEtaMinutes;
-
-  /*
-   * รองรับช่วงเวลาข้ามเที่ยงคืน
-   *
-   * ตัวอย่าง:
-   * Plan ETA = 23:50
-   * Plan ETD = 00:10
-   */
-  if (
-    adjustedPlanEtd <
-    planEtaMinutes
-  ) {
+  let adjustedPlanEtd = planEtdMinutes;
+  let adjustedStampEta = stampEtaMinutes;
+  if (adjustedPlanEtd < planEtaMinutes) {
     adjustedPlanEtd += 24 * 60;
-
-    /*
-     * Stamp ETA ที่อยู่หลังเที่ยงคืน
-     * ให้ถือว่าเป็นเวลาของวันถัดไป
-     */
-    if (
-      adjustedStampEta <
-      planEtaMinutes
-    ) {
-      adjustedStampEta += 24 * 60;
-    }
+    if (adjustedStampEta < planEtaMinutes) adjustedStampEta += 24 * 60;
   }
-
-  /*
-   * ก่อน Plan ETA
-   */
-  if (
-    adjustedStampEta <
-    planEtaMinutes
-  ) {
-    return 'EARLY';
-  }
-
-  /*
-   * ตั้งแต่ Plan ETA ถึง Plan ETD
-   * รวมเวลาที่ตรงขอบทั้งสองด้าน
-   */
-  if (
-    adjustedStampEta <=
-    adjustedPlanEtd
-  ) {
-    return 'ON_PLAN';
-  }
-
-  /*
-   * หลัง Plan ETD
-   */
+  if (adjustedStampEta < planEtaMinutes) return 'EARLY';
+  if (adjustedStampEta <= adjustedPlanEtd) return 'ON_PLAN';
   return 'DELAY';
 };
 
