@@ -48,7 +48,10 @@ const ROW_GROUPS: RowGroup[] = [
   {
     groupName: 'M1',
     title: 'MOTOR OIL',
-    docks: [{ id: '1', mappedPoint: 'M1-1' }],
+    docks: [
+      { id: '1', mappedPoint: 'M1-1' },
+      { id: '2', mappedPoint: 'M1-2' },
+    ],
   },
   {
     groupName: 'L1',
