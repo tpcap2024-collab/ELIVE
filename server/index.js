@@ -345,11 +345,7 @@ function getAuditDescriptor(req) {
     return { action: 'PLAN_EXTRA_CREATE', targetType: 'PLAN', targetIdHash: null };
   }
   if (method === 'POST' && path === '/api/plans/delete-batch') {
-    return {
-      action: 'PLAN_BATCH_DELETE',
-      targetType: 'PLAN_BATCH',
-      targetIdHash: hashAuditValue((req.body?.codeRuns || []).join('|')),
-    };
+    return { action: 'PLAN_BATCH_DELETE', targetType: 'PLAN_BATCH', targetIdHash: hashAuditValue((req.body?.codeRuns || []).join('|')) };
   }
   if (method === 'DELETE' && /^\/api\/plans\/A\d+$/i.test(path)) {
     return {
@@ -1627,7 +1623,6 @@ app.get(['/health', '/api/health'], (req, res) => {
       '/api/plans/daily',
       '/api/plans/extra',
       '/api/plans/:codeRun',
-      '/api/plans/delete-batch',
       'DELETE /api/plans/:codeRun',
       '/api/plans/:codeRun/cancel',
       '/api/plans/:codeRun/restore',
@@ -1840,18 +1835,12 @@ app.post('/api/plans/delete-batch', requireAuthentication, requireMinimumRole('S
     const input = Array.isArray(req.body?.codeRuns) ? req.body.codeRuns : [];
     const codeRuns = [...new Set(input.map(normalizeCodeRun))];
     if (!codeRuns.length) throw new Error('At least one codeRun is required.');
-    if (codeRuns.length > 200) throw new Error('Batch delete cannot exceed 200 Plans.');
+    if (codeRuns.length > 200) throw new Error('เลือกได้สูงสุด 200 รายการต่อครั้ง');
     const result = await requestAppsScriptPost('deletePlansBatch', { codeRuns });
     clearTruckCache();
-    req.auditDetails = {
-      requestedCount: codeRuns.length,
-      deletedPlanCount: Number(result?.result?.deletedPlanCount || 0),
-      deletedActualCount: Number(result?.result?.deletedActualCount || 0),
-    };
+    req.auditDetails = { requestedCount: codeRuns.length, deletedPlanCount: Number(result?.result?.deletedPlanCount || 0), deletedActualCount: Number(result?.result?.deletedActualCount || 0) };
     return res.status(200).json(result);
-  } catch (error) {
-    return sendRouteError(res, error, 'Unable to delete selected Plans.');
-  }
+  } catch (error) { return sendRouteError(res, error, 'Unable to delete selected Plans.'); }
 });
 
 app.delete('/api/plans/:codeRun', requireAuthentication, requireMinimumRole('SUPERVISOR'), async (req, res) => {
