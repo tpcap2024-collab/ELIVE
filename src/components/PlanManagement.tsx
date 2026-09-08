@@ -454,16 +454,27 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
   const allDisplayedPlansSelected = displayedPlanCodes.length > 0 &&
     displayedPlanCodes.every(codeRun => selectedPlanCodes.includes(codeRun));
   const toggleSelectPlan = (codeRun: string) => {
-    setSelectedPlanCodes(current => current.includes(codeRun)
-      ? current.filter(item => item !== codeRun)
-      : [...current, codeRun]);
+    setSelectedPlanCodes(current => {
+      if (current.includes(codeRun)) return current.filter(item => item !== codeRun);
+      if (current.length >= 200) {
+        setNotice({ type: 'info', message: 'เลือกได้สูงสุด 200 รายการต่อครั้ง' });
+        return current;
+      }
+      return [...current, codeRun];
+    });
   };
   const toggleSelectAllDisplayed = () => {
     setSelectedPlanCodes(current => {
       if (allDisplayedPlansSelected) {
         return current.filter(codeRun => !displayedPlanCodes.includes(codeRun));
       }
-      return [...new Set([...current, ...displayedPlanCodes])];
+      const availableSlots = Math.max(0, 200 - current.length);
+      const newCodes = displayedPlanCodes.filter(codeRun => !current.includes(codeRun));
+      const next = [...current, ...newCodes.slice(0, availableSlots)];
+      if (newCodes.length > availableSlots) {
+        setNotice({ type: 'info', message: 'เลือกได้สูงสุด 200 รายการต่อครั้ง ระบบเลือกให้ครบ 200 รายการแล้ว' });
+      }
+      return next;
     });
   };
   const filteredMasterRows = useMemo(() => {
@@ -821,7 +832,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
   };
 
   const handleBatchDeletePlans = async () => {
-    if (!selectedPlanCodes.length || isSavingPlan || batchDeleteRunningRef.current) return;
+    if (!selectedPlanCodes.length || selectedPlanCodes.length > 200 || isSavingPlan || batchDeleteRunningRef.current) return;
     const codeRuns = [...selectedPlanCodes];
     batchDeleteRunningRef.current = true;
     setShowBatchDeleteConfirmation(false);
@@ -834,8 +845,8 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
       setNotice({
         type: result.notFoundCodeRuns.length ? 'info' : 'success',
         message: result.notFoundCodeRuns.length
-          ? `ลบสำเร็จ ${result.deletedPlanCount} รายการ ไม่พบ ${result.notFoundCodeRuns.length} รายการ`
-          : `ลบแผนที่เลือกสำเร็จ ${result.deletedPlanCount} รายการ`,
+          ? `ลบสำเร็จ ${result.deletedPlanCount} รายการ ไม่พบ ${result.notFoundCodeRuns.length} Code run`
+          : `ลบแผนตาม Code run ที่เลือกสำเร็จ ${result.deletedPlanCount} รายการ`,
       });
     } catch (error) {
       setNotice({ type: 'error', message: getErrorMessage(error) });
@@ -1434,12 +1445,12 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                   <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 sm:flex-row sm:items-center">
                     <label className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-slate-700">
                       <input type="checkbox" checked={allDisplayedPlansSelected} onChange={toggleSelectAllDisplayed} disabled={!displayedPlanCodes.length || isSavingPlan} className="h-4 w-4 rounded border-slate-300 text-blue-600" />
-                      เลือกทั้งหมดที่แสดง ({displayedPlanCodes.length})
+                      เลือกทั้งหมดที่แสดง
                     </label>
-                    <span className="text-sm text-slate-500">เลือกแล้ว {selectedPlanCodes.length} รายการ</span>
+                    <span className="text-sm font-semibold text-slate-600">เลือกแล้ว {selectedPlanCodes.length}/200 รายการ</span>
                     <div className="flex gap-2 sm:ml-auto">
-                      <button type="button" onClick={() => setSelectedPlanCodes([])} disabled={!selectedPlanCodes.length || isSavingPlan} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-600 disabled:opacity-40">ล้างการเลือก</button>
-                      <button type="button" onClick={() => setShowBatchDeleteConfirmation(true)} disabled={!selectedPlanCodes.length || isSavingPlan} className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-40"><Trash2 className="h-4 w-4" />ลบรายการที่เลือก ({selectedPlanCodes.length})</button>
+                      <button type="button" onClick={() => setSelectedPlanCodes([])} disabled={!selectedPlanCodes.length || isSavingPlan} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold disabled:opacity-40">ล้างการเลือก</button>
+                      <button type="button" onClick={() => setShowBatchDeleteConfirmation(true)} disabled={!selectedPlanCodes.length || selectedPlanCodes.length > 200 || isSavingPlan} className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-40"><Trash2 className="h-4 w-4" />ลบรายการที่เลือก ({selectedPlanCodes.length})</button>
                     </div>
                   </div>
                   <div className="overflow-x-auto rounded-xl border border-slate-200">
@@ -1741,15 +1752,12 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
       {showBatchDeleteConfirmation && selectedPlanCodes.length > 0 && (
         <div className="fixed inset-0 z-[1250] flex items-center justify-center bg-slate-950/70 p-4">
           <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
-            <div className="flex gap-3">
-              <div className="rounded-full bg-red-100 p-2 text-red-700"><Trash2 className="h-6 w-6" /></div>
-              <div><h2 className="text-lg font-bold text-slate-900">ยืนยันลบแผน {selectedPlanCodes.length} รายการ</h2><p className="mt-1 text-sm text-slate-500">ลบจาก Plan และ Actual data ที่เกี่ยวข้อง</p></div>
-            </div>
-            <div className="mt-4 max-h-48 overflow-auto rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm font-mono text-slate-700">{selectedPlanCodes.join(', ')}</div>
-            <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">การดำเนินการนี้ไม่สามารถย้อนกลับได้ ระบบจะส่งคำสั่ง Batch เพียง 1 Request</div>
+            <h2 className="text-lg font-bold">ยืนยันลบตาม Code run {selectedPlanCodes.length} รายการ</h2>
+            <div className="mt-4 max-h-48 overflow-auto rounded-xl border bg-slate-50 p-3 font-mono text-sm">{selectedPlanCodes.join(', ')}</div>
+            <p className="mt-4 rounded-xl bg-red-50 p-4 text-sm text-red-800">ระบบลบเฉพาะแถวที่มี Code run ตรงกับรายการที่เลือก และลบ Actual data ที่เกี่ยวข้อง เลือกได้สูงสุด 200 รายการต่อครั้ง</p>
             <div className="mt-6 flex justify-end gap-3">
-              <button type="button" onClick={() => !isSavingPlan && setShowBatchDeleteConfirmation(false)} disabled={isSavingPlan} className="rounded-xl border px-5 py-2.5 disabled:opacity-50">กลับ</button>
-              <button type="button" onClick={() => void handleBatchDeletePlans()} disabled={isSavingPlan || batchDeleteRunningRef.current} className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-5 py-2.5 font-semibold text-white disabled:opacity-60">{isSavingPlan && <Loader2 className="h-4 w-4 animate-spin" />} ยืนยันลบ {selectedPlanCodes.length} รายการ</button>
+              <button type="button" onClick={() => setShowBatchDeleteConfirmation(false)} disabled={isSavingPlan} className="rounded-xl border px-5 py-2.5">กลับ</button>
+              <button type="button" onClick={() => void handleBatchDeletePlans()} disabled={isSavingPlan || batchDeleteRunningRef.current || selectedPlanCodes.length > 200} className="rounded-xl bg-red-600 px-5 py-2.5 font-semibold text-white disabled:opacity-50">ยืนยันลบ {selectedPlanCodes.length} รายการ</button>
             </div>
           </div>
         </div>
