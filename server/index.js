@@ -1835,7 +1835,7 @@ app.post('/api/plans/delete-batch', requireAuthentication, requireMinimumRole('S
     const input = Array.isArray(req.body?.codeRuns) ? req.body.codeRuns : [];
     const codeRuns = [...new Set(input.map(normalizeCodeRun))];
     if (!codeRuns.length) throw new Error('At least one codeRun is required.');
-    if (codeRuns.length > 200) throw new Error('เลือกได้สูงสุด 200 รายการต่อครั้ง');
+    if (codeRuns.length > 500) throw new Error('เลือกได้สูงสุด 500 รายการต่อครั้ง');
     const result = await requestAppsScriptPost('deletePlansBatch', { codeRuns });
     clearTruckCache();
     req.auditDetails = { requestedCount: codeRuns.length, deletedPlanCount: Number(result?.result?.deletedPlanCount || 0), deletedActualCount: Number(result?.result?.deletedActualCount || 0) };
