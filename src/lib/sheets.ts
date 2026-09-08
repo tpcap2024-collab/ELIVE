@@ -973,7 +973,7 @@ export interface BatchDeletePlansResult {
 export async function deleteDailyPlansBatch(codeRuns: string[]): Promise<BatchDeletePlansResult> {
   const validCodeRuns = [...new Set((Array.isArray(codeRuns) ? codeRuns : []).map(normalizeCodeRun))];
   if (!validCodeRuns.length) throw new Error('Select at least one Plan.');
-  if (validCodeRuns.length > 200) throw new Error('เลือกได้สูงสุด 200 รายการต่อครั้ง');
+  if (validCodeRuns.length > 500) throw new Error('เลือกได้สูงสุด 500 รายการต่อครั้ง');
   const data: PlanApiResponse<BatchDeletePlansResult> = await fetchApiRequest('/api/plans/delete-batch', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ codeRuns: validCodeRuns }),
   });
