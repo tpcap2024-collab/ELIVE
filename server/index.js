@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '10';
+const API_VERSION = '11';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -41,6 +41,13 @@ const GPS_AUTO_STAMP_LOCK_SECONDS = 90;
 const GPS_AUTO_STAMP_RESULT_TTL_SECONDS = 36 * 60 * 60;
 const GPS_AUTO_STAMP_ETA_ENABLED = true;
 const GPS_AUTO_STAMP_ETD_ENABLED = false;
+const GPS_BACKGROUND_WORKER_ENABLED = cleanText(process.env.GPS_BACKGROUND_WORKER_ENABLED || 'false').toLowerCase() === 'true';
+const GPS_BACKGROUND_WORKER_INTERVAL_MS = Math.max(15000, Number(process.env.GPS_BACKGROUND_WORKER_INTERVAL_MS || 30000));
+const GPS_WORKER_LOCK_KEY = 'elive:gps-worker:leader';
+const GPS_WORKER_LOCK_SECONDS = Math.max(30, Math.ceil(GPS_BACKGROUND_WORKER_INTERVAL_MS / 1000) + 30);
+const GPS_WORKER_STATUS_KEY = 'elive:gps-worker:status';
+const GPS_WORKER_STATUS_TTL_SECONDS = 5 * 60;
+const SERVICE_MODE = cleanText(process.env.SERVICE_MODE || 'web').toLowerCase();
 const GPS_GEOFENCES = Object.freeze([
   Object.freeze({
     id: 'TPCAP-LSP',
@@ -144,6 +151,9 @@ let masterPlanRequestPromise = null;
 let lastAppsScriptSuccessTime = null;
 let lastAppsScriptErrorTime = null;
 let lastAppsScriptError = null;
+let gpsWorkerTimer = null;
+let gpsWorkerStopping = false;
+let gpsWorkerCycleRunning = false;
 
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
@@ -986,6 +996,169 @@ async function evaluateGpsDock(payload) {
     await writeGpsDwellState(effectiveCodeRun, state);
   }
   return createGpsDockResult(state);
+}
+function normalizeGpsHeader(value) {
+  return cleanText(value).toLowerCase().replace(/\s/g, '');
+}
+function findGpsHeaderIndex(headers, names) {
+  return headers.findIndex(header => names.some(name => header.includes(normalizeGpsHeader(name))));
+}
+function parseGpsNumber(value) {
+  return Number(cleanText(value).replace(/\s/g, '').replace(',', '.'));
+}
+function buildBackgroundGpsInputs(data) {
+  const planRows = Array.isArray(data?.plan) ? data.plan : [];
+  const gpsRows = Array.isArray(data?.gps) ? data.gps : [];
+  if (gpsRows.length <= 1 || planRows.length <= 1) return [];
+  const today = getBangkokDateText(new Date());
+  const seedTripByPlate = new Map();
+  for (const row of planRows.slice(1)) {
+    if (!Array.isArray(row)) continue;
+    const codeRun = cleanText(row[0]).toUpperCase();
+    const plate = cleanText(row[4]);
+    const remark = cleanText(row[12]).toUpperCase();
+    if (!/^A\d+$/.test(codeRun) || !plate || remark === 'CANCEL' || parseSheetDateText(row[1]) !== today) continue;
+    const normalizedPlate = normalizeLicensePlate(plate);
+    if (!seedTripByPlate.has(normalizedPlate)) seedTripByPlate.set(normalizedPlate, { codeRun, planLicensePlate: plate });
+  }
+  const headers = gpsRows[0].map(normalizeGpsHeader);
+  const gpsIdIndex = findGpsHeaderIndex(headers, ['GPS ID', 'GPSID', 'รหัส GPS']);
+  const plateIndex = findGpsHeaderIndex(headers, ['ทะเบียนรถ', 'License Plate', 'Truck Name', 'Plate']);
+  const latIndex = findGpsHeaderIndex(headers, ['ละติจูด', 'Latitude', 'Lat']);
+  const lngIndex = findGpsHeaderIndex(headers, ['ลองจิจูด', 'Longitude', 'Lng', 'Lon']);
+  const speedIndex = findGpsHeaderIndex(headers, ['ความเร็ว', 'Speed']);
+  const statusIndex = findGpsHeaderIndex(headers, ['สถานะ', 'Status']);
+  const gpsTimeIndex = findGpsHeaderIndex(headers, ['เวลา GPS', 'GPS Time', 'GPS Datetime']);
+  const receivedIndex = findGpsHeaderIndex(headers, ['เวลาที่ระบบดึงข้อมูล', 'เวลารับข้อมูล', 'Received At', 'Update Time']);
+  if (plateIndex < 0 || latIndex < 0 || lngIndex < 0 || gpsTimeIndex < 0 || receivedIndex < 0) {
+    throw new Error('GPS_WORKER_REQUIRED_COLUMNS_MISSING');
+  }
+  const latestByPlate = new Map();
+  for (const row of gpsRows.slice(1)) {
+    if (!Array.isArray(row)) continue;
+    const licensePlate = cleanText(row[plateIndex]);
+    const normalizedPlate = normalizeLicensePlate(licensePlate);
+    const seedTrip = seedTripByPlate.get(normalizedPlate);
+    if (!seedTrip) continue;
+    const latitude = parseGpsNumber(row[latIndex]);
+    const longitude = parseGpsNumber(row[lngIndex]);
+    const speed = speedIndex >= 0 ? parseGpsNumber(row[speedIndex]) : 0;
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || !Number.isFinite(speed)) continue;
+    const gpsTimeText = cleanText(row[gpsTimeIndex]);
+    const receivedAtText = cleanText(row[receivedIndex]);
+    try {
+      const gpsTime = parseBangkokDateTime(gpsTimeText, 'gpsTime');
+      const receivedAt = parseBangkokDateTime(receivedAtText, 'receivedAt');
+      const candidate = {
+        codeRun: seedTrip.codeRun,
+        gpsId: gpsIdIndex >= 0 ? cleanText(row[gpsIdIndex]) || normalizedPlate : normalizedPlate,
+        licensePlate,
+        planLicensePlate: seedTrip.planLicensePlate,
+        latitude,
+        longitude,
+        speed,
+        gpsStatus: statusIndex >= 0 ? cleanText(row[statusIndex]) : '',
+        gpsTime: gpsTime.toISOString(),
+        receivedAt: receivedAt.toISOString(),
+        sortTime: Math.max(gpsTime.getTime(), receivedAt.getTime()),
+      };
+      const previous = latestByPlate.get(normalizedPlate);
+      if (!previous || candidate.sortTime > previous.sortTime) latestByPlate.set(normalizedPlate, candidate);
+    } catch {
+      continue;
+    }
+  }
+  return [...latestByPlate.values()].map(({ sortTime, ...input }) => input);
+}
+async function releaseGpsWorkerLock(client, token) {
+  await client.eval(
+    "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) else return 0 end",
+    { keys: [GPS_WORKER_LOCK_KEY], arguments: [token] }
+  );
+}
+async function writeGpsWorkerStatus(status) {
+  const client = requireRedisClient();
+  await client.set(GPS_WORKER_STATUS_KEY, JSON.stringify(status), { EX: GPS_WORKER_STATUS_TTL_SECONDS });
+}
+async function runGpsBackgroundCycle() {
+  if (!GPS_BACKGROUND_WORKER_ENABLED || gpsWorkerCycleRunning || gpsWorkerStopping) return null;
+  gpsWorkerCycleRunning = true;
+  const client = requireRedisClient();
+  const lockToken = randomUUID();
+  const lockAcquired = await client.set(GPS_WORKER_LOCK_KEY, lockToken, { NX: true, EX: GPS_WORKER_LOCK_SECONDS });
+  if (!lockAcquired) {
+    gpsWorkerCycleRunning = false;
+    return { skipped: true, reason: 'LEADER_LOCK_NOT_ACQUIRED' };
+  }
+  const startedAt = Date.now();
+  const summary = { processed: 0, confirmed: 0, stamped: 0, alreadyStamped: 0, failed: 0, failures: [] };
+  try {
+    const truckResult = await getTruckDataWithCache(true);
+    const inputs = buildBackgroundGpsInputs(truckResult.data);
+    for (const input of inputs) {
+      if (gpsWorkerStopping) break;
+      try {
+        const result = await evaluateGpsDock(input);
+        summary.processed += 1;
+        if (result.status === 'DOCK_IN_CONFIRMED') summary.confirmed += 1;
+        if (result.autoStampResult?.status === 'STAMPED') summary.stamped += 1;
+        if (result.autoStampResult?.status === 'ALREADY_STAMPED') summary.alreadyStamped += 1;
+      } catch (error) {
+        summary.failed += 1;
+        summary.failures.push({ gpsIdHash: hashAuditValue(input.gpsId), error: getErrorMessage(error) });
+      }
+    }
+    const status = {
+      enabled: true,
+      running: true,
+      lastCycleStartedAt: new Date(startedAt).toISOString(),
+      lastCycleCompletedAt: new Date().toISOString(),
+      durationMs: Date.now() - startedAt,
+      ...summary,
+    };
+    await writeGpsWorkerStatus(status);
+    console.log(JSON.stringify({ logType: 'ELIVE_GPS_WORKER', ...status }));
+    return status;
+  } catch (error) {
+    const status = {
+      enabled: true,
+      running: true,
+      lastCycleStartedAt: new Date(startedAt).toISOString(),
+      lastCycleCompletedAt: new Date().toISOString(),
+      durationMs: Date.now() - startedAt,
+      error: getErrorMessage(error),
+      ...summary,
+    };
+    await writeGpsWorkerStatus(status).catch(() => {});
+    console.error('GPS Background Worker cycle failed:', status);
+    return status;
+  } finally {
+    await releaseGpsWorkerLock(client, lockToken).catch(error => {
+      console.error('Unable to release GPS Worker lock:', getErrorMessage(error));
+    });
+    gpsWorkerCycleRunning = false;
+  }
+}
+function scheduleNextGpsWorkerCycle(delayMs) {
+  if (gpsWorkerStopping || !GPS_BACKGROUND_WORKER_ENABLED) return;
+  gpsWorkerTimer = setTimeout(async () => {
+    await runGpsBackgroundCycle();
+    scheduleNextGpsWorkerCycle(GPS_BACKGROUND_WORKER_INTERVAL_MS);
+  }, delayMs);
+}
+function startGpsBackgroundWorker() {
+  if (!GPS_BACKGROUND_WORKER_ENABLED) {
+    console.log('GPS Background Worker is disabled.');
+    return;
+  }
+  console.log(`GPS Background Worker enabled, interval ${GPS_BACKGROUND_WORKER_INTERVAL_MS} ms.`);
+  scheduleNextGpsWorkerCycle(2000);
+}
+async function stopGpsBackgroundWorker() {
+  gpsWorkerStopping = true;
+  if (gpsWorkerTimer) clearTimeout(gpsWorkerTimer);
+  const deadline = Date.now() + 15000;
+  while (gpsWorkerCycleRunning && Date.now() < deadline) await wait(250);
 }
 function waitForLoginFailure() { return wait(LOGIN_FAILURE_DELAY_MS + Math.floor(Math.random() * 250)); }
 function normalizeLoginUsername(value) { const username=cleanText(value).toLowerCase(); if(!username||username.length>MAX_LOGIN_USERNAME_LENGTH) throw new Error('LOGIN_PAYLOAD_INVALID'); return username; }
@@ -2105,6 +2278,7 @@ app.get(['/health', '/api/health'], (req, res) => {
       '/api/gps/dock-status/:codeRun',
       '/api/gps/dock/evaluate',
       '/api/gps/vehicle-cycle',
+      '/api/gps/worker-status',
       '/api/master-plan',
       '/api/master-plan/rows',
       '/api/master-plan/rows/:sheetRow',
@@ -2126,6 +2300,9 @@ app.get(['/health', '/api/health'], (req, res) => {
       autoStampEnabled: GPS_AUTO_STAMP_ETA_ENABLED,
       autoStampEtaEnabled: GPS_AUTO_STAMP_ETA_ENABLED,
       autoStampEtdEnabled: GPS_AUTO_STAMP_ETD_ENABLED,
+      backgroundWorkerEnabled: GPS_BACKGROUND_WORKER_ENABLED,
+      backgroundWorkerIntervalMs: GPS_BACKGROUND_WORKER_INTERVAL_MS,
+      serviceMode: SERVICE_MODE,
       parkingSpeedThresholdKmh: GPS_PARKING_SPEED_THRESHOLD_KMH,
       dwellThresholdSeconds: Math.floor(GPS_DWELL_THRESHOLD_MS / 1000),
       gpsStaleThresholdSeconds: Math.floor(GPS_STALE_THRESHOLD_MS / 1000),
@@ -2178,6 +2355,20 @@ app.get(['/health', '/api/health'], (req, res) => {
   });
 });
 
+app.get('/api/gps/worker-status', requireAuthentication, requireMinimumRole('SUPERVISOR'), async (req, res) => {
+  try {
+    const raw = await requireRedisClient().get(GPS_WORKER_STATUS_KEY);
+    res.setHeader('Cache-Control', 'no-store');
+    return res.status(200).json({
+      success: true,
+      enabled: GPS_BACKGROUND_WORKER_ENABLED,
+      result: raw ? JSON.parse(raw) : null,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    return sendRouteError(res, error, 'Unable to retrieve GPS Worker status.', 500);
+  }
+});
 app.get('/api/gps/vehicle-cycle', requireAuthentication, requireMinimumRole('TV_VIEWER'), async (req, res) => {
   try {
     const licensePlate = cleanText(req.query.licensePlate);
@@ -2721,5 +2912,22 @@ try {
   console.error('Apps Script configuration warning:', getErrorMessage(error));
 }
 
-async function startServer(){ await initializeRedis(); app.listen(PORT,'0.0.0.0',()=>{ console.log(`ELIVE API version ${API_VERSION} is running on port ${PORT}`); }); }
+async function shutdown(signal) {
+  console.log(`Received ${signal}. Shutting down safely.`);
+  await stopGpsBackgroundWorker();
+  if (redisClient?.isOpen) await redisClient.quit().catch(() => {});
+  process.exit(0);
+}
+process.on('SIGTERM', () => { void shutdown('SIGTERM'); });
+process.on('SIGINT', () => { void shutdown('SIGINT'); });
+async function startServer(){
+  await initializeRedis();
+  startGpsBackgroundWorker();
+  if (SERVICE_MODE === 'worker') {
+    if (!GPS_BACKGROUND_WORKER_ENABLED) throw new Error('SERVICE_MODE worker requires GPS_BACKGROUND_WORKER_ENABLED=true.');
+    console.log(`ELIVE GPS Background Worker version ${API_VERSION} is running.`);
+    return;
+  }
+  app.listen(PORT,'0.0.0.0',()=>{ console.log(`ELIVE API version ${API_VERSION} is running on port ${PORT}`); });
+}
 startServer().catch(error=>{ console.error('Unable to start ELIVE API:',getErrorMessage(error)); process.exit(1); });
