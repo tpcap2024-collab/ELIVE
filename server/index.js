@@ -34,6 +34,8 @@ const GPS_STALE_THRESHOLD_MS = 2 * 60 * 1000;
 const GPS_MOVEMENT_GRACE_MS = 30 * 1000;
 const GPS_DWELL_STATE_TTL_SECONDS = 4 * 60 * 60;
 const GPS_DWELL_KEY_PREFIX = 'elive:gps-dwell:';
+const GPS_VEHICLE_CYCLE_KEY_PREFIX = 'elive:gps-vehicle-cycle:';
+const GPS_VEHICLE_CYCLE_TTL_SECONDS = 36 * 60 * 60;
 const GPS_GEOFENCES = Object.freeze([
   Object.freeze({
     id: 'TPCAP-LSP',
@@ -418,6 +420,13 @@ function getAuditDescriptor(req) {
       targetIdHash: hashAuditValue(req.body?.codeRun || req.body?.gpsId),
     };
   }
+  if (method === 'GET' && path === '/api/gps/vehicle-cycle') {
+    return {
+      action: 'GPS_VEHICLE_CYCLE_READ',
+      targetType: 'GPS_VEHICLE_CYCLE',
+      targetIdHash: hashAuditValue(req.query?.licensePlate),
+    };
+  }
   if (method === 'DELETE' && /^\/api\/gps\/dock-status\/A\d+$/i.test(path)) {
     return {
       action: 'GPS_DOCK_RESET',
@@ -573,6 +582,159 @@ function calculateDistanceMeters(firstLatitude, firstLongitude, secondLatitude, 
     Math.sin(longitudeDelta / 2) ** 2;
   return 2 * earthRadiusMeters * Math.asin(Math.sqrt(haversine));
 }
+function getBangkokDateText(date = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Bangkok',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
+}
+function parseSheetDateText(value) {
+  const text = cleanText(value);
+  if (!text) return '';
+  const isoMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+  const slashMatch = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (slashMatch) {
+    return `${slashMatch[3]}-${String(Number(slashMatch[2])).padStart(2, '0')}-${String(Number(slashMatch[1])).padStart(2, '0')}`;
+  }
+  const date = new Date(text);
+  return Number.isNaN(date.getTime()) ? '' : getBangkokDateText(date);
+}
+function parsePlanMinutes(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.round((((value * 1440) % 1440) + 1440) % 1440);
+  }
+  const text = cleanText(value);
+  const match = text.match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  return hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59 ? hour * 60 + minute : null;
+}
+function getBangkokMinuteOfDay(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Bangkok',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(date);
+  const hour = Number(parts.find(part => part.type === 'hour')?.value || 0) % 24;
+  const minute = Number(parts.find(part => part.type === 'minute')?.value || 0);
+  return hour * 60 + minute;
+}
+function getVehicleCycleKey(licensePlate) {
+  const normalizedPlate = normalizeLicensePlate(licensePlate);
+  if (!normalizedPlate) throw new Error('licensePlate is required for Vehicle Cycle.');
+  return `${GPS_VEHICLE_CYCLE_KEY_PREFIX}${createHash('sha256').update(normalizedPlate).digest('hex')}`;
+}
+async function readVehicleCycleState(licensePlate) {
+  const client = requireRedisClient();
+  const raw = await client.get(getVehicleCycleKey(licensePlate));
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    await client.del(getVehicleCycleKey(licensePlate));
+    return null;
+  }
+}
+async function writeVehicleCycleState(licensePlate, state) {
+  const client = requireRedisClient();
+  await client.set(getVehicleCycleKey(licensePlate), JSON.stringify(state), {
+    EX: GPS_VEHICLE_CYCLE_TTL_SECONDS,
+  });
+  return state;
+}
+function buildTripsForPlate(data, licensePlate, dateText) {
+  const targetPlate = normalizeLicensePlate(licensePlate);
+  const planRows = Array.isArray(data?.plan) ? data.plan : [];
+  const actualRows = Array.isArray(data?.actual) ? data.actual : [];
+  const actualByCodeRun = new Map();
+  for (const row of actualRows.slice(1)) {
+    if (!Array.isArray(row)) continue;
+    const codeRun = cleanText(row[0]).toUpperCase();
+    if (codeRun) actualByCodeRun.set(codeRun, row);
+  }
+  const trips = [];
+  for (const row of planRows.slice(1)) {
+    if (!Array.isArray(row)) continue;
+    const codeRun = cleanText(row[0]).toUpperCase();
+    const planPlate = cleanText(row[4]);
+    const remark = cleanText(row[12]).toUpperCase();
+    if (!/^A\d+$/.test(codeRun) || remark === 'CANCEL') continue;
+    if (normalizeLicensePlate(planPlate) !== targetPlate) continue;
+    if (parseSheetDateText(row[1]) !== dateText) continue;
+    const actual = actualByCodeRun.get(codeRun) || [];
+    trips.push({
+      codeRun,
+      planLicensePlate: planPlate,
+      planEta: cleanText(row[10]),
+      planEtaMinutes: parsePlanMinutes(row[10]),
+      stampEta: cleanText(actual[4]),
+      stampEtd: cleanText(actual[5]),
+      completed: Boolean(cleanText(actual[5])),
+    });
+  }
+  return trips.sort((first, second) => {
+    const firstMinutes = first.planEtaMinutes ?? Number.MAX_SAFE_INTEGER;
+    const secondMinutes = second.planEtaMinutes ?? Number.MAX_SAFE_INTEGER;
+    if (firstMinutes !== secondMinutes) return firstMinutes - secondMinutes;
+    return first.codeRun.localeCompare(second.codeRun, undefined, { numeric: true });
+  });
+}
+function selectTripForVehicle(trips, nowMinutes) {
+  const inProgress = trips.find(trip => trip.stampEta && !trip.stampEtd);
+  if (inProgress) return { activeTrip: inProgress, selectionReason: 'ETA_WITHOUT_ETD' };
+  const pendingTrips = trips.filter(trip => !trip.stampEta && !trip.stampEtd);
+  if (!pendingTrips.length) return { activeTrip: null, selectionReason: 'NO_PENDING_TRIP' };
+  const activeTrip = [...pendingTrips].sort((first, second) => {
+    const firstDistance = first.planEtaMinutes === null ? Number.MAX_SAFE_INTEGER : Math.abs(first.planEtaMinutes - nowMinutes);
+    const secondDistance = second.planEtaMinutes === null ? Number.MAX_SAFE_INTEGER : Math.abs(second.planEtaMinutes - nowMinutes);
+    if (firstDistance !== secondDistance) return firstDistance - secondDistance;
+    return first.codeRun.localeCompare(second.codeRun, undefined, { numeric: true });
+  })[0];
+  return { activeTrip, selectionReason: 'NEAREST_PENDING_PLAN_ETA' };
+}
+async function resolveVehicleTrip(input, isInside) {
+  const truckResult = await getTruckDataWithCache(false);
+  const dateText = getBangkokDateText(input.gpsTime);
+  const trips = buildTripsForPlate(truckResult.data, input.licensePlate, dateText);
+  const selected = selectTripForVehicle(trips, getBangkokMinuteOfDay(input.gpsTime));
+  const completedTrips = trips.filter(trip => trip.completed);
+  const latestCompletedTrip = completedTrips.length ? completedTrips[completedTrips.length - 1] : null;
+  const previousCycle = await readVehicleCycleState(input.licensePlate);
+  let waitingForExit = Boolean(previousCycle?.waitingForExit);
+  let exitConfirmedAt = previousCycle?.exitConfirmedAt || null;
+  const completedCodeRunChanged = Boolean(
+    latestCompletedTrip && previousCycle?.lastCompletedCodeRun !== latestCompletedTrip.codeRun
+  );
+  if (completedCodeRunChanged && isInside) {
+    waitingForExit = true;
+    exitConfirmedAt = null;
+  }
+  if (waitingForExit && !isInside) {
+    waitingForExit = false;
+    exitConfirmedAt = new Date().toISOString();
+  }
+  const state = {
+    licensePlate: input.licensePlate,
+    normalizedLicensePlate: normalizeLicensePlate(input.licensePlate),
+    date: dateText,
+    activeCodeRun: waitingForExit ? null : selected.activeTrip?.codeRun || null,
+    nextCodeRun: selected.activeTrip?.codeRun || null,
+    requestedCodeRun: input.codeRun,
+    lastCompletedCodeRun: latestCompletedTrip?.codeRun || previousCycle?.lastCompletedCodeRun || null,
+    waitingForExit,
+    exitConfirmedAt,
+    selectionReason: waitingForExit ? 'WAITING_FOR_EXIT_AFTER_ETD' : selected.selectionReason,
+    tripCount: trips.length,
+    updatedAt: new Date().toISOString(),
+  };
+  await writeVehicleCycleState(input.licensePlate, state);
+  return { state, activeTrip: waitingForExit ? null : selected.activeTrip, trips };
+}
 function getGpsDwellKey(codeRun) {
   return `${GPS_DWELL_KEY_PREFIX}${normalizeCodeRun(codeRun)}`;
 }
@@ -645,13 +807,27 @@ async function evaluateGpsDock(payload) {
   const nearest = findNearestGpsGeofence(input.latitude, input.longitude);
   const isInside = nearest.distanceMeters <= nearest.radiusMeters;
   const isParked = input.speedKmh <= GPS_PARKING_SPEED_THRESHOLD_KMH && input.gpsStatus.includes('รถจอด');
-  const platesMatch = normalizeLicensePlate(input.licensePlate) === normalizeLicensePlate(input.planLicensePlate);
-  const previous = await readGpsDwellState(input.codeRun);
+  const tripResolution = await resolveVehicleTrip(input, isInside);
+  const vehicleCycle = tripResolution.state;
+  const activeTrip = tripResolution.activeTrip;
+  const effectiveCodeRun = activeTrip?.codeRun || input.codeRun;
+  const platesMatch = activeTrip
+    ? normalizeLicensePlate(input.licensePlate) === normalizeLicensePlate(activeTrip.planLicensePlate)
+    : normalizeLicensePlate(input.licensePlate) === normalizeLicensePlate(input.planLicensePlate);
+  const previous = await readGpsDwellState(effectiveCodeRun);
   let parkingStartedAtMs = Number(previous?.parkingStartedAtMs || 0);
   let movingStartedAtMs = Number(previous?.movingStartedAtMs || 0);
   let status = 'OUTSIDE_GEOFENCE';
 
-  if (!platesMatch) {
+  if (vehicleCycle.waitingForExit) {
+    status = 'WAITING_FOR_EXIT_AFTER_ETD';
+    parkingStartedAtMs = 0;
+    movingStartedAtMs = 0;
+  } else if (!activeTrip) {
+    status = 'NO_ACTIVE_TRIP';
+    parkingStartedAtMs = 0;
+    movingStartedAtMs = 0;
+  } else if (!platesMatch) {
     status = 'GPS_PLATE_MISMATCH';
     parkingStartedAtMs = 0;
     movingStartedAtMs = 0;
@@ -663,27 +839,33 @@ async function evaluateGpsDock(payload) {
     movingStartedAtMs = 0;
   } else if (isParked) {
     movingStartedAtMs = 0;
-    if (!parkingStartedAtMs || previous?.geofenceId !== nearest.id) {
+    if (!parkingStartedAtMs || previous?.geofenceId !== nearest.id || previous?.codeRun !== effectiveCodeRun) {
       parkingStartedAtMs = eventTimeMs;
     }
     const dwellMs = Math.max(0, eventTimeMs - parkingStartedAtMs);
     status = dwellMs >= GPS_DWELL_THRESHOLD_MS ? 'DOCK_IN_CONFIRMED' : 'DOCK_PENDING';
   } else {
     if (!movingStartedAtMs) movingStartedAtMs = eventTimeMs;
-    if (eventTimeMs - movingStartedAtMs >= GPS_MOVEMENT_GRACE_MS) {
-      parkingStartedAtMs = 0;
-    }
+    if (eventTimeMs - movingStartedAtMs >= GPS_MOVEMENT_GRACE_MS) parkingStartedAtMs = 0;
     status = 'MOVING_IN_GEOFENCE';
   }
 
-  const dwellSeconds = parkingStartedAtMs && isInside && isParked
+  const dwellSeconds = parkingStartedAtMs && isInside && isParked && !vehicleCycle.waitingForExit && activeTrip
     ? Math.max(0, Math.floor((eventTimeMs - parkingStartedAtMs) / 1000))
     : 0;
   const state = {
-    codeRun: input.codeRun,
+    codeRun: effectiveCodeRun,
+    requestedCodeRun: input.codeRun,
+    activeCodeRun: vehicleCycle.activeCodeRun,
+    nextCodeRun: vehicleCycle.nextCodeRun,
+    lastCompletedCodeRun: vehicleCycle.lastCompletedCodeRun,
+    waitingForExit: vehicleCycle.waitingForExit,
+    exitConfirmedAt: vehicleCycle.exitConfirmedAt,
+    tripSelectionReason: vehicleCycle.selectionReason,
+    tripCountForVehicleToday: vehicleCycle.tripCount,
     gpsId: input.gpsId,
     licensePlate: input.licensePlate,
-    planLicensePlate: input.planLicensePlate,
+    planLicensePlate: activeTrip?.planLicensePlate || input.planLicensePlate,
     geofenceId: nearest.id,
     geofenceName: nearest.name,
     geofenceLatitude: nearest.latitude,
@@ -706,13 +888,12 @@ async function evaluateGpsDock(payload) {
     confirmedAt: status === 'DOCK_IN_CONFIRMED'
       ? previous?.confirmedAt || new Date(eventTimeMs).toISOString()
       : null,
-    readyForGpsStampEta: status === 'DOCK_IN_CONFIRMED',
+    readyForGpsStampEta: status === 'DOCK_IN_CONFIRMED' && Boolean(activeTrip),
     autoStampExecuted: false,
   };
-  await writeGpsDwellState(input.codeRun, state);
+  await writeGpsDwellState(effectiveCodeRun, state);
   return createGpsDockResult(state);
 }
-
 function waitForLoginFailure() { return wait(LOGIN_FAILURE_DELAY_MS + Math.floor(Math.random() * 250)); }
 function normalizeLoginUsername(value) { const username=cleanText(value).toLowerCase(); if(!username||username.length>MAX_LOGIN_USERNAME_LENGTH) throw new Error('LOGIN_PAYLOAD_INVALID'); return username; }
 function normalizeLoginPassword(value) { if(typeof value!=='string'||!value||value.length>MAX_LOGIN_PASSWORD_LENGTH) throw new Error('LOGIN_PAYLOAD_INVALID'); return value; }
@@ -1830,6 +2011,7 @@ app.get(['/health', '/api/health'], (req, res) => {
       '/api/gps/geofences',
       '/api/gps/dock-status/:codeRun',
       '/api/gps/dock/evaluate',
+      '/api/gps/vehicle-cycle',
       '/api/master-plan',
       '/api/master-plan/rows',
       '/api/master-plan/rows/:sheetRow',
@@ -1852,6 +2034,9 @@ app.get(['/health', '/api/health'], (req, res) => {
       dwellThresholdSeconds: Math.floor(GPS_DWELL_THRESHOLD_MS / 1000),
       gpsStaleThresholdSeconds: Math.floor(GPS_STALE_THRESHOLD_MS / 1000),
       movementGraceSeconds: Math.floor(GPS_MOVEMENT_GRACE_MS / 1000),
+      multipleTripsPerVehiclePerDay: true,
+      exitRequiredBeforeNextTrip: true,
+      vehicleCycleTtlSeconds: GPS_VEHICLE_CYCLE_TTL_SECONDS,
       geofences: GPS_GEOFENCES,
     },
     rateLimitStore: { type: 'redis', persistentAcrossDeploys: true, windowSeconds: LOGIN_RATE_LIMIT_WINDOW_SECONDS },
@@ -1897,6 +2082,17 @@ app.get(['/health', '/api/health'], (req, res) => {
   });
 });
 
+app.get('/api/gps/vehicle-cycle', requireAuthentication, requireMinimumRole('TV_VIEWER'), async (req, res) => {
+  try {
+    const licensePlate = cleanText(req.query.licensePlate);
+    if (!licensePlate) throw new Error('licensePlate is required.');
+    const result = await readVehicleCycleState(licensePlate);
+    res.setHeader('Cache-Control', 'no-store');
+    return res.status(200).json({ success: true, result, timestamp: new Date().toISOString() });
+  } catch (error) {
+    return sendRouteError(res, error, 'Unable to retrieve GPS Vehicle Cycle.');
+  }
+});
 app.get('/api/gps/geofences', requireAuthentication, requireMinimumRole('TV_VIEWER'), (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   return res.status(200).json({
