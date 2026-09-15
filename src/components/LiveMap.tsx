@@ -15,7 +15,10 @@ import {
 } from '../types';
 
 import {
+  evaluateGpsDock,
+  fetchGpsDockStatus,
   fetchRouteToTpcap,
+  GpsDockEvaluationResult,
   RouteToTpcapResult,
 } from '../lib/sheets';
 
@@ -368,6 +371,12 @@ function formatDuration(
   );
 }
 
+function formatDwellClock(totalSeconds?: number): string {
+  const safeSeconds = Math.max(0, Math.floor(Number(totalSeconds || 0)));
+  const minutes = Math.floor(safeSeconds / 60);
+  const seconds = safeSeconds % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
 function calculateDistanceMeters(
   firstLatitude: number,
   firstLongitude: number,
@@ -566,6 +575,10 @@ export function LiveMap({
 
   const routeRequestIdRef =
     useRef(0);
+  const gpsDockRequestIdRef =
+    useRef(0);
+  const lastEvaluatedGpsSignatureRef =
+    useRef('');
 
   const appliedInitialTruckIdRef =
     useRef<string | null>(
@@ -604,6 +617,18 @@ export function LiveMap({
     showGeofenceDebug,
     setShowGeofenceDebug,
   ] = useState(true);
+  const [
+    gpsDockResult,
+    setGpsDockResult,
+  ] = useState<GpsDockEvaluationResult | null>(null);
+  const [
+    gpsDockError,
+    setGpsDockError,
+  ] = useState<string | null>(null);
+  const [
+    isGpsDockLoading,
+    setIsGpsDockLoading,
+  ] = useState(false);
 
   const truckByPlate =
     useMemo(() => {
@@ -1117,6 +1142,79 @@ export function LiveMap({
   ]);
 
   useEffect(() => {
+    if (!selectedGpsLocation || !selectedTruck) {
+      gpsDockRequestIdRef.current += 1;
+      lastEvaluatedGpsSignatureRef.current = '';
+      setGpsDockResult(null);
+      setGpsDockError(null);
+      setIsGpsDockLoading(false);
+      return;
+    }
+
+    const gpsSignature = [
+      selectedTruck.id,
+      selectedGpsLocation.gpsId,
+      selectedGpsLocation.latitude,
+      selectedGpsLocation.longitude,
+      selectedGpsLocation.speed,
+      selectedGpsLocation.gpsStatus,
+      selectedGpsLocation.gpsTime,
+      selectedGpsLocation.receivedAt,
+    ].join('|');
+    const requestId = gpsDockRequestIdRef.current + 1;
+    gpsDockRequestIdRef.current = requestId;
+    let cancelled = false;
+
+    const loadGpsDockStatus = async () => {
+      setIsGpsDockLoading(true);
+      setGpsDockError(null);
+      try {
+        let result: GpsDockEvaluationResult | null;
+        if (lastEvaluatedGpsSignatureRef.current !== gpsSignature) {
+          result = await evaluateGpsDock({
+            codeRun: selectedTruck.id,
+            gpsId: selectedGpsLocation.gpsId,
+            licensePlate: selectedGpsLocation.licensePlate,
+            planLicensePlate: selectedTruck.licensePlate,
+            latitude: selectedGpsLocation.latitude,
+            longitude: selectedGpsLocation.longitude,
+            speed: selectedGpsLocation.speed,
+            gpsStatus: selectedGpsLocation.gpsStatus,
+            gpsTime: selectedGpsLocation.gpsTime,
+            receivedAt: selectedGpsLocation.receivedAt,
+          });
+          lastEvaluatedGpsSignatureRef.current = gpsSignature;
+        } else {
+          result = await fetchGpsDockStatus(selectedTruck.id);
+        }
+        if (cancelled || gpsDockRequestIdRef.current !== requestId) return;
+        setGpsDockResult(result);
+      } catch (error) {
+        if (cancelled || gpsDockRequestIdRef.current !== requestId) return;
+        console.error('Unable to evaluate GPS Dock status:', error);
+        setGpsDockResult(null);
+        setGpsDockError(
+          error instanceof Error
+            ? error.message
+            : 'ไม่สามารถตรวจสอบสถานะ GPS Geofence ได้'
+        );
+      } finally {
+        if (!cancelled && gpsDockRequestIdRef.current === requestId) {
+          setIsGpsDockLoading(false);
+        }
+      }
+    };
+
+    void loadGpsDockStatus();
+    const intervalId = window.setInterval(() => {
+      void loadGpsDockStatus();
+    }, 30000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [selectedGpsLocation, selectedTruck]);
+  useEffect(() => {
     if (
       !selectedGpsLocation
     ) {
@@ -1436,6 +1534,11 @@ export function LiveMap({
       setRouteError(
         null
       );
+      gpsDockRequestIdRef.current += 1;
+      lastEvaluatedGpsSignatureRef.current = '';
+      setGpsDockResult(null);
+      setGpsDockError(null);
+      setIsGpsDockLoading(false);
 
       const map =
         mapRef.current;
@@ -1846,30 +1949,68 @@ export function LiveMap({
 
               {selectedGeofenceEvaluation && (
                 <div className={`mt-5 rounded-xl border p-4 ${
-                  selectedGeofenceEvaluation.isInside
+                  (gpsDockResult?.isInside ?? selectedGeofenceEvaluation.isInside)
                     ? 'border-emerald-200 bg-emerald-50'
                     : 'border-slate-200 bg-slate-50'
                 }`}>
                   <div className="flex items-center justify-between gap-3">
                     <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Nearest Geofence</div>
                     <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${
-                      selectedGeofenceEvaluation.isInside
+                      (gpsDockResult?.isInside ?? selectedGeofenceEvaluation.isInside)
                         ? 'bg-emerald-600 text-white'
                         : 'bg-slate-200 text-slate-700'
                     }`}>
-                      {selectedGeofenceEvaluation.isInside ? 'INSIDE' : 'OUTSIDE'}
+                      {(gpsDockResult?.isInside ?? selectedGeofenceEvaluation.isInside) ? 'INSIDE' : 'OUTSIDE'}
                     </span>
                   </div>
-                  <div className="mt-2 text-lg font-bold text-slate-900">{selectedGeofenceEvaluation.name}</div>
+                  <div className="mt-2 text-lg font-bold text-slate-900">
+                    {gpsDockResult?.geofenceName || selectedGeofenceEvaluation.name}
+                  </div>
                   <div className="mt-2 grid grid-cols-2 gap-3 text-sm">
-                    <div><div className="text-xs text-slate-400">ระยะจากจุด</div><div className="font-bold text-slate-800">{selectedGeofenceEvaluation.distanceMeters.toFixed(1)} เมตร</div></div>
-                    <div><div className="text-xs text-slate-400">รัศมีที่ตั้งไว้</div><div className="font-bold text-slate-800">{selectedGeofenceEvaluation.radiusMeters} เมตร</div></div>
+                    <div><div className="text-xs text-slate-400">ระยะจากจุด</div><div className="font-bold text-slate-800">{(gpsDockResult?.distanceMeters ?? selectedGeofenceEvaluation.distanceMeters).toFixed(1)} เมตร</div></div>
+                    <div><div className="text-xs text-slate-400">รัศมีที่ตั้งไว้</div><div className="font-bold text-slate-800">{gpsDockResult?.radiusMeters ?? selectedGeofenceEvaluation.radiusMeters} เมตร</div></div>
                   </div>
                   <div className="mt-3 rounded-lg bg-white/80 px-3 py-2 text-xs font-semibold text-slate-700">
-                    สถานะตรวจจับ: {selectedParkingStatus || '-'}
+                    สถานะตรวจจับ: {gpsDockResult?.status || selectedParkingStatus || '-'}
                   </div>
-                  {selectedParkingStatus === 'DOCK_PENDING' && (
-                    <div className="mt-2 text-xs text-amber-700">รถอยู่ในพื้นที่และอยู่ในสถานะจอด ขั้นถัดไปจะเชื่อม Dwell Timer 5 นาทีจาก Backend</div>
+                  {isGpsDockLoading && (
+                    <div className="mt-2 flex items-center gap-2 text-xs text-blue-700">
+                      <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                      กำลังอัปเดต Dwell State
+                    </div>
+                  )}
+                  {gpsDockError && (
+                    <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                      {gpsDockError}
+                    </div>
+                  )}
+                  {gpsDockResult && (
+                    <div className="mt-3">
+                      <div className="flex items-center justify-between text-xs font-semibold text-slate-600">
+                        <span>เวลาจอดต่อเนื่อง</span>
+                        <span className="font-mono">{formatDwellClock(gpsDockResult.dwellSeconds)} / {formatDwellClock(gpsDockResult.requiredDwellSeconds)}</span>
+                      </div>
+                      <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200">
+                        <div
+                          className={`h-full rounded-full transition-all ${gpsDockResult.readyForGpsStampEta ? 'bg-emerald-500' : 'bg-amber-500'}`}
+                          style={{
+                            width: `${Math.min(100, Math.max(0, gpsDockResult.dwellSeconds / Math.max(1, gpsDockResult.requiredDwellSeconds) * 100))}%`,
+                          }}
+                        />
+                      </div>
+                      <div className="mt-2 text-xs text-slate-600">
+                        {gpsDockResult.status === 'DOCK_IN_CONFIRMED'
+                          ? 'ยืนยันเข้าช่องแล้ว พร้อมสำหรับ GPS Stamp ETA ในขั้นถัดไป'
+                          : gpsDockResult.status === 'DOCK_PENDING'
+                            ? `เหลือ ${formatDwellClock(gpsDockResult.remainingDwellSeconds)} เพื่อยืนยันเข้าช่อง`
+                            : 'ระบบจะเริ่มจับเวลาเมื่อรถอยู่ในพื้นที่และจอดตามเงื่อนไข'}
+                      </div>
+                      {gpsDockResult.parkingStartedAt && (
+                        <div className="mt-1 text-[11px] text-slate-500">
+                          เริ่มจอด: {formatGpsDateTime(gpsDockResult.parkingStartedAt)}
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
               )}
