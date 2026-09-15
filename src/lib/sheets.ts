@@ -28,6 +28,82 @@ export interface EliveDashboardData {
   trucks: Truck[];
   gpsLocations: GpsLocation[];
 }
+export type GpsDockStatus =
+  | 'OUTSIDE_GEOFENCE'
+  | 'MOVING_IN_GEOFENCE'
+  | 'DOCK_PENDING'
+  | 'DOCK_IN_CONFIRMED'
+  | 'GPS_STALE'
+  | 'GPS_PLATE_MISMATCH';
+export interface GpsGeofenceConfig {
+  id: 'TPCAP-LSP' | 'TPCAP-R2' | 'TPCAP-R1';
+  name: string;
+  latitude: number;
+  longitude: number;
+  radiusMeters: number;
+}
+export interface GpsDockMonitoringConfig {
+  parkingSpeedThresholdKmh: number;
+  dwellThresholdSeconds: number;
+  gpsStaleThresholdSeconds: number;
+  movementGraceSeconds: number;
+  autoStampEnabled: boolean;
+}
+export interface GpsGeofencesResult {
+  success: boolean;
+  geofences: GpsGeofenceConfig[];
+  config: GpsDockMonitoringConfig;
+  timestamp: string;
+}
+export interface GpsDockEvaluationRequest {
+  codeRun: string;
+  gpsId: string;
+  licensePlate: string;
+  planLicensePlate: string;
+  latitude: number;
+  longitude: number;
+  speed: number;
+  gpsStatus: string;
+  gpsTime: string;
+  receivedAt: string;
+}
+export interface GpsDockEvaluationResult {
+  codeRun: string;
+  gpsId: string;
+  licensePlate: string;
+  planLicensePlate: string;
+  geofenceId: GpsGeofenceConfig['id'];
+  geofenceName: string;
+  geofenceLatitude: number;
+  geofenceLongitude: number;
+  radiusMeters: number;
+  distanceMeters: number;
+  isInside: boolean;
+  isParked: boolean;
+  speedKmh: number;
+  gpsStatus: string;
+  gpsTime: string;
+  receivedAt: string;
+  evaluatedAt: string;
+  gpsAgeSeconds: number;
+  status: GpsDockStatus;
+  parkingStartedAt: string | null;
+  dwellSeconds: number;
+  dwellMinutes: number;
+  requiredDwellSeconds: number;
+  remainingDwellSeconds: number;
+  confirmedAt: string | null;
+  readyForGpsStampEta: boolean;
+  autoStampExecuted: boolean;
+  parkingSpeedThresholdKmh: number;
+  gpsStaleThresholdSeconds: number;
+}
+export interface GpsDockStatusResult {
+  success: boolean;
+  codeRun: string;
+  result: GpsDockEvaluationResult | null;
+  timestamp: string;
+}
 
 export interface MasterPlanRow {
   sheetRow?: number;
@@ -602,6 +678,40 @@ function mapDailyPlan(value: any): DailyPlan {
   };
 }
 
+function mapGpsDockEvaluation(value: any): GpsDockEvaluationResult {
+  const status = String(value?.status || 'OUTSIDE_GEOFENCE') as GpsDockStatus;
+  return {
+    codeRun: String(value?.codeRun || '').trim().toUpperCase(),
+    gpsId: String(value?.gpsId || '').trim(),
+    licensePlate: String(value?.licensePlate || '').trim(),
+    planLicensePlate: String(value?.planLicensePlate || '').trim(),
+    geofenceId: String(value?.geofenceId || 'TPCAP-LSP') as GpsGeofenceConfig['id'],
+    geofenceName: String(value?.geofenceName || ''),
+    geofenceLatitude: Number(value?.geofenceLatitude || 0),
+    geofenceLongitude: Number(value?.geofenceLongitude || 0),
+    radiusMeters: Number(value?.radiusMeters || 0),
+    distanceMeters: Number(value?.distanceMeters || 0),
+    isInside: value?.isInside === true,
+    isParked: value?.isParked === true,
+    speedKmh: Number(value?.speedKmh || 0),
+    gpsStatus: String(value?.gpsStatus || ''),
+    gpsTime: String(value?.gpsTime || ''),
+    receivedAt: String(value?.receivedAt || ''),
+    evaluatedAt: String(value?.evaluatedAt || ''),
+    gpsAgeSeconds: Number(value?.gpsAgeSeconds || 0),
+    status,
+    parkingStartedAt: value?.parkingStartedAt ? String(value.parkingStartedAt) : null,
+    dwellSeconds: Number(value?.dwellSeconds || 0),
+    dwellMinutes: Number(value?.dwellMinutes || 0),
+    requiredDwellSeconds: Number(value?.requiredDwellSeconds || 300),
+    remainingDwellSeconds: Number(value?.remainingDwellSeconds || 0),
+    confirmedAt: value?.confirmedAt ? String(value.confirmedAt) : null,
+    readyForGpsStampEta: value?.readyForGpsStampEta === true,
+    autoStampExecuted: value?.autoStampExecuted === true,
+    parkingSpeedThresholdKmh: Number(value?.parkingSpeedThresholdKmh || 3),
+    gpsStaleThresholdSeconds: Number(value?.gpsStaleThresholdSeconds || 120),
+  };
+}
 export async function fetchMasterPlan(
   forceRefresh = false
 ): Promise<MasterPlanResponse> {
@@ -1379,6 +1489,84 @@ export async function fetchGpsLocations(
   return locations;
 }
 
+export async function fetchGpsGeofences(): Promise<GpsGeofencesResult> {
+  const query = new URLSearchParams({ t: String(Date.now()) });
+  const data = await fetchApiRequest(`/api/gps/geofences?${query.toString()}`, {
+    method: 'GET',
+  });
+  if (data.success !== true || !Array.isArray(data.geofences)) {
+    throw new Error('The server did not return GPS Geofences successfully.');
+  }
+  return {
+    success: true,
+    geofences: data.geofences.map((item: any) => ({
+      id: String(item?.id || '') as GpsGeofenceConfig['id'],
+      name: String(item?.name || ''),
+      latitude: Number(item?.latitude),
+      longitude: Number(item?.longitude),
+      radiusMeters: Number(item?.radiusMeters),
+    })),
+    config: {
+      parkingSpeedThresholdKmh: Number(data.config?.parkingSpeedThresholdKmh || 3),
+      dwellThresholdSeconds: Number(data.config?.dwellThresholdSeconds || 300),
+      gpsStaleThresholdSeconds: Number(data.config?.gpsStaleThresholdSeconds || 120),
+      movementGraceSeconds: Number(data.config?.movementGraceSeconds || 30),
+      autoStampEnabled: data.config?.autoStampEnabled === true,
+    },
+    timestamp: String(data.timestamp || ''),
+  };
+}
+export async function evaluateGpsDock(
+  request: GpsDockEvaluationRequest
+): Promise<GpsDockEvaluationResult> {
+  const validCodeRun = normalizeCodeRun(request.codeRun);
+  if (!request.gpsId.trim()) throw new Error('GPS ID is required.');
+  if (!request.licensePlate.trim()) throw new Error('GPS License Plate is required.');
+  if (!request.planLicensePlate.trim()) throw new Error('Plan License Plate is required.');
+  if (!Number.isFinite(request.latitude) || request.latitude < -90 || request.latitude > 90) {
+    throw new Error('GPS Latitude is invalid.');
+  }
+  if (!Number.isFinite(request.longitude) || request.longitude < -180 || request.longitude > 180) {
+    throw new Error('GPS Longitude is invalid.');
+  }
+  if (!Number.isFinite(request.speed) || request.speed < 0 || request.speed > 300) {
+    throw new Error('GPS Speed is invalid.');
+  }
+  const data = await fetchApiRequest('/api/gps/dock/evaluate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...request, codeRun: validCodeRun }),
+  });
+  if (data.success !== true || !data.result) {
+    throw new Error(data.error || 'The server did not evaluate GPS Dock status.');
+  }
+  return mapGpsDockEvaluation(data.result);
+}
+export async function fetchGpsDockStatus(
+  codeRun: string
+): Promise<GpsDockEvaluationResult | null> {
+  const validCodeRun = normalizeCodeRun(codeRun);
+  const query = new URLSearchParams({ t: String(Date.now()) });
+  const data: GpsDockStatusResult = await fetchApiRequest(
+    `/api/gps/dock-status/${encodeURIComponent(validCodeRun)}?${query.toString()}`,
+    { method: 'GET' }
+  );
+  if (data.success !== true) {
+    throw new Error('The server did not return GPS Dock status.');
+  }
+  return data.result ? mapGpsDockEvaluation(data.result) : null;
+}
+export async function resetGpsDockStatus(codeRun: string): Promise<boolean> {
+  const validCodeRun = normalizeCodeRun(codeRun);
+  const data = await fetchApiRequest(
+    `/api/gps/dock-status/${encodeURIComponent(validCodeRun)}`,
+    { method: 'DELETE' }
+  );
+  if (data.success !== true) {
+    throw new Error(data.error || 'The server did not reset GPS Dock status.');
+  }
+  return data.deleted === true;
+}
 export async function fetchRouteToTpcap(
   latitude: number,
   longitude: number
