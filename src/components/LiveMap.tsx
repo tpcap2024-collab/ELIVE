@@ -1973,6 +1973,28 @@ export function LiveMap({
                   <div className="mt-3 rounded-lg bg-white/80 px-3 py-2 text-xs font-semibold text-slate-700">
                     สถานะตรวจจับ: {gpsDockResult?.status || selectedParkingStatus || '-'}
                   </div>
+                  {gpsDockResult && (
+                    <div className={`mt-3 rounded-lg border p-3 text-xs ${
+                      gpsDockResult.waitingForExit
+                        ? 'border-orange-200 bg-orange-50 text-orange-800'
+                        : 'border-blue-200 bg-blue-50 text-blue-800'
+                    }`}>
+                      <div className="font-bold">รอบงานของรถวันนี้</div>
+                      <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-2">
+                        <div><span className="text-slate-500">Active:</span> <b>{gpsDockResult.activeCodeRun || '-'}</b></div>
+                        <div><span className="text-slate-500">Next:</span> <b>{gpsDockResult.nextCodeRun || '-'}</b></div>
+                        <div><span className="text-slate-500">Completed:</span> <b>{gpsDockResult.lastCompletedCodeRun || '-'}</b></div>
+                        <div><span className="text-slate-500">จำนวนรอบ:</span> <b>{gpsDockResult.tripCountForVehicleToday}</b></div>
+                      </div>
+                      <div className="mt-2 text-[11px]">Selection: {gpsDockResult.tripSelectionReason || '-'}</div>
+                      {gpsDockResult.waitingForExit && (
+                        <div className="mt-2 font-bold">รอรถออกนอก Geofence ก่อนเริ่มรอบถัดไป</div>
+                      )}
+                      {gpsDockResult.exitConfirmedAt && (
+                        <div className="mt-1 text-[11px]">ยืนยันออกล่าสุด: {formatGpsDateTime(gpsDockResult.exitConfirmedAt)}</div>
+                      )}
+                    </div>
+                  )}
                   {isGpsDockLoading && (
                     <div className="mt-2 flex items-center gap-2 text-xs text-blue-700">
                       <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
@@ -2003,7 +2025,11 @@ export function LiveMap({
                           ? 'ยืนยันเข้าช่องแล้ว พร้อมสำหรับ GPS Stamp ETA ในขั้นถัดไป'
                           : gpsDockResult.status === 'DOCK_PENDING'
                             ? `เหลือ ${formatDwellClock(gpsDockResult.remainingDwellSeconds)} เพื่อยืนยันเข้าช่อง`
-                            : 'ระบบจะเริ่มจับเวลาเมื่อรถอยู่ในพื้นที่และจอดตามเงื่อนไข'}
+                            : gpsDockResult.status === 'WAITING_FOR_EXIT_AFTER_ETD'
+                              ? 'รอรถออกนอก Geofence เพื่อปิดรอบเดิมก่อนเริ่มเที่ยวถัดไป'
+                              : gpsDockResult.status === 'NO_ACTIVE_TRIP'
+                                ? 'ไม่พบ Code run ที่รอทำงานสำหรับรถคันนี้ในวันนี้'
+                                : 'ระบบจะเริ่มจับเวลาเมื่อรถอยู่ในพื้นที่และจอดตามเงื่อนไข'}
                       </div>
                       {gpsDockResult.parkingStartedAt && (
                         <div className="mt-1 text-[11px] text-slate-500">
