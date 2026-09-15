@@ -34,7 +34,9 @@ export type GpsDockStatus =
   | 'DOCK_PENDING'
   | 'DOCK_IN_CONFIRMED'
   | 'GPS_STALE'
-  | 'GPS_PLATE_MISMATCH';
+  | 'GPS_PLATE_MISMATCH'
+  | 'WAITING_FOR_EXIT_AFTER_ETD'
+  | 'NO_ACTIVE_TRIP';
 export interface GpsGeofenceConfig {
   id: 'TPCAP-LSP' | 'TPCAP-R2' | 'TPCAP-R1';
   name: string;
@@ -57,6 +59,14 @@ export interface GpsGeofencesResult {
 }
 export interface GpsDockEvaluationRequest {
   codeRun: string;
+  requestedCodeRun: string;
+  activeCodeRun: string | null;
+  nextCodeRun: string | null;
+  lastCompletedCodeRun: string | null;
+  waitingForExit: boolean;
+  exitConfirmedAt: string | null;
+  tripSelectionReason: string;
+  tripCountForVehicleToday: number;
   gpsId: string;
   licensePlate: string;
   planLicensePlate: string;
@@ -682,6 +692,14 @@ function mapGpsDockEvaluation(value: any): GpsDockEvaluationResult {
   const status = String(value?.status || 'OUTSIDE_GEOFENCE') as GpsDockStatus;
   return {
     codeRun: String(value?.codeRun || '').trim().toUpperCase(),
+    requestedCodeRun: String(value?.requestedCodeRun || '').trim().toUpperCase(),
+    activeCodeRun: value?.activeCodeRun ? String(value.activeCodeRun).trim().toUpperCase() : null,
+    nextCodeRun: value?.nextCodeRun ? String(value.nextCodeRun).trim().toUpperCase() : null,
+    lastCompletedCodeRun: value?.lastCompletedCodeRun ? String(value.lastCompletedCodeRun).trim().toUpperCase() : null,
+    waitingForExit: value?.waitingForExit === true,
+    exitConfirmedAt: value?.exitConfirmedAt ? String(value.exitConfirmedAt) : null,
+    tripSelectionReason: String(value?.tripSelectionReason || ''),
+    tripCountForVehicleToday: Number(value?.tripCountForVehicleToday || 0),
     gpsId: String(value?.gpsId || '').trim(),
     licensePlate: String(value?.licensePlate || '').trim(),
     planLicensePlate: String(value?.planLicensePlate || '').trim(),
@@ -1489,6 +1507,47 @@ export async function fetchGpsLocations(
   return locations;
 }
 
+export interface GpsVehicleCycleResult {
+  licensePlate: string;
+  normalizedLicensePlate: string;
+  date: string;
+  activeCodeRun: string | null;
+  nextCodeRun: string | null;
+  requestedCodeRun: string | null;
+  lastCompletedCodeRun: string | null;
+  waitingForExit: boolean;
+  exitConfirmedAt: string | null;
+  selectionReason: string;
+  tripCount: number;
+  updatedAt: string;
+}
+export async function fetchGpsVehicleCycle(
+  licensePlate: string
+): Promise<GpsVehicleCycleResult | null> {
+  const plate = String(licensePlate || '').trim();
+  if (!plate) throw new Error('License Plate is required.');
+  const query = new URLSearchParams({ licensePlate: plate, t: String(Date.now()) });
+  const data = await fetchApiRequest(`/api/gps/vehicle-cycle?${query.toString()}`, {
+    method: 'GET',
+  });
+  if (data.success !== true) throw new Error('The server did not return GPS Vehicle Cycle.');
+  if (!data.result) return null;
+  const value = data.result;
+  return {
+    licensePlate: String(value.licensePlate || ''),
+    normalizedLicensePlate: String(value.normalizedLicensePlate || ''),
+    date: String(value.date || ''),
+    activeCodeRun: value.activeCodeRun ? String(value.activeCodeRun) : null,
+    nextCodeRun: value.nextCodeRun ? String(value.nextCodeRun) : null,
+    requestedCodeRun: value.requestedCodeRun ? String(value.requestedCodeRun) : null,
+    lastCompletedCodeRun: value.lastCompletedCodeRun ? String(value.lastCompletedCodeRun) : null,
+    waitingForExit: value.waitingForExit === true,
+    exitConfirmedAt: value.exitConfirmedAt ? String(value.exitConfirmedAt) : null,
+    selectionReason: String(value.selectionReason || ''),
+    tripCount: Number(value.tripCount || 0),
+    updatedAt: String(value.updatedAt || ''),
+  };
+}
 export async function fetchGpsGeofences(): Promise<GpsGeofencesResult> {
   const query = new URLSearchParams({ t: String(Date.now()) });
   const data = await fetchApiRequest(`/api/gps/geofences?${query.toString()}`, {
