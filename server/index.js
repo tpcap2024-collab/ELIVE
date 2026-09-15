@@ -28,6 +28,35 @@ const APPS_SCRIPT_MAX_ATTEMPTS = 3;
 const APPS_SCRIPT_SIGNATURE_MAX_AGE_MS = 5 * 60 * 1000;
 const APPS_SCRIPT_SHARED_SECRET = String(process.env.APPS_SCRIPT_SHARED_SECRET || '').trim();
 const MAX_UPLOAD_ROWS = 500;
+const GPS_PARKING_SPEED_THRESHOLD_KMH = 3;
+const GPS_DWELL_THRESHOLD_MS = 5 * 60 * 1000;
+const GPS_STALE_THRESHOLD_MS = 2 * 60 * 1000;
+const GPS_MOVEMENT_GRACE_MS = 30 * 1000;
+const GPS_DWELL_STATE_TTL_SECONDS = 4 * 60 * 60;
+const GPS_DWELL_KEY_PREFIX = 'elive:gps-dwell:';
+const GPS_GEOFENCES = Object.freeze([
+  Object.freeze({
+    id: 'TPCAP-LSP',
+    name: 'TPCAP-LSP',
+    latitude: 13.624391050915499,
+    longitude: 101.01532262451346,
+    radiusMeters: 50,
+  }),
+  Object.freeze({
+    id: 'TPCAP-R2',
+    name: 'TPCAP-R2',
+    latitude: 13.624670855780815,
+    longitude: 101.01287491445134,
+    radiusMeters: 50,
+  }),
+  Object.freeze({
+    id: 'TPCAP-R1',
+    name: 'TPCAP-R1',
+    latitude: 13.626408220162133,
+    longitude: 101.01512843208137,
+    radiusMeters: 50,
+  }),
+]);
 const MAX_LOGIN_USERNAME_LENGTH = 100;
 const MAX_LOGIN_PASSWORD_LENGTH = 200;
 const LOGIN_FAILURE_DELAY_MS = 650;
@@ -382,6 +411,20 @@ function getAuditDescriptor(req) {
       targetIdHash: hashAuditValue(path.split('/')[3]),
     };
   }
+  if (method === 'POST' && path === '/api/gps/dock/evaluate') {
+    return {
+      action: 'GPS_DOCK_EVALUATE',
+      targetType: 'GPS_DWELL',
+      targetIdHash: hashAuditValue(req.body?.codeRun || req.body?.gpsId),
+    };
+  }
+  if (method === 'DELETE' && /^\/api\/gps\/dock-status\/A\d+$/i.test(path)) {
+    return {
+      action: 'GPS_DOCK_RESET',
+      targetType: 'GPS_DWELL',
+      targetIdHash: hashAuditValue(path.split('/').pop()),
+    };
+  }
   if (method === 'POST' && path === '/api/trucks/update') {
     return {
       action: 'TRUCK_UPDATE',
@@ -499,6 +542,175 @@ function getErrorMessage(error) {
 
 function cleanText(value) {
   return String(value ?? '').trim();
+}
+function normalizeLicensePlate(value) {
+  return cleanText(value)
+    .split('(')[0]
+    .replace(/[\s-]/g, '')
+    .toUpperCase();
+}
+function parseBangkokDateTime(value, fieldName) {
+  const text = cleanText(value);
+  if (!text) throw new Error(`${fieldName} is required.`);
+  const isoText = text.includes('T') ? text : text.replace(' ', 'T');
+  const normalizedText = /(?:Z|[+-]\d{2}:\d{2})$/.test(isoText)
+    ? isoText
+    : `${isoText}+07:00`;
+  const date = new Date(normalizedText);
+  if (Number.isNaN(date.getTime())) throw new Error(`${fieldName} is invalid.`);
+  return date;
+}
+function calculateDistanceMeters(firstLatitude, firstLongitude, secondLatitude, secondLongitude) {
+  const earthRadiusMeters = 6371000;
+  const toRadians = value => value * Math.PI / 180;
+  const latitudeDelta = toRadians(secondLatitude - firstLatitude);
+  const longitudeDelta = toRadians(secondLongitude - firstLongitude);
+  const firstLatitudeRadians = toRadians(firstLatitude);
+  const secondLatitudeRadians = toRadians(secondLatitude);
+  const haversine =
+    Math.sin(latitudeDelta / 2) ** 2 +
+    Math.cos(firstLatitudeRadians) * Math.cos(secondLatitudeRadians) *
+    Math.sin(longitudeDelta / 2) ** 2;
+  return 2 * earthRadiusMeters * Math.asin(Math.sqrt(haversine));
+}
+function getGpsDwellKey(codeRun) {
+  return `${GPS_DWELL_KEY_PREFIX}${normalizeCodeRun(codeRun)}`;
+}
+function validateGpsDockPayload(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    throw new Error('GPS dock evaluation payload is required.');
+  }
+  const codeRun = normalizeCodeRun(body.codeRun);
+  const gpsId = cleanText(body.gpsId);
+  const licensePlate = cleanText(body.licensePlate);
+  const planLicensePlate = cleanText(body.planLicensePlate || body.licensePlate);
+  const latitude = Number(body.latitude);
+  const longitude = Number(body.longitude);
+  const speedKmh = Number(body.speedKmh ?? body.speed);
+  const gpsStatus = cleanText(body.gpsStatus);
+  const gpsTime = parseBangkokDateTime(body.gpsTime, 'gpsTime');
+  const receivedAt = parseBangkokDateTime(body.receivedAt, 'receivedAt');
+  if (!gpsId) throw new Error('gpsId is required.');
+  if (!licensePlate) throw new Error('licensePlate is required.');
+  if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) throw new Error('latitude is invalid.');
+  if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) throw new Error('longitude is invalid.');
+  if (!Number.isFinite(speedKmh) || speedKmh < 0 || speedKmh > 300) throw new Error('speed is invalid.');
+  return { codeRun, gpsId, licensePlate, planLicensePlate, latitude, longitude, speedKmh, gpsStatus, gpsTime, receivedAt };
+}
+function findNearestGpsGeofence(latitude, longitude) {
+  return GPS_GEOFENCES
+    .map(geofence => ({
+      ...geofence,
+      distanceMeters: calculateDistanceMeters(latitude, longitude, geofence.latitude, geofence.longitude),
+    }))
+    .sort((first, second) => first.distanceMeters - second.distanceMeters)[0];
+}
+async function readGpsDwellState(codeRun) {
+  const client = requireRedisClient();
+  const rawState = await client.get(getGpsDwellKey(codeRun));
+  if (!rawState) return null;
+  try {
+    return JSON.parse(rawState);
+  } catch {
+    await client.del(getGpsDwellKey(codeRun));
+    return null;
+  }
+}
+async function writeGpsDwellState(codeRun, state) {
+  const client = requireRedisClient();
+  await client.set(getGpsDwellKey(codeRun), JSON.stringify(state), {
+    EX: GPS_DWELL_STATE_TTL_SECONDS,
+  });
+  return state;
+}
+function createGpsDockResult(state) {
+  const dwellSeconds = Math.max(0, Number(state.dwellSeconds || 0));
+  return {
+    ...state,
+    dwellSeconds,
+    dwellMinutes: Number((dwellSeconds / 60).toFixed(2)),
+    requiredDwellSeconds: Math.floor(GPS_DWELL_THRESHOLD_MS / 1000),
+    remainingDwellSeconds: Math.max(0, Math.floor(GPS_DWELL_THRESHOLD_MS / 1000) - dwellSeconds),
+    parkingSpeedThresholdKmh: GPS_PARKING_SPEED_THRESHOLD_KMH,
+    gpsStaleThresholdSeconds: Math.floor(GPS_STALE_THRESHOLD_MS / 1000),
+  };
+}
+async function evaluateGpsDock(payload) {
+  const input = validateGpsDockPayload(payload);
+  const nowMs = Date.now();
+  const gpsTimeMs = input.gpsTime.getTime();
+  const receivedAtMs = input.receivedAt.getTime();
+  const eventTimeMs = Math.min(receivedAtMs, nowMs);
+  const gpsAgeMs = Math.max(0, nowMs - gpsTimeMs);
+  const nearest = findNearestGpsGeofence(input.latitude, input.longitude);
+  const isInside = nearest.distanceMeters <= nearest.radiusMeters;
+  const isParked = input.speedKmh <= GPS_PARKING_SPEED_THRESHOLD_KMH && input.gpsStatus.includes('รถจอด');
+  const platesMatch = normalizeLicensePlate(input.licensePlate) === normalizeLicensePlate(input.planLicensePlate);
+  const previous = await readGpsDwellState(input.codeRun);
+  let parkingStartedAtMs = Number(previous?.parkingStartedAtMs || 0);
+  let movingStartedAtMs = Number(previous?.movingStartedAtMs || 0);
+  let status = 'OUTSIDE_GEOFENCE';
+
+  if (!platesMatch) {
+    status = 'GPS_PLATE_MISMATCH';
+    parkingStartedAtMs = 0;
+    movingStartedAtMs = 0;
+  } else if (gpsAgeMs > GPS_STALE_THRESHOLD_MS) {
+    status = 'GPS_STALE';
+  } else if (!isInside) {
+    status = 'OUTSIDE_GEOFENCE';
+    parkingStartedAtMs = 0;
+    movingStartedAtMs = 0;
+  } else if (isParked) {
+    movingStartedAtMs = 0;
+    if (!parkingStartedAtMs || previous?.geofenceId !== nearest.id) {
+      parkingStartedAtMs = eventTimeMs;
+    }
+    const dwellMs = Math.max(0, eventTimeMs - parkingStartedAtMs);
+    status = dwellMs >= GPS_DWELL_THRESHOLD_MS ? 'DOCK_IN_CONFIRMED' : 'DOCK_PENDING';
+  } else {
+    if (!movingStartedAtMs) movingStartedAtMs = eventTimeMs;
+    if (eventTimeMs - movingStartedAtMs >= GPS_MOVEMENT_GRACE_MS) {
+      parkingStartedAtMs = 0;
+    }
+    status = 'MOVING_IN_GEOFENCE';
+  }
+
+  const dwellSeconds = parkingStartedAtMs && isInside && isParked
+    ? Math.max(0, Math.floor((eventTimeMs - parkingStartedAtMs) / 1000))
+    : 0;
+  const state = {
+    codeRun: input.codeRun,
+    gpsId: input.gpsId,
+    licensePlate: input.licensePlate,
+    planLicensePlate: input.planLicensePlate,
+    geofenceId: nearest.id,
+    geofenceName: nearest.name,
+    geofenceLatitude: nearest.latitude,
+    geofenceLongitude: nearest.longitude,
+    radiusMeters: nearest.radiusMeters,
+    distanceMeters: Number(nearest.distanceMeters.toFixed(2)),
+    isInside,
+    isParked,
+    speedKmh: input.speedKmh,
+    gpsStatus: input.gpsStatus,
+    gpsTime: input.gpsTime.toISOString(),
+    receivedAt: input.receivedAt.toISOString(),
+    evaluatedAt: new Date(nowMs).toISOString(),
+    gpsAgeSeconds: Math.floor(gpsAgeMs / 1000),
+    status,
+    parkingStartedAtMs,
+    parkingStartedAt: parkingStartedAtMs ? new Date(parkingStartedAtMs).toISOString() : null,
+    movingStartedAtMs,
+    dwellSeconds,
+    confirmedAt: status === 'DOCK_IN_CONFIRMED'
+      ? previous?.confirmedAt || new Date(eventTimeMs).toISOString()
+      : null,
+    readyForGpsStampEta: status === 'DOCK_IN_CONFIRMED',
+    autoStampExecuted: false,
+  };
+  await writeGpsDwellState(input.codeRun, state);
+  return createGpsDockResult(state);
 }
 
 function waitForLoginFailure() { return wait(LOGIN_FAILURE_DELAY_MS + Math.floor(Math.random() * 250)); }
@@ -1615,6 +1827,9 @@ app.get(['/health', '/api/health'], (req, res) => {
       '/api/admin/sessions/revoke-all',
       '/api/trucks',
       '/api/trucks/update',
+      '/api/gps/geofences',
+      '/api/gps/dock-status/:codeRun',
+      '/api/gps/dock/evaluate',
       '/api/master-plan',
       '/api/master-plan/rows',
       '/api/master-plan/rows/:sheetRow',
@@ -1630,6 +1845,15 @@ app.get(['/health', '/api/health'], (req, res) => {
       '/api/route-to-tpcap',
     ],
     sessionStore: { type: 'redis', configured: Boolean(REDIS_URL), ready: Boolean(redisReady && redisClient?.isReady), lastError: lastRedisError },
+    gpsDockMonitoring: {
+      enabled: true,
+      autoStampEnabled: false,
+      parkingSpeedThresholdKmh: GPS_PARKING_SPEED_THRESHOLD_KMH,
+      dwellThresholdSeconds: Math.floor(GPS_DWELL_THRESHOLD_MS / 1000),
+      gpsStaleThresholdSeconds: Math.floor(GPS_STALE_THRESHOLD_MS / 1000),
+      movementGraceSeconds: Math.floor(GPS_MOVEMENT_GRACE_MS / 1000),
+      geofences: GPS_GEOFENCES,
+    },
     rateLimitStore: { type: 'redis', persistentAcrossDeploys: true, windowSeconds: LOGIN_RATE_LIMIT_WINDOW_SECONDS },
     sessionAccountValidation: { enabled: true, invalidatesOnInactive: true, invalidatesOnRoleChange: true },
     sessionRevocationAudit: { enabled: true, action: 'SESSION_REVOKED' },
@@ -1673,6 +1897,73 @@ app.get(['/health', '/api/health'], (req, res) => {
   });
 });
 
+app.get('/api/gps/geofences', requireAuthentication, requireMinimumRole('TV_VIEWER'), (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  return res.status(200).json({
+    success: true,
+    geofences: GPS_GEOFENCES,
+    config: {
+      parkingSpeedThresholdKmh: GPS_PARKING_SPEED_THRESHOLD_KMH,
+      dwellThresholdSeconds: Math.floor(GPS_DWELL_THRESHOLD_MS / 1000),
+      gpsStaleThresholdSeconds: Math.floor(GPS_STALE_THRESHOLD_MS / 1000),
+      movementGraceSeconds: Math.floor(GPS_MOVEMENT_GRACE_MS / 1000),
+      autoStampEnabled: false,
+    },
+    timestamp: new Date().toISOString(),
+  });
+});
+app.get('/api/gps/dock-status/:codeRun', requireAuthentication, requireMinimumRole('TV_VIEWER'), async (req, res) => {
+  try {
+    const codeRun = normalizeCodeRun(req.params.codeRun);
+    const state = await readGpsDwellState(codeRun);
+    res.setHeader('Cache-Control', 'no-store');
+    return res.status(200).json({
+      success: true,
+      codeRun,
+      result: state ? createGpsDockResult(state) : null,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    return sendRouteError(res, error, 'Unable to retrieve GPS Dock status.');
+  }
+});
+app.post('/api/gps/dock/evaluate', requireAuthentication, requireMinimumRole('OPERATOR'), async (req, res) => {
+  try {
+    const result = await evaluateGpsDock(req.body);
+    req.auditDetails = {
+      status: result.status,
+      geofenceId: result.geofenceId,
+      distanceMeters: result.distanceMeters,
+      speedKmh: result.speedKmh,
+      dwellSeconds: result.dwellSeconds,
+      readyForGpsStampEta: result.readyForGpsStampEta,
+    };
+    res.setHeader('Cache-Control', 'no-store');
+    return res.status(200).json({
+      success: true,
+      result,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    return sendRouteError(res, error, 'Unable to evaluate GPS Dock status.');
+  }
+});
+app.delete('/api/gps/dock-status/:codeRun', requireAuthentication, requireMinimumRole('SUPERVISOR'), async (req, res) => {
+  try {
+    const codeRun = normalizeCodeRun(req.params.codeRun);
+    const client = requireRedisClient();
+    const deletedCount = await client.del(getGpsDwellKey(codeRun));
+    req.auditDetails = { deletedCount };
+    return res.status(200).json({
+      success: true,
+      codeRun,
+      deleted: deletedCount > 0,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    return sendRouteError(res, error, 'Unable to reset GPS Dock status.');
+  }
+});
 app.get('/api/trucks', requireAuthentication, requireMinimumRole('TV_VIEWER'), async (req, res) => {
   try {
     const forceRefresh =
