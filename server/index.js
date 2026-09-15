@@ -36,6 +36,11 @@ const GPS_DWELL_STATE_TTL_SECONDS = 4 * 60 * 60;
 const GPS_DWELL_KEY_PREFIX = 'elive:gps-dwell:';
 const GPS_VEHICLE_CYCLE_KEY_PREFIX = 'elive:gps-vehicle-cycle:';
 const GPS_VEHICLE_CYCLE_TTL_SECONDS = 36 * 60 * 60;
+const GPS_AUTO_STAMP_KEY_PREFIX = 'elive:gps-auto-stamp:';
+const GPS_AUTO_STAMP_LOCK_SECONDS = 90;
+const GPS_AUTO_STAMP_RESULT_TTL_SECONDS = 36 * 60 * 60;
+const GPS_AUTO_STAMP_ETA_ENABLED = true;
+const GPS_AUTO_STAMP_ETD_ENABLED = false;
 const GPS_GEOFENCES = Object.freeze([
   Object.freeze({
     id: 'TPCAP-LSP',
@@ -390,6 +395,13 @@ function getAuditDescriptor(req) {
       action: 'PLAN_UPDATE',
       targetType: 'PLAN',
       targetIdHash: hashAuditValue(path.split('/').pop()),
+    };
+  }
+  if (method === 'POST' && /^\/api\/plans\/A\d+\/stamp$/i.test(path)) {
+    return {
+      action: 'PLAN_STAMP',
+      targetType: 'ACTUAL_STAMP',
+      targetIdHash: hashAuditValue(path.split('/')[3]),
     };
   }
   if (method === 'POST' && /^\/api\/plans\/A\d+\/confirm-work-detail$/i.test(path)) {
@@ -797,6 +809,78 @@ function createGpsDockResult(state) {
     gpsStaleThresholdSeconds: Math.floor(GPS_STALE_THRESHOLD_MS / 1000),
   };
 }
+function getGpsAutoStampKey(stampType, codeRun) {
+  return `${GPS_AUTO_STAMP_KEY_PREFIX}${cleanText(stampType).toUpperCase()}:${normalizeCodeRun(codeRun)}`;
+}
+function normalizeStampType(value) {
+  const stampType = cleanText(value).toUpperCase();
+  if (stampType !== 'ETA' && stampType !== 'ETD') throw new Error('stampType must be ETA or ETD.');
+  return stampType;
+}
+function findTripByCodeRun(data, codeRun) {
+  const normalizedCodeRun = normalizeCodeRun(codeRun);
+  const planRows = Array.isArray(data?.plan) ? data.plan : [];
+  const actualRows = Array.isArray(data?.actual) ? data.actual : [];
+  const planRow = planRows.slice(1).find(row => Array.isArray(row) && cleanText(row[0]).toUpperCase() === normalizedCodeRun);
+  if (!planRow) throw new Error(`Plan ${normalizedCodeRun} was not found.`);
+  if (cleanText(planRow[12]).toUpperCase() === 'CANCEL') throw new Error(`Plan ${normalizedCodeRun} is cancelled.`);
+  const actualRow = actualRows.slice(1).find(row => Array.isArray(row) && cleanText(row[0]).toUpperCase() === normalizedCodeRun) || [];
+  return {
+    codeRun: normalizedCodeRun,
+    planLicensePlate: cleanText(planRow[4]),
+    stampEta: cleanText(actualRow[4]),
+    stampEtd: cleanText(actualRow[5]),
+  };
+}
+async function stampActualData(payload) {
+  const result = await requestAppsScriptPost('stampActualData', payload);
+  clearTruckCache();
+  return result;
+}
+async function executeGpsAutoStampEta(state) {
+  if (!GPS_AUTO_STAMP_ETA_ENABLED || !state?.readyForGpsStampEta || state?.status !== 'DOCK_IN_CONFIRMED') return null;
+  if (state.waitingForExit || !state.activeCodeRun || state.activeCodeRun !== state.codeRun) return null;
+  const client = requireRedisClient();
+  const key = getGpsAutoStampKey('ETA', state.activeCodeRun);
+  const lockAcquired = await client.set(key, JSON.stringify({ status: 'PROCESSING', startedAt: new Date().toISOString() }), {
+    NX: true,
+    EX: GPS_AUTO_STAMP_LOCK_SECONDS,
+  });
+  if (!lockAcquired) {
+    const existing = await client.get(key);
+    return existing ? JSON.parse(existing) : { status: 'PROCESSING' };
+  }
+  try {
+    const response = await stampActualData({
+      codeRun: state.activeCodeRun,
+      stampType: 'ETA',
+      stampSource: 'GPS_DWELL',
+      stampTime: state.parkingStartedAt || state.gpsTime,
+      stampedBy: 'GPS SYSTEM',
+      geofence: state.geofenceName,
+      parkingStartedAt: state.parkingStartedAt,
+      dwellConfirmedAt: state.confirmedAt,
+      gpsSnapshot: {
+        gpsTime: state.gpsTime,
+        latitude: state.geofenceLatitude ? state.latitude || null : null,
+        longitude: state.geofenceLongitude ? state.longitude || null : null,
+        speed: state.speedKmh,
+        geofence: state.geofenceName,
+      },
+    });
+    const stampResult = response?.result || response;
+    const stored = {
+      status: stampResult?.written === false ? 'ALREADY_STAMPED' : 'STAMPED',
+      result: stampResult,
+      completedAt: new Date().toISOString(),
+    };
+    await client.set(key, JSON.stringify(stored), { EX: GPS_AUTO_STAMP_RESULT_TTL_SECONDS });
+    return stored;
+  } catch (error) {
+    await client.del(key);
+    throw error;
+  }
+}
 async function evaluateGpsDock(payload) {
   const input = validateGpsDockPayload(payload);
   const nowMs = Date.now();
@@ -864,6 +948,8 @@ async function evaluateGpsDock(payload) {
     tripSelectionReason: vehicleCycle.selectionReason,
     tripCountForVehicleToday: vehicleCycle.tripCount,
     gpsId: input.gpsId,
+    latitude: input.latitude,
+    longitude: input.longitude,
     licensePlate: input.licensePlate,
     planLicensePlate: activeTrip?.planLicensePlate || input.planLicensePlate,
     geofenceId: nearest.id,
@@ -892,6 +978,13 @@ async function evaluateGpsDock(payload) {
     autoStampExecuted: false,
   };
   await writeGpsDwellState(effectiveCodeRun, state);
+  let autoStampResult = null;
+  if (state.readyForGpsStampEta) {
+    autoStampResult = await executeGpsAutoStampEta(state);
+    state.autoStampExecuted = autoStampResult?.status === 'STAMPED' || autoStampResult?.status === 'ALREADY_STAMPED';
+    state.autoStampResult = autoStampResult;
+    await writeGpsDwellState(effectiveCodeRun, state);
+  }
   return createGpsDockResult(state);
 }
 function waitForLoginFailure() { return wait(LOGIN_FAILURE_DELAY_MS + Math.floor(Math.random() * 250)); }
@@ -2020,6 +2113,7 @@ app.get(['/health', '/api/health'], (req, res) => {
       '/api/plans/daily',
       '/api/plans/extra',
       '/api/plans/:codeRun',
+      '/api/plans/:codeRun/stamp',
       'DELETE /api/plans/:codeRun',
       '/api/plans/:codeRun/cancel',
       '/api/plans/:codeRun/restore',
@@ -2029,7 +2123,9 @@ app.get(['/health', '/api/health'], (req, res) => {
     sessionStore: { type: 'redis', configured: Boolean(REDIS_URL), ready: Boolean(redisReady && redisClient?.isReady), lastError: lastRedisError },
     gpsDockMonitoring: {
       enabled: true,
-      autoStampEnabled: false,
+      autoStampEnabled: GPS_AUTO_STAMP_ETA_ENABLED,
+      autoStampEtaEnabled: GPS_AUTO_STAMP_ETA_ENABLED,
+      autoStampEtdEnabled: GPS_AUTO_STAMP_ETD_ENABLED,
       parkingSpeedThresholdKmh: GPS_PARKING_SPEED_THRESHOLD_KMH,
       dwellThresholdSeconds: Math.floor(GPS_DWELL_THRESHOLD_MS / 1000),
       gpsStaleThresholdSeconds: Math.floor(GPS_STALE_THRESHOLD_MS / 1000),
@@ -2103,7 +2199,9 @@ app.get('/api/gps/geofences', requireAuthentication, requireMinimumRole('TV_VIEW
       dwellThresholdSeconds: Math.floor(GPS_DWELL_THRESHOLD_MS / 1000),
       gpsStaleThresholdSeconds: Math.floor(GPS_STALE_THRESHOLD_MS / 1000),
       movementGraceSeconds: Math.floor(GPS_MOVEMENT_GRACE_MS / 1000),
-      autoStampEnabled: false,
+      autoStampEnabled: GPS_AUTO_STAMP_ETA_ENABLED,
+      autoStampEtaEnabled: GPS_AUTO_STAMP_ETA_ENABLED,
+      autoStampEtdEnabled: GPS_AUTO_STAMP_ETD_ENABLED,
     },
     timestamp: new Date().toISOString(),
   });
@@ -2341,6 +2439,39 @@ app.delete('/api/plans/:codeRun', requireAuthentication, requireMinimumRole('SUP
   }
 });
 
+app.post('/api/plans/:codeRun/stamp', requireAuthentication, requireMinimumRole('OPERATOR'), async (req, res) => {
+  try {
+    const codeRun = normalizeCodeRun(req.params.codeRun);
+    const stampType = normalizeStampType(req.body?.stampType);
+    const override = req.body?.override === true;
+    if (override && ROLE_LEVELS[req.auth.role] < ROLE_LEVELS.SUPERVISOR) {
+      return res.status(403).json({ success: false, error: 'Supervisor permission is required for Stamp override.' });
+    }
+    const truckResult = await getTruckDataWithCache(true);
+    const trip = findTripByCodeRun(truckResult.data, codeRun);
+    if (stampType === 'ETA' && trip.stampEtd) throw new Error('Cannot Stamp ETA because this trip already has Stamp ETD.');
+    if (stampType === 'ETD' && !trip.stampEta) throw new Error('Stamp ETA is required before Stamp ETD.');
+    const stampSource = override ? 'SUPERVISOR_OVERRIDE' : 'MANUAL';
+    const stampTime = cleanText(req.body?.stampTime) || new Date().toISOString();
+    const result = await stampActualData({
+      codeRun,
+      stampType,
+      stampSource,
+      stampTime,
+      stampedBy: req.auth.username,
+      overrideReason: override ? cleanText(req.body?.overrideReason) : '',
+    });
+    req.auditDetails = {
+      stampType,
+      stampSource,
+      written: result?.result?.written !== false,
+      reason: result?.result?.reason || null,
+    };
+    return res.status(200).json(result);
+  } catch (error) {
+    return sendRouteError(res, error, 'Unable to Stamp Actual data.');
+  }
+});
 app.post('/api/plans/:codeRun/confirm-work-detail', requireAuthentication, requireMinimumRole('OPERATOR'), async (req, res) => {
   try {
     const codeRun = normalizeCodeRun(req.params.codeRun);
