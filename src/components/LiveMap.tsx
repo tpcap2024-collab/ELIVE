@@ -48,6 +48,45 @@ type GpsFreshness =
   | 'LIVE'
   | 'STALE'
   | 'OFFLINE';
+type GeofenceConfig = {
+  id: 'TPCAP-LSP' | 'TPCAP-R2' | 'TPCAP-R1';
+  name: string;
+  latitude: number;
+  longitude: number;
+  radiusMeters: number;
+  color: string;
+};
+type GeofenceEvaluation = GeofenceConfig & {
+  distanceMeters: number;
+  isInside: boolean;
+};
+const DEFAULT_GEOFENCE_RADIUS_METERS = 50;
+const GPS_GEOFENCES: GeofenceConfig[] = [
+  {
+    id: 'TPCAP-LSP',
+    name: 'TPCAP-LSP',
+    latitude: 13.624391050915499,
+    longitude: 101.01532262451346,
+    radiusMeters: DEFAULT_GEOFENCE_RADIUS_METERS,
+    color: '#7c3aed',
+  },
+  {
+    id: 'TPCAP-R2',
+    name: 'TPCAP-R2',
+    latitude: 13.624670855780815,
+    longitude: 101.01287491445134,
+    radiusMeters: DEFAULT_GEOFENCE_RADIUS_METERS,
+    color: '#0284c7',
+  },
+  {
+    id: 'TPCAP-R1',
+    name: 'TPCAP-R1',
+    latitude: 13.626408220162133,
+    longitude: 101.01512843208137,
+    radiusMeters: DEFAULT_GEOFENCE_RADIUS_METERS,
+    color: '#059669',
+  },
+];
 
 const DEFAULT_MAP_CENTER:
   [number, number] = [
@@ -329,6 +368,41 @@ function formatDuration(
   );
 }
 
+function calculateDistanceMeters(
+  firstLatitude: number,
+  firstLongitude: number,
+  secondLatitude: number,
+  secondLongitude: number
+): number {
+  const earthRadiusMeters = 6371000;
+  const toRadians = (value: number) => value * Math.PI / 180;
+  const latitudeDelta = toRadians(secondLatitude - firstLatitude);
+  const longitudeDelta = toRadians(secondLongitude - firstLongitude);
+  const firstLatitudeRadians = toRadians(firstLatitude);
+  const secondLatitudeRadians = toRadians(secondLatitude);
+  const haversine =
+    Math.sin(latitudeDelta / 2) ** 2 +
+    Math.cos(firstLatitudeRadians) *
+      Math.cos(secondLatitudeRadians) *
+      Math.sin(longitudeDelta / 2) ** 2;
+  return 2 * earthRadiusMeters * Math.asin(Math.sqrt(haversine));
+}
+function createGeofenceMarkerIcon(
+  name: string,
+  color: string
+): L.DivIcon {
+  return L.divIcon({
+    className: 'elive-geofence-marker',
+    html: `
+      <div style="display:flex;flex-direction:column;align-items:center;">
+        <div style="width:18px;height:18px;border-radius:50%;background:${color};border:4px solid white;box-shadow:0 2px 10px rgba(15,23,42,0.35);box-sizing:border-box;"></div>
+        <div style="margin-top:4px;padding:3px 7px;border-radius:6px;background:white;border:1px solid ${color};color:${color};font-size:10px;font-weight:800;white-space:nowrap;box-shadow:0 2px 8px rgba(15,23,42,0.18);">${name}</div>
+      </div>
+    `,
+    iconSize: [100, 44],
+    iconAnchor: [50, 9],
+  });
+}
 function createTruckMarkerIcon(
   heading: number
 ): L.DivIcon {
@@ -485,6 +559,10 @@ export function LiveMap({
     useRef<L.LayerGroup | null>(
       null
     );
+  const geofenceLayerRef =
+    useRef<L.LayerGroup | null>(
+      null
+    );
 
   const routeRequestIdRef =
     useRef(0);
@@ -522,6 +600,10 @@ export function LiveMap({
     isRouteLoading,
     setIsRouteLoading,
   ] = useState(false);
+  const [
+    showGeofenceDebug,
+    setShowGeofenceDebug,
+  ] = useState(true);
 
   const truckByPlate =
     useMemo(() => {
@@ -705,6 +787,37 @@ export function LiveMap({
       selectedGpsLocation,
     ]);
 
+  const selectedGeofenceEvaluation =
+    useMemo<GeofenceEvaluation | null>(() => {
+      if (!selectedGpsLocation) return null;
+      const evaluations = GPS_GEOFENCES.map(geofence => {
+        const distanceMeters = calculateDistanceMeters(
+          selectedGpsLocation.latitude,
+          selectedGpsLocation.longitude,
+          geofence.latitude,
+          geofence.longitude
+        );
+        return {
+          ...geofence,
+          distanceMeters,
+          isInside: distanceMeters <= geofence.radiusMeters,
+        };
+      });
+      return evaluations.sort(
+        (first, second) => first.distanceMeters - second.distanceMeters
+      )[0] || null;
+    }, [selectedGpsLocation]);
+  const selectedParkingStatus =
+    useMemo(() => {
+      if (!selectedGpsLocation || !selectedGeofenceEvaluation) return null;
+      const gpsStatus = String(selectedGpsLocation.gpsStatus || '').trim();
+      const isParked =
+        Number(selectedGpsLocation.speed) <= 3 &&
+        gpsStatus.includes('รถจอด');
+      if (!selectedGeofenceEvaluation.isInside) return 'OUTSIDE_GEOFENCE';
+      if (selectedFreshness !== 'LIVE') return 'GPS_STALE';
+      return isParked ? 'DOCK_PENDING' : 'MOVING_IN_GEOFENCE';
+    }, [selectedFreshness, selectedGeofenceEvaluation, selectedGpsLocation]);
   const freshnessStats =
     useMemo(() => {
       let live =
@@ -801,6 +914,11 @@ export function LiveMap({
         .addTo(
           map
         );
+    const geofenceLayer =
+      L.layerGroup()
+        .addTo(
+          map
+        );
 
     mapRef.current =
       map;
@@ -810,6 +928,8 @@ export function LiveMap({
 
     routeLayerRef.current =
       routeLayer;
+    geofenceLayerRef.current =
+      geofenceLayer;
 
     window.setTimeout(
       () => {
@@ -838,6 +958,53 @@ export function LiveMap({
     };
   }, []);
 
+  useEffect(() => {
+    const map = mapRef.current;
+    const geofenceLayer = geofenceLayerRef.current;
+    if (!map || !geofenceLayer) return;
+    geofenceLayer.clearLayers();
+    if (!showGeofenceDebug) return;
+
+    const bounds = L.latLngBounds([]);
+    for (const geofence of GPS_GEOFENCES) {
+      const position: [number, number] = [
+        geofence.latitude,
+        geofence.longitude,
+      ];
+      const circle = L.circle(position, {
+        radius: geofence.radiusMeters,
+        color: geofence.color,
+        weight: 3,
+        opacity: 0.95,
+        fillColor: geofence.color,
+        fillOpacity: 0.14,
+        dashArray: '8 6',
+      });
+      circle.bindTooltip(
+        `${geofence.name} | Radius ${geofence.radiusMeters} m`,
+        { permanent: true, direction: 'top', offset: [0, -12] }
+      );
+      circle.bindPopup(
+        `<b>${geofence.name}</b><br>Latitude: ${geofence.latitude}<br>Longitude: ${geofence.longitude}<br>Radius: ${geofence.radiusMeters} m`
+      );
+      circle.addTo(geofenceLayer);
+
+      L.marker(position, {
+        icon: createGeofenceMarkerIcon(geofence.name, geofence.color),
+        title: geofence.name,
+        zIndexOffset: 800,
+      }).addTo(geofenceLayer);
+      bounds.extend(circle.getBounds());
+    }
+
+    if (!selectedGpsLocation && bounds.isValid()) {
+      map.fitBounds(bounds, {
+        padding: [45, 45],
+        maxZoom: 17,
+        animate: true,
+      });
+    }
+  }, [showGeofenceDebug, selectedGpsLocation]);
   useEffect(() => {
     if (
       initialTruckId !==
@@ -1274,14 +1441,17 @@ export function LiveMap({
         mapRef.current;
 
       if (map) {
-        map.setView(
-          DEFAULT_MAP_CENTER,
-          10,
-          {
-            animate:
-              true,
-          }
+        const geofenceBounds = L.latLngBounds(
+          GPS_GEOFENCES.map(geofence => [
+            geofence.latitude,
+            geofence.longitude,
+          ] as [number, number])
         );
+        map.fitBounds(geofenceBounds, {
+          padding: [60, 60],
+          maxZoom: 16,
+          animate: true,
+        });
       }
     };
 
@@ -1336,6 +1506,18 @@ export function LiveMap({
               Offline {freshnessStats.offline}
             </div>
 
+            <button
+              type="button"
+              onClick={() => setShowGeofenceDebug(current => !current)}
+              className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-bold transition-colors ${
+                showGeofenceDebug
+                  ? 'border-purple-200 bg-purple-50 text-purple-700'
+                  : 'border-slate-200 bg-white text-slate-600'
+              }`}
+            >
+              <MapPin className="h-3.5 w-3.5" />
+              Geofence Debug {showGeofenceDebug ? 'ON' : 'OFF'}
+            </button>
             <button
               type="button"
               onClick={
@@ -1470,6 +1652,20 @@ export function LiveMap({
             className="h-full min-h-[460px] w-full"
           />
 
+          {showGeofenceDebug && (
+            <div className="absolute left-3 top-3 z-[600] rounded-xl border border-slate-200 bg-white/95 p-3 text-xs shadow-lg backdrop-blur-sm">
+              <div className="font-bold text-slate-800">Geofence Debug</div>
+              <div className="mt-2 space-y-1.5">
+                {GPS_GEOFENCES.map(geofence => (
+                  <div key={geofence.id} className="flex items-center gap-2">
+                    <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: geofence.color }} />
+                    <span className="font-semibold text-slate-700">{geofence.name}</span>
+                    <span className="text-slate-400">{geofence.radiusMeters} m</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           {showNoGpsMessage && (
             <div className="pointer-events-none absolute inset-0 z-[500] flex items-center justify-center bg-white/60 backdrop-blur-sm">
               <div className="max-w-sm rounded-xl border border-slate-200 bg-white p-6 text-center shadow-lg">
@@ -1648,6 +1844,35 @@ export function LiveMap({
                 </div>
               )}
 
+              {selectedGeofenceEvaluation && (
+                <div className={`mt-5 rounded-xl border p-4 ${
+                  selectedGeofenceEvaluation.isInside
+                    ? 'border-emerald-200 bg-emerald-50'
+                    : 'border-slate-200 bg-slate-50'
+                }`}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Nearest Geofence</div>
+                    <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${
+                      selectedGeofenceEvaluation.isInside
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-slate-200 text-slate-700'
+                    }`}>
+                      {selectedGeofenceEvaluation.isInside ? 'INSIDE' : 'OUTSIDE'}
+                    </span>
+                  </div>
+                  <div className="mt-2 text-lg font-bold text-slate-900">{selectedGeofenceEvaluation.name}</div>
+                  <div className="mt-2 grid grid-cols-2 gap-3 text-sm">
+                    <div><div className="text-xs text-slate-400">ระยะจากจุด</div><div className="font-bold text-slate-800">{selectedGeofenceEvaluation.distanceMeters.toFixed(1)} เมตร</div></div>
+                    <div><div className="text-xs text-slate-400">รัศมีที่ตั้งไว้</div><div className="font-bold text-slate-800">{selectedGeofenceEvaluation.radiusMeters} เมตร</div></div>
+                  </div>
+                  <div className="mt-3 rounded-lg bg-white/80 px-3 py-2 text-xs font-semibold text-slate-700">
+                    สถานะตรวจจับ: {selectedParkingStatus || '-'}
+                  </div>
+                  {selectedParkingStatus === 'DOCK_PENDING' && (
+                    <div className="mt-2 text-xs text-amber-700">รถอยู่ในพื้นที่และอยู่ในสถานะจอด ขั้นถัดไปจะเชื่อม Dwell Timer 5 นาทีจาก Backend</div>
+                  )}
+                </div>
+              )}
               <div className="mt-5 border-t border-slate-200 pt-5">
                 <div className="text-xs font-bold uppercase tracking-wide text-slate-400">
                   Truck Information
