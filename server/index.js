@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '13';
+const API_VERSION = '14';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -81,6 +81,12 @@ const LOGIN_RATE_LIMIT_WINDOW_SECONDS = Math.floor(
   LOGIN_RATE_LIMIT_WINDOW_MS / 1000
 );
 const LOGIN_RATE_LIMIT_KEY_PREFIX = 'elive:rate-limit:login:';
+const PASSWORD_CHANGE_RATE_LIMIT_KEY_PREFIX = 'elive:rate-limit:password-change:';
+const PASSWORD_CHANGE_RATE_LIMIT_MAX_FAILURES = 5;
+const AUTH_USER_OVERRIDE_KEY_PREFIX = 'elive:auth-user-override:';
+const PASSWORD_MIN_LENGTH = 12;
+const PASSWORD_MAX_LENGTH = 128;
+const PASSWORD_HASH_ITERATIONS = 310000;
 const PBKDF2_MIN_ITERATIONS = 210000;
 const PBKDF2_MAX_ITERATIONS = 1000000;
 const PBKDF2_KEY_LENGTH = 32;
@@ -375,6 +381,13 @@ function getAuditDescriptor(req) {
   }
   if (method === 'POST' && path === '/api/auth/logout') {
     return { action: 'AUTH_LOGOUT', targetType: 'SESSION', targetIdHash: null };
+  }
+  if (method === 'POST' && path === '/api/auth/change-password') {
+    return {
+      action: 'AUTH_PASSWORD_CHANGE',
+      targetType: 'AUTH_USER',
+      targetIdHash: hashAuditValue(req.auth?.username),
+    };
   }
   if (method === 'POST' && path === '/api/master-plan/rows') {
     return { action: 'MASTER_PLAN_CREATE', targetType: 'MASTER_PLAN_ROW', targetIdHash: null };
@@ -1219,6 +1232,78 @@ async function stopGpsBackgroundWorker() {
 function waitForLoginFailure() { return wait(LOGIN_FAILURE_DELAY_MS + Math.floor(Math.random() * 250)); }
 function normalizeLoginUsername(value) { const username=cleanText(value).toLowerCase(); if(!username||username.length>MAX_LOGIN_USERNAME_LENGTH) throw new Error('LOGIN_PAYLOAD_INVALID'); return username; }
 function normalizeLoginPassword(value) { if(typeof value!=='string'||!value||value.length>MAX_LOGIN_PASSWORD_LENGTH) throw new Error('LOGIN_PAYLOAD_INVALID'); return value; }
+function getAuthUserOverrideKey(username) {
+  const normalizedUsername = cleanText(username).toLowerCase();
+  return `${AUTH_USER_OVERRIDE_KEY_PREFIX}${createHash('sha256').update(normalizedUsername).digest('hex')}`;
+}
+async function readAuthUserOverride(username) {
+  const raw = await requireRedisClient().get(getAuthUserOverrideKey(username));
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    await requireRedisClient().del(getAuthUserOverrideKey(username));
+    return null;
+  }
+}
+async function getEffectiveAuthUser(username) {
+  const normalizedUsername = cleanText(username).toLowerCase();
+  const configuredUser = getConfiguredAuthUsers().find(item => item.username === normalizedUsername);
+  if (!configuredUser) return null;
+  const override = await readAuthUserOverride(normalizedUsername);
+  if (!override) return { ...configuredUser, credentialVersion: 0, passwordChangedAt: null };
+  return {
+    ...configuredUser,
+    passwordHash: cleanText(override.passwordHash).toLowerCase(),
+    salt: cleanText(override.salt).toLowerCase(),
+    iterations: Number(override.iterations),
+    credentialVersion: Number(override.credentialVersion || 0),
+    passwordChangedAt: override.passwordChangedAt || null,
+  };
+}
+async function writeAuthUserOverride(user, passwordHash, salt) {
+  const now = new Date().toISOString();
+  const previous = await readAuthUserOverride(user.username);
+  const record = {
+    username: user.username,
+    passwordHash,
+    salt,
+    iterations: PASSWORD_HASH_ITERATIONS,
+    credentialVersion: Number(previous?.credentialVersion || user.credentialVersion || 0) + 1,
+    passwordChangedAt: now,
+    updatedAt: now,
+  };
+  await requireRedisClient().set(getAuthUserOverrideKey(user.username), JSON.stringify(record));
+  return record;
+}
+function validateNewPassword(username, currentPassword, newPassword, confirmNewPassword) {
+  if (typeof currentPassword !== 'string' || !currentPassword) throw new Error('CURRENT_PASSWORD_REQUIRED');
+  if (typeof newPassword !== 'string' || typeof confirmNewPassword !== 'string') throw new Error('NEW_PASSWORD_REQUIRED');
+  if (newPassword !== confirmNewPassword) throw new Error('PASSWORD_CONFIRMATION_MISMATCH');
+  if (newPassword.length < PASSWORD_MIN_LENGTH || newPassword.length > PASSWORD_MAX_LENGTH) throw new Error('PASSWORD_POLICY_INVALID');
+  if (newPassword === currentPassword) throw new Error('PASSWORD_UNCHANGED');
+  if (newPassword.toLowerCase().includes(cleanText(username).toLowerCase())) throw new Error('PASSWORD_CONTAINS_USERNAME');
+  return newPassword;
+}
+async function hashNewPassword(password) {
+  const salt = randomBytes(32).toString('hex');
+  const hash = await pbkdf2Async(password, Buffer.from(salt, 'hex'), PASSWORD_HASH_ITERATIONS, PBKDF2_KEY_LENGTH, PBKDF2_DIGEST);
+  return { salt, passwordHash: hash.toString('hex') };
+}
+function getPasswordChangeRateLimitKey(req, username) {
+  return `${PASSWORD_CHANGE_RATE_LIMIT_KEY_PREFIX}${getRateLimitKey(req, username)}`;
+}
+async function enforcePasswordChangeRateLimit(req, username) {
+  const client = requireRedisClient();
+  const key = getPasswordChangeRateLimitKey(req, username);
+  const state = await getRateLimitState(client, key, PASSWORD_CHANGE_RATE_LIMIT_MAX_FAILURES);
+  if (state.blocked) {
+    const error = new Error('PASSWORD_CHANGE_RATE_LIMITED');
+    error.retryAfterSeconds = state.retryAfterSeconds;
+    throw error;
+  }
+  return key;
+}
 function getConfiguredAuthUsers() {
   const rawUsers=cleanText(process.env.ELIVE_AUTH_USERS); if(!rawUsers) throw new Error('AUTH_CONFIG_MISSING');
   let parsedUsers; try { parsedUsers=JSON.parse(rawUsers); } catch { throw new Error('AUTH_CONFIG_INVALID'); }
@@ -1336,6 +1421,7 @@ async function createSession(user) {
     createdAt: now,
     expiresAt: now + SESSION_DURATION_MS,
     lastUserActivityAt: now,
+    credentialVersion: Number(user.credentialVersion || 0),
   };
   const indexKey = getSessionUserIndexKey(user.username);
 
@@ -1484,23 +1570,21 @@ async function revokeAllSessions(excludedTokenHash = null) {
   return { revokedCount };
 }
 
-function getCurrentSessionUser(session) {
-  const users = getConfiguredAuthUsers();
+async function getCurrentSessionUser(session) {
   const username = cleanText(session?.username).toLowerCase();
   const sessionRole = cleanText(session?.role).toUpperCase();
-  const user = users.find(item => item.username === username);
-
+  const user = await getEffectiveAuthUser(username);
   if (!user || !user.active) {
     return { valid: false, reason: 'ACCOUNT_INACTIVE_OR_REMOVED', user: null };
   }
-
   if (user.role !== sessionRole) {
     return { valid: false, reason: 'ACCOUNT_ROLE_CHANGED', user };
   }
-
+  if (Number(session?.credentialVersion || 0) !== Number(user.credentialVersion || 0)) {
+    return { valid: false, reason: 'CREDENTIAL_VERSION_CHANGED', user };
+  }
   return { valid: true, reason: null, user };
 }
-
 async function getSessionFromRequest(req) {
   const token=parseCookies(req.headers.cookie)[SESSION_COOKIE_NAME]; if(!token) return null;
   const client=requireRedisClient(); const tokenHash=hashSessionToken(token); const raw=await client.get(getSessionKey(tokenHash)); if(!raw) return null;
@@ -1513,6 +1597,7 @@ async function getSessionFromRequest(req) {
     createdAt: Number(session.createdAt || 0),
     expiresAt: Number(session.expiresAt),
     lastUserActivityAt: Number(session.lastUserActivityAt || session.createdAt || 0),
+    credentialVersion: Number(session.credentialVersion || 0),
   };
   const idleDurationMs = Date.now() - normalizedSession.lastUserActivityAt;
   if (idleDurationMs >= SESSION_IDLE_TIMEOUT_MS) {
@@ -1528,7 +1613,7 @@ async function getSessionFromRequest(req) {
     };
   }
 
-  const accountValidation = getCurrentSessionUser(normalizedSession);
+  const accountValidation = await getCurrentSessionUser(normalizedSession);
 
   if (!accountValidation.valid) {
     await client
@@ -2225,7 +2310,7 @@ function sendRouteError(res, error, fallbackMessage, statusCode = 400) {
   });
 }
 
-app.post('/api/auth/login', loginRateLimit, async (req,res)=>{ try { const username=normalizeLoginUsername(req.body?.username); const password=normalizeLoginPassword(req.body?.password); const users=getConfiguredAuthUsers(); const user=users.find(item=>item.username===username); if(!user||!user.active){ await waitForLoginFailure(); return res.status(401).json({success:false,error:'Username or password is incorrect.'}); } const passwordIsValid=await verifyLoginPassword(password,user); if(!passwordIsValid){ await waitForLoginFailure(); return res.status(401).json({success:false,error:'Username or password is incorrect.'}); } const {token,session}=await createSession(user); setSessionCookie(res,token); return res.status(200).json({success:true,user:createLoginUserResponse(user),session:createSessionResponse(session),compatibilityMode:true,timestamp:new Date().toISOString()}); } catch(error){ const errorCode=getErrorMessage(error); if(errorCode==='LOGIN_PAYLOAD_INVALID') return res.status(400).json({success:false,error:'A valid username and password are required.'}); if(errorCode==='AUTH_CONFIG_MISSING'||errorCode==='AUTH_CONFIG_INVALID'){ console.error('Authentication configuration error:',errorCode); return res.status(503).json({success:false,error:'Authentication service is not configured.'}); } console.error('Login endpoint error:',getErrorMessage(error)); return res.status(500).json({success:false,error:'Unable to process login.'}); } });
+app.post('/api/auth/login', loginRateLimit, async (req,res)=>{ try { const username=normalizeLoginUsername(req.body?.username); const password=normalizeLoginPassword(req.body?.password); const user=await getEffectiveAuthUser(username); if(!user||!user.active){ await waitForLoginFailure(); return res.status(401).json({success:false,error:'Username or password is incorrect.'}); } const passwordIsValid=await verifyLoginPassword(password,user); if(!passwordIsValid){ await waitForLoginFailure(); return res.status(401).json({success:false,error:'Username or password is incorrect.'}); } const {token,session}=await createSession(user); setSessionCookie(res,token); return res.status(200).json({success:true,user:createLoginUserResponse(user),session:createSessionResponse(session),compatibilityMode:true,timestamp:new Date().toISOString()}); } catch(error){ const errorCode=getErrorMessage(error); if(errorCode==='LOGIN_PAYLOAD_INVALID') return res.status(400).json({success:false,error:'A valid username and password are required.'}); if(errorCode==='AUTH_CONFIG_MISSING'||errorCode==='AUTH_CONFIG_INVALID'){ console.error('Authentication configuration error:',errorCode); return res.status(503).json({success:false,error:'Authentication service is not configured.'}); } console.error('Login endpoint error:',getErrorMessage(error)); return res.status(500).json({success:false,error:'Unable to process login.'}); } });
 
 app.get('/api/auth/verify', requireAuthentication, (req, res) => {
   return res.status(200).json({
@@ -2302,6 +2387,62 @@ app.post('/api/auth/activity', requireAuthentication, async (req, res) => {
 });
 
 app.post('/api/auth/logout', async (req,res)=>{ try { const record=await getSessionFromRequest(req); if(record){ req.auth={username:record.session.username,role:record.session.role,expiresAt:record.session.expiresAt}; await deleteSession(record.tokenHash, record.session); } clearSessionCookie(res); return res.status(200).json({success:true,message:'Logged out.',timestamp:new Date().toISOString()}); } catch(error){ const errorCode=getErrorMessage(error); if(errorCode==='SESSION_STORE_UNAVAILABLE') return res.status(503).json({success:false,error:'Session service is temporarily unavailable.'}); if(errorCode==='AUTH_CONFIG_MISSING'||errorCode==='AUTH_CONFIG_INVALID'){ clearSessionCookie(res); return res.status(200).json({success:true,message:'Logged out.',timestamp:new Date().toISOString()}); } return sendRouteError(res,error,'Unable to logout.',500); } });
+app.post('/api/auth/change-password', requireAuthentication, async (req, res) => {
+  const username = req.auth.username;
+  let rateLimitKey = null;
+  try {
+    rateLimitKey = await enforcePasswordChangeRateLimit(req, username);
+    const currentPassword = req.body?.currentPassword;
+    const newPassword = validateNewPassword(username, currentPassword, req.body?.newPassword, req.body?.confirmNewPassword);
+    const user = await getEffectiveAuthUser(username);
+    if (!user || !user.active) return res.status(401).json({ success: false, error: 'Authentication required.' });
+    const currentPasswordIsValid = await verifyLoginPassword(currentPassword, user);
+    if (!currentPasswordIsValid) {
+      await incrementRateLimitFailure(requireRedisClient(), rateLimitKey);
+      req.auditDetails = { reason: 'CURRENT_PASSWORD_INVALID', otherSessionsRevoked: 0, currentSessionPreserved: true };
+      return res.status(401).json({ success: false, error: 'รหัสผ่านปัจจุบันไม่ถูกต้อง' });
+    }
+    const { salt, passwordHash } = await hashNewPassword(newPassword);
+    const credentialRecord = await writeAuthUserOverride(user, passwordHash, salt);
+    const revoked = await revokeUserSessions(username, req.authSessionTokenHash);
+    const currentSession = {
+      ...req.auth,
+      credentialVersion: credentialRecord.credentialVersion,
+      lastReauthenticatedAt: Date.now(),
+      passwordChangedAt: credentialRecord.passwordChangedAt,
+    };
+    const remainingTtlSeconds = Math.max(1, Math.ceil((Number(req.auth.expiresAt) - Date.now()) / 1000));
+    await requireRedisClient().set(getSessionKey(req.authSessionTokenHash), JSON.stringify(currentSession), { EX: remainingTtlSeconds });
+    await requireRedisClient().del(rateLimitKey);
+    req.auditDetails = { reason: 'SELF_SERVICE', otherSessionsRevoked: revoked.revokedCount, currentSessionPreserved: true };
+    return res.status(200).json({
+      success: true,
+      message: 'เปลี่ยนรหัสผ่านสำเร็จ',
+      currentSessionPreserved: true,
+      otherSessionsRevoked: revoked.revokedCount,
+      passwordChangedAt: credentialRecord.passwordChangedAt,
+      passwordPolicy: { minimumLength: PASSWORD_MIN_LENGTH, maximumLength: PASSWORD_MAX_LENGTH },
+    });
+  } catch (error) {
+    const code = getErrorMessage(error);
+    req.auditDetails = { reason: code, otherSessionsRevoked: 0, currentSessionPreserved: true };
+    if (code === 'PASSWORD_CHANGE_RATE_LIMITED') {
+      res.setHeader('Retry-After', String(error.retryAfterSeconds || 900));
+      return res.status(429).json({ success: false, error: 'ลองเปลี่ยนรหัสผ่านผิดหลายครั้ง กรุณารอสักครู่แล้วลองใหม่' });
+    }
+    const validationMessages = {
+      CURRENT_PASSWORD_REQUIRED: 'กรุณากรอกรหัสผ่านปัจจุบัน',
+      NEW_PASSWORD_REQUIRED: 'กรุณากรอกรหัสผ่านใหม่และยืนยันรหัสผ่านใหม่',
+      PASSWORD_CONFIRMATION_MISMATCH: 'รหัสผ่านใหม่และการยืนยันไม่ตรงกัน',
+      PASSWORD_POLICY_INVALID: `รหัสผ่านใหม่ต้องมีความยาว ${PASSWORD_MIN_LENGTH}-${PASSWORD_MAX_LENGTH} ตัวอักษร`,
+      PASSWORD_UNCHANGED: 'รหัสผ่านใหม่ต้องไม่เหมือนรหัสผ่านปัจจุบัน',
+      PASSWORD_CONTAINS_USERNAME: 'รหัสผ่านใหม่ต้องไม่มี Username เป็นส่วนประกอบ',
+    };
+    if (validationMessages[code]) return res.status(400).json({ success: false, error: validationMessages[code] });
+    return sendRouteError(res, error, 'Unable to change password.', 500);
+  }
+});
+
 app.get('/', (req, res) => {
   return res.json({
     status: 'success',
@@ -2329,6 +2470,7 @@ app.get(['/health', '/api/health'], (req, res) => {
       '/api/auth/session',
       '/api/auth/logout',
       '/api/auth/activity',
+      '/api/auth/change-password',
       '/api/admin/sessions',
       '/api/admin/sessions/revoke-user',
       '/api/admin/sessions/revoke-all',
@@ -2378,7 +2520,17 @@ app.get(['/health', '/api/health'], (req, res) => {
       geofences: GPS_GEOFENCES,
     },
     rateLimitStore: { type: 'redis', persistentAcrossDeploys: true, windowSeconds: LOGIN_RATE_LIMIT_WINDOW_SECONDS },
-    sessionAccountValidation: { enabled: true, invalidatesOnInactive: true, invalidatesOnRoleChange: true },
+    sessionAccountValidation: { enabled: true, invalidatesOnInactive: true, invalidatesOnRoleChange: true, invalidatesOnCredentialChange: true },
+    selfServicePasswordChange: {
+      enabled: true,
+      requiresCurrentPassword: true,
+      currentSessionPreserved: true,
+      otherSessionsRevoked: true,
+      credentialStore: 'redis-override-with-environment-seed',
+      minimumLength: PASSWORD_MIN_LENGTH,
+      maximumLength: PASSWORD_MAX_LENGTH,
+      rateLimitFailures: PASSWORD_CHANGE_RATE_LIMIT_MAX_FAILURES,
+    },
     sessionRevocationAudit: { enabled: true, action: 'SESSION_REVOKED' },
     concurrentSessionControl: {
       enabled: true,
