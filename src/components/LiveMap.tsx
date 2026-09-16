@@ -108,6 +108,7 @@ function normalizeLicensePlate(
 ): string {
   return String(value || '')
     .split('(')[0]
+    .replace(/\bEX\b/gi, '')
     .replace(/[\s-]/g, '')
     .trim()
     .toUpperCase();
@@ -835,10 +836,7 @@ export function LiveMap({
   const selectedParkingStatus =
     useMemo(() => {
       if (!selectedGpsLocation || !selectedGeofenceEvaluation) return null;
-      const gpsStatus = String(selectedGpsLocation.gpsStatus || '').trim();
-      const isParked =
-        Number(selectedGpsLocation.speed) <= 3 &&
-        gpsStatus.includes('รถจอด');
+      const isParked = Number(selectedGpsLocation.speed) === 0;
       if (!selectedGeofenceEvaluation.isInside) return 'OUTSIDE_GEOFENCE';
       if (selectedFreshness !== 'LIVE') return 'GPS_STALE';
       return isParked ? 'DOCK_PENDING' : 'MOVING_IN_GEOFENCE';
@@ -2022,14 +2020,22 @@ export function LiveMap({
                       </div>
                       <div className="mt-2 text-xs text-slate-600">
                         {gpsDockResult.status === 'DOCK_IN_CONFIRMED'
-                          ? 'ยืนยันเข้าช่องแล้ว พร้อมสำหรับ GPS Stamp ETA ในขั้นถัดไป'
+                          ? 'ยืนยันเข้าช่องครบ 3 นาทีแล้ว ระบบดำเนินการ GPS Auto Stamp ETA'
                           : gpsDockResult.status === 'DOCK_PENDING'
                             ? `เหลือ ${formatDwellClock(gpsDockResult.remainingDwellSeconds)} เพื่อยืนยันเข้าช่อง`
                             : gpsDockResult.status === 'WAITING_FOR_EXIT_AFTER_ETD'
                               ? 'รอรถออกนอก Geofence เพื่อปิดรอบเดิมก่อนเริ่มเที่ยวถัดไป'
                               : gpsDockResult.status === 'NO_ACTIVE_TRIP'
                                 ? 'ไม่พบ Code run ที่รอทำงานสำหรับรถคันนี้ในวันนี้'
-                                : 'ระบบจะเริ่มจับเวลาเมื่อรถอยู่ในพื้นที่และจอดตามเงื่อนไข'}
+                                : 'ระบบจะเริ่มจับเวลาเมื่อรถอยู่ในพื้นที่และความเร็วเท่ากับ 0 km/h'}
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-2 text-[10px] font-bold">
+                        <span className="rounded-full bg-blue-100 px-2 py-1 text-blue-700">
+                          ETA: {gpsDockResult.autoStampEtaResult ? 'STAMPED' : gpsDockResult.readyForGpsStampEta ? 'READY' : 'WAITING'}
+                        </span>
+                        <span className="rounded-full bg-orange-100 px-2 py-1 text-orange-700">
+                          ETD: {gpsDockResult.autoStampEtdResult ? 'STAMPED' : gpsDockResult.readyForGpsStampEtd ? 'READY' : 'WAITING'}
+                        </span>
                       </div>
                       {gpsDockResult.parkingStartedAt && (
                         <div className="mt-1 text-[11px] text-slate-500">
