@@ -32,6 +32,7 @@ import {
   isEliveUnauthorizedError,
   loginElive,
   logoutElive,
+  normalizeLicensePlate,
   updateTruckInSheets,
 } from './lib/sheets';
 
@@ -98,14 +99,6 @@ function hasMinimumRole(
   requiredRole: EliveUserRole
 ): boolean {
   return ROLE_LEVELS[role] >= ROLE_LEVELS[requiredRole];
-}
-
-function normalizeLicensePlate(value?: string): string {
-  return String(value || '')
-    .split('(')[0]
-    .replace(/[\s-]/g, '')
-    .trim()
-    .toUpperCase();
 }
 
 function getDockGroup(value?: string): Exclude<DockFilter, 'ALL'> | '' {
