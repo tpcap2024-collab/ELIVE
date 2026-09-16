@@ -54,7 +54,7 @@ const GPS_GEOFENCES = Object.freeze([
     name: 'TPCAP-LSP',
     latitude: 13.624391050915499,
     longitude: 101.01532262451346,
-    radiusMeters: 50,
+    radiusMeters: 80,
   }),
   Object.freeze({
     id: 'TPCAP-R2',
@@ -68,7 +68,7 @@ const GPS_GEOFENCES = Object.freeze([
     name: 'TPCAP-R1',
     latitude: 13.626408220162133,
     longitude: 101.01512843208137,
-    radiusMeters: 50,
+    radiusMeters: 80,
   }),
 ]);
 const MAX_LOGIN_USERNAME_LENGTH = 100;
