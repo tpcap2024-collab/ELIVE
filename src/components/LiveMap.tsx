@@ -19,6 +19,7 @@ import {
   fetchGpsDockStatus,
   fetchRouteToTpcap,
   GpsDockEvaluationResult,
+  normalizeLicensePlate,
   RouteToTpcapResult,
 } from '../lib/sheets';
 
@@ -103,17 +104,6 @@ const TPCAP_POSITION:
     101.01501162061923,
   ];
 
-function normalizeLicensePlate(
-  value?: string
-): string {
-  return String(value || '')
-    .split('(')[0]
-    .replace(/\bEX\b/gi, '')
-    .replace(/[\s-]/g, '')
-    .trim()
-    .toUpperCase();
-}
-
 function parseGpsDateTime(
   value?: string
 ): Date | null {
@@ -189,13 +179,13 @@ function getGpsFreshness(
     referenceDate.getTime();
 
   if (
-    ageMs <= 120000
+    ageMs <= 300000
   ) {
     return 'LIVE';
   }
 
   if (
-    ageMs <= 300000
+    ageMs <= 600000
   ) {
     return 'STALE';
   }
