@@ -50,6 +50,8 @@ export interface GpsDockMonitoringConfig {
   gpsStaleThresholdSeconds: number;
   movementGraceSeconds: number;
   autoStampEnabled: boolean;
+  autoStampEtaEnabled: boolean;
+  autoStampEtdEnabled: boolean;
 }
 export interface GpsGeofencesResult {
   success: boolean;
@@ -79,6 +81,14 @@ export interface GpsDockEvaluationRequest {
 }
 export interface GpsDockEvaluationResult {
   codeRun: string;
+  requestedCodeRun: string;
+  activeCodeRun: string | null;
+  nextCodeRun: string | null;
+  lastCompletedCodeRun: string | null;
+  waitingForExit: boolean;
+  exitConfirmedAt: string | null;
+  tripSelectionReason: string;
+  tripCountForVehicleToday: number;
   gpsId: string;
   licensePlate: string;
   planLicensePlate: string;
@@ -89,6 +99,9 @@ export interface GpsDockEvaluationResult {
   radiusMeters: number;
   distanceMeters: number;
   isInside: boolean;
+  wasInsideBeforeExit: boolean;
+  hasBeenInside: boolean;
+  lastInsideGeofenceName: string | null;
   isParked: boolean;
   speedKmh: number;
   gpsStatus: string;
@@ -104,7 +117,11 @@ export interface GpsDockEvaluationResult {
   remainingDwellSeconds: number;
   confirmedAt: string | null;
   readyForGpsStampEta: boolean;
+  readyForGpsStampEtd: boolean;
   autoStampExecuted: boolean;
+  autoStampResult: unknown | null;
+  autoStampEtaResult: unknown | null;
+  autoStampEtdResult: unknown | null;
   parkingSpeedThresholdKmh: number;
   gpsStaleThresholdSeconds: number;
 }
@@ -710,6 +727,11 @@ function mapGpsDockEvaluation(value: any): GpsDockEvaluationResult {
     radiusMeters: Number(value?.radiusMeters || 0),
     distanceMeters: Number(value?.distanceMeters || 0),
     isInside: value?.isInside === true,
+    wasInsideBeforeExit: value?.wasInsideBeforeExit === true,
+    hasBeenInside: value?.hasBeenInside === true,
+    lastInsideGeofenceName: value?.lastInsideGeofenceName
+      ? String(value.lastInsideGeofenceName)
+      : null,
     isParked: value?.isParked === true,
     speedKmh: Number(value?.speedKmh || 0),
     gpsStatus: String(value?.gpsStatus || ''),
@@ -721,12 +743,16 @@ function mapGpsDockEvaluation(value: any): GpsDockEvaluationResult {
     parkingStartedAt: value?.parkingStartedAt ? String(value.parkingStartedAt) : null,
     dwellSeconds: Number(value?.dwellSeconds || 0),
     dwellMinutes: Number(value?.dwellMinutes || 0),
-    requiredDwellSeconds: Number(value?.requiredDwellSeconds || 300),
+    requiredDwellSeconds: Number(value?.requiredDwellSeconds ?? 180),
     remainingDwellSeconds: Number(value?.remainingDwellSeconds || 0),
     confirmedAt: value?.confirmedAt ? String(value.confirmedAt) : null,
     readyForGpsStampEta: value?.readyForGpsStampEta === true,
+    readyForGpsStampEtd: value?.readyForGpsStampEtd === true,
     autoStampExecuted: value?.autoStampExecuted === true,
-    parkingSpeedThresholdKmh: Number(value?.parkingSpeedThresholdKmh || 3),
+    autoStampResult: value?.autoStampResult ?? null,
+    autoStampEtaResult: value?.autoStampEtaResult ?? null,
+    autoStampEtdResult: value?.autoStampEtdResult ?? null,
+    parkingSpeedThresholdKmh: Number(value?.parkingSpeedThresholdKmh ?? 0),
     gpsStaleThresholdSeconds: Number(value?.gpsStaleThresholdSeconds || 120),
   };
 }
@@ -1419,6 +1445,14 @@ export async function updateTruckInSheets(
   }
 }
 
+export function normalizeLicensePlate(value: unknown): string {
+  return String(value ?? '')
+    .trim()
+    .split('(')[0]
+    .replace(/\bEX\b/gi, '')
+    .replace(/[\s-]/g, '')
+    .toUpperCase();
+}
 function normalizeGpsHeader(value: unknown): string {
   return String(value || '').trim().toLowerCase().replace(/\s/g, '');
 }
@@ -1456,7 +1490,7 @@ export async function fetchGpsLocations(
   const lngIndex = findGpsColumn(headers, ['ลองจิจูด', 'Longitude', 'Lng', 'Lon']);
   const speedIndex = findGpsColumn(headers, ['ความเร็ว', 'Speed']);
   const headingIndex = findGpsColumn(headers, ['ทิศทาง', 'Heading', 'Direction']);
-  const locationIndex = findGpsColumn(headers, ['ชื่อสถานที่', 'สถานที่', 'Location']);
+  const locationIndex = findGpsColumn(headers, ['ชื่อสถานี', 'ชื่อสถานที่', 'สถานที่', 'Location']);
   const timeIndex = findGpsColumn(headers, ['เวลา GPS', 'GPS Time', 'GPS Datetime']);
   const statusIndex = findGpsColumn(headers, ['สถานะ', 'Status']);
   const receivedIndex = findGpsColumn(headers, [
@@ -1566,11 +1600,13 @@ export async function fetchGpsGeofences(): Promise<GpsGeofencesResult> {
       radiusMeters: Number(item?.radiusMeters),
     })),
     config: {
-      parkingSpeedThresholdKmh: Number(data.config?.parkingSpeedThresholdKmh || 3),
-      dwellThresholdSeconds: Number(data.config?.dwellThresholdSeconds || 300),
+      parkingSpeedThresholdKmh: Number(data.config?.parkingSpeedThresholdKmh ?? 0),
+      dwellThresholdSeconds: Number(data.config?.dwellThresholdSeconds ?? 180),
       gpsStaleThresholdSeconds: Number(data.config?.gpsStaleThresholdSeconds || 120),
       movementGraceSeconds: Number(data.config?.movementGraceSeconds || 30),
       autoStampEnabled: data.config?.autoStampEnabled === true,
+      autoStampEtaEnabled: data.config?.autoStampEtaEnabled === true,
+      autoStampEtdEnabled: data.config?.autoStampEtdEnabled === true,
     },
     timestamp: String(data.timestamp || ''),
   };
