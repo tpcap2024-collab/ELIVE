@@ -43,6 +43,8 @@ import {
   CheckCircle2,
   ClipboardList,
   Clock,
+  Eye,
+  EyeOff,
   KeyRound,
   LayoutDashboard,
   Map,
@@ -143,10 +145,11 @@ export default function App() {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmNewPassword, setShowConfirmNewPassword] = useState(false);
   const [isChangingPassword, setIsChangingPassword] = useState(false);
   const [changePasswordError, setChangePasswordError] = useState('');
   const [changePasswordSuccess, setChangePasswordSuccess] = useState('');
-  const [appsScriptUrl, setAppsScriptUrl] = useState(getAppsScriptUrl());
   const [showHiddenRows, setShowHiddenRows] = useState(false);
   const [selectedDockFilters, setSelectedDockFilters] = useState<Exclude<DockFilter, 'ALL'>[]>([
     'M1',
@@ -713,6 +716,8 @@ export default function App() {
     setConfirmNewPassword('');
     setChangePasswordError('');
     setChangePasswordSuccess('');
+    setShowNewPassword(false);
+    setShowConfirmNewPassword(false);
     setShowSettings(false);
     setShowChangePassword(true);
   };
@@ -724,6 +729,8 @@ export default function App() {
     setConfirmNewPassword('');
     setChangePasswordError('');
     setChangePasswordSuccess('');
+    setShowNewPassword(false);
+    setShowConfirmNewPassword(false);
   };
   const handleChangePassword = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -1473,12 +1480,56 @@ export default function App() {
                 </label>
                 <label className="block">
                   <span className="mb-1 block text-sm font-medium text-slate-700">รหัสผ่านใหม่</span>
-                  <input type="password" value={newPassword} onChange={event => setNewPassword(event.target.value)} autoComplete="new-password" minLength={12} maxLength={128} required disabled={isChangingPassword} className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100" />
+                  <div className="relative">
+                    <input
+                      type={showNewPassword ? 'text' : 'password'}
+                      value={newPassword}
+                      onChange={event => setNewPassword(event.target.value)}
+                      autoComplete="new-password"
+                      minLength={12}
+                      maxLength={128}
+                      required
+                      disabled={isChangingPassword}
+                      className="w-full rounded-lg border border-slate-300 py-2 pl-3 pr-11 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowNewPassword(current => !current)}
+                      disabled={isChangingPassword}
+                      aria-label={showNewPassword ? 'ซ่อนรหัสผ่านใหม่' : 'แสดงรหัสผ่านใหม่'}
+                      title={showNewPassword ? 'ซ่อนรหัสผ่านใหม่' : 'แสดงรหัสผ่านใหม่'}
+                      className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-slate-500 hover:text-blue-600 disabled:opacity-50"
+                    >
+                      {showNewPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                    </button>
+                  </div>
                   <span className="mt-1 block text-xs text-slate-500">ความยาว 12-128 ตัวอักษร และต้องไม่เหมือนรหัสผ่านเดิม</span>
                 </label>
                 <label className="block">
                   <span className="mb-1 block text-sm font-medium text-slate-700">ยืนยันรหัสผ่านใหม่</span>
-                  <input type="password" value={confirmNewPassword} onChange={event => setConfirmNewPassword(event.target.value)} autoComplete="new-password" minLength={12} maxLength={128} required disabled={isChangingPassword} className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100" />
+                  <div className="relative">
+                    <input
+                      type={showConfirmNewPassword ? 'text' : 'password'}
+                      value={confirmNewPassword}
+                      onChange={event => setConfirmNewPassword(event.target.value)}
+                      autoComplete="new-password"
+                      minLength={12}
+                      maxLength={128}
+                      required
+                      disabled={isChangingPassword}
+                      className="w-full rounded-lg border border-slate-300 py-2 pl-3 pr-11 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirmNewPassword(current => !current)}
+                      disabled={isChangingPassword}
+                      aria-label={showConfirmNewPassword ? 'ซ่อนการยืนยันรหัสผ่านใหม่' : 'แสดงการยืนยันรหัสผ่านใหม่'}
+                      title={showConfirmNewPassword ? 'ซ่อนการยืนยันรหัสผ่านใหม่' : 'แสดงการยืนยันรหัสผ่านใหม่'}
+                      className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-slate-500 hover:text-blue-600 disabled:opacity-50"
+                    >
+                      {showConfirmNewPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                    </button>
+                  </div>
                 </label>
                 {changePasswordError && <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{changePasswordError}</div>}
                 {changePasswordSuccess && <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{changePasswordSuccess}</div>}
@@ -1520,23 +1571,13 @@ export default function App() {
                   </div>
                 </div>
               </div>
-              <label className="block">
-                <span className="mb-1 block text-sm font-medium text-slate-700">ELIVE Backend API URL</span>
-                <input type="text" value={appsScriptUrl} onChange={(event) => setAppsScriptUrl(event.target.value)} placeholder="https://elive-api.onrender.com" className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:ring-2 focus:ring-blue-500" />
-              </label>
-              <p className="mt-2 text-xs text-slate-500">Frontend connects to the ELIVE Backend API configured in VITE_API_URL.</p>
-              <div className="mt-6 flex justify-end gap-3">
-                <button type="button" onClick={() => setShowSettings(false)} className="rounded-lg px-4 py-2 text-slate-600 hover:bg-slate-100">Cancel</button>
+              <div className="mt-6 flex justify-end">
                 <button
                   type="button"
-                  onClick={() => {
-                    localStorage.setItem('apps_script_url', appsScriptUrl);
-                    setShowSettings(false);
-                    void loadData();
-                  }}
-                  className="rounded-lg bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700"
+                  onClick={() => setShowSettings(false)}
+                  className="rounded-lg bg-slate-800 px-4 py-2 font-medium text-white hover:bg-slate-900"
                 >
-                  Save Changes
+                  ปิด
                 </button>
               </div>
             </motion.div>
