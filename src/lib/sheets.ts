@@ -323,6 +323,22 @@ export interface EliveAuthResult {
   timestamp?: string;
   message?: string;
 }
+export interface ChangePasswordRequest {
+  currentPassword: string;
+  newPassword: string;
+  confirmNewPassword: string;
+}
+export interface ChangePasswordResult {
+  success: boolean;
+  message: string;
+  currentSessionPreserved: boolean;
+  otherSessionsRevoked: number;
+  passwordChangedAt?: string;
+  passwordPolicy?: {
+    minimumLength: number;
+    maximumLength: number;
+  };
+}
 
 export class EliveApiError extends Error {
   status: number;
@@ -1781,6 +1797,26 @@ export async function loginElive(
       username: normalizedUsername,
       password,
     }),
+  });
+}
+
+export async function changeElivePassword(
+  request: ChangePasswordRequest
+): Promise<ChangePasswordResult> {
+  const currentPassword = String(request?.currentPassword ?? '');
+  const newPassword = String(request?.newPassword ?? '');
+  const confirmNewPassword = String(request?.confirmNewPassword ?? '');
+  if (!currentPassword) throw new Error('กรุณากรอกรหัสผ่านปัจจุบัน');
+  if (newPassword.length < 12 || newPassword.length > 128) {
+    throw new Error('รหัสผ่านใหม่ต้องมีความยาว 12-128 ตัวอักษร');
+  }
+  if (newPassword !== confirmNewPassword) {
+    throw new Error('รหัสผ่านใหม่และการยืนยันไม่ตรงกัน');
+  }
+  return fetchApiRequest('/api/auth/change-password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ currentPassword, newPassword, confirmNewPassword }),
   });
 }
 
