@@ -753,7 +753,7 @@ function mapGpsDockEvaluation(value: any): GpsDockEvaluationResult {
     autoStampEtaResult: value?.autoStampEtaResult ?? null,
     autoStampEtdResult: value?.autoStampEtdResult ?? null,
     parkingSpeedThresholdKmh: Number(value?.parkingSpeedThresholdKmh ?? 0),
-    gpsStaleThresholdSeconds: Number(value?.gpsStaleThresholdSeconds || 120),
+    gpsStaleThresholdSeconds: Number(value?.gpsStaleThresholdSeconds ?? 300),
   };
 }
 export async function fetchMasterPlan(
@@ -1446,12 +1446,17 @@ export async function updateTruckInSheets(
 }
 
 export function normalizeLicensePlate(value: unknown): string {
-  return String(value ?? '')
+  const source = String(value ?? '')
     .trim()
-    .split('(')[0]
-    .replace(/\bEX\b/gi, '')
-    .replace(/[\s-]/g, '')
+    .normalize('NFKC')
+    .replace(/[\u200B-\u200D\u2060\uFEFF]/g, '')
     .toUpperCase();
+  const match = source.match(/^([0-9A-Zก-๙]{1,4})\s*-?\s*([0-9]{1,4})/u);
+  if (match) return `${match[1]}${match[2]}`.replace(/[\s-]/g, '');
+  return source
+    .split('(')[0]
+    .replace(/\s*(?:EXTRA|EX)(?:\s*-.*)?$/i, '')
+    .replace(/[\s-]/g, '');
 }
 function normalizeGpsHeader(value: unknown): string {
   return String(value || '').trim().toLowerCase().replace(/\s/g, '');
@@ -1602,7 +1607,7 @@ export async function fetchGpsGeofences(): Promise<GpsGeofencesResult> {
     config: {
       parkingSpeedThresholdKmh: Number(data.config?.parkingSpeedThresholdKmh ?? 0),
       dwellThresholdSeconds: Number(data.config?.dwellThresholdSeconds ?? 180),
-      gpsStaleThresholdSeconds: Number(data.config?.gpsStaleThresholdSeconds || 120),
+      gpsStaleThresholdSeconds: Number(data.config?.gpsStaleThresholdSeconds ?? 300),
       movementGraceSeconds: Number(data.config?.movementGraceSeconds || 30),
       autoStampEnabled: data.config?.autoStampEnabled === true,
       autoStampEtaEnabled: data.config?.autoStampEtaEnabled === true,
