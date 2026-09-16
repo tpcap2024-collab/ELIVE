@@ -71,7 +71,7 @@ const GPS_GEOFENCES: GeofenceConfig[] = [
     name: 'TPCAP-LSP',
     latitude: 13.624391050915499,
     longitude: 101.01532262451346,
-    radiusMeters: DEFAULT_GEOFENCE_RADIUS_METERS,
+    radiusMeters: 80,
     color: '#7c3aed',
   },
   {
@@ -87,7 +87,7 @@ const GPS_GEOFENCES: GeofenceConfig[] = [
     name: 'TPCAP-R1',
     latitude: 13.626408220162133,
     longitude: 101.01512843208137,
-    radiusMeters: DEFAULT_GEOFENCE_RADIUS_METERS,
+    radiusMeters: 80,
     color: '#059669',
   },
 ];
