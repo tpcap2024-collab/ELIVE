@@ -575,11 +575,16 @@ function cleanText(value) {
   return String(value ?? '').trim();
 }
 function normalizeLicensePlate(value) {
-  return cleanText(value)
-    .split('(')[0]
-    .replace(/\bEX\b/gi, '')
-    .replace(/[\s-]/g, '')
+  const source = cleanText(value)
+    .normalize('NFKC')
+    .replace(/[\u200B-\u200D\u2060\uFEFF]/g, '')
     .toUpperCase();
+  const match = source.match(/^([0-9A-Zก-๙]{1,4})\s*-?\s*([0-9]{1,4})/u);
+  if (match) return `${match[1]}${match[2]}`.replace(/[\s-]/g, '');
+  return source
+    .split('(')[0]
+    .replace(/\s*(?:EXTRA|EX)(?:\s*-.*)?$/i, '')
+    .replace(/[\s-]/g, '');
 }
 function parseBangkokDateTime(value, fieldName) {
   const text = cleanText(value);
