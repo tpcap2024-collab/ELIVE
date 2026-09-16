@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '12';
+const API_VERSION = '13';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -113,7 +113,6 @@ const ROLE_LEVELS = Object.freeze({
 const ROLE_NAMES = Object.freeze(Object.keys(ROLE_LEVELS));
 
 const RETRYABLE_STATUS_CODES = new Set([
-  404,
   408,
   425,
   429,
@@ -121,6 +120,16 @@ const RETRYABLE_STATUS_CODES = new Set([
   502,
   503,
   504,
+]);
+const NON_RETRYABLE_APPS_SCRIPT_ERROR_PATTERNS = Object.freeze([
+  'nonce has already been used',
+  'signature verification failed',
+  'signature has expired',
+  'request signature',
+  'http 400',
+  'http 401',
+  'http 403',
+  'http 404',
 ]);
 
 const SECURITY_HEADERS = Object.freeze({
@@ -1138,7 +1147,7 @@ async function runGpsBackgroundCycle() {
   const startedAt = Date.now();
   const summary = { processed: 0, confirmed: 0, etaStamped: 0, etdStamped: 0, stamped: 0, alreadyStamped: 0, failed: 0, failures: [] };
   try {
-    const truckResult = await getTruckDataWithCache(true);
+    const truckResult = await getTruckDataWithCache(false);
     const inputs = buildBackgroundGpsInputs(truckResult.data);
     for (const input of inputs) {
       if (gpsWorkerStopping) break;
@@ -1760,6 +1769,13 @@ function recordAppsScriptError(error) {
   lastAppsScriptErrorTime = new Date().toISOString();
 }
 
+function isRetryableAppsScriptError(error) {
+  const message = getErrorMessage(error).toLowerCase();
+  return !NON_RETRYABLE_APPS_SCRIPT_ERROR_PATTERNS.some(pattern =>
+    message.includes(pattern)
+  );
+}
+
 function validateAppsScriptSharedSecret() {
   if (!APPS_SCRIPT_SHARED_SECRET || APPS_SCRIPT_SHARED_SECRET.length < 32) {
     throw new Error('APPS_SCRIPT_SHARED_SECRET must contain at least 32 characters.');
@@ -1847,6 +1863,7 @@ async function requestAppsScriptGet(action, parameters = {}) {
         attempt,
         error: getErrorMessage(error),
       });
+      if (!isRetryableAppsScriptError(error)) break;
     }
 
     if (attempt < APPS_SCRIPT_MAX_ATTEMPTS) {
@@ -2345,6 +2362,9 @@ app.get(['/health', '/api/health'], (req, res) => {
       autoStampEtdEnabled: GPS_AUTO_STAMP_ETD_ENABLED,
       backgroundWorkerEnabled: GPS_BACKGROUND_WORKER_ENABLED,
       backgroundWorkerIntervalMs: GPS_BACKGROUND_WORKER_INTERVAL_MS,
+      workerTruckSnapshotCacheSeconds: Math.floor(FRESH_CACHE_DURATION_MS / 1000),
+      workerForcesFullTruckRefreshEveryCycle: false,
+      appsScriptGetRetryPolicy: 'RETRY_TIMEOUT_408_425_429_5XX_NO_RETRY_4XX',
       serviceMode: SERVICE_MODE,
       parkingSpeedThresholdKmh: GPS_PARKING_SPEED_THRESHOLD_KMH,
       dwellThresholdSeconds: Math.floor(GPS_DWELL_THRESHOLD_MS / 1000),
