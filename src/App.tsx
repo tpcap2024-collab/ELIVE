@@ -22,6 +22,7 @@ import {
 } from './types';
 
 import {
+  changeElivePassword,
   confirmWorkDetail,
   ELIVE_UNAUTHORIZED_EVENT,
   EliveAuthUser,
@@ -42,6 +43,7 @@ import {
   CheckCircle2,
   ClipboardList,
   Clock,
+  KeyRound,
   LayoutDashboard,
   Map,
   MapPin,
@@ -137,6 +139,13 @@ export default function App() {
   const [workDetailTruck, setWorkDetailTruck] = useState<Truck | null>(null);
   const [isConfirmingWorkDetail, setIsConfirmingWorkDetail] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showChangePassword, setShowChangePassword] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
+  const [changePasswordError, setChangePasswordError] = useState('');
+  const [changePasswordSuccess, setChangePasswordSuccess] = useState('');
   const [appsScriptUrl, setAppsScriptUrl] = useState(getAppsScriptUrl());
   const [showHiddenRows, setShowHiddenRows] = useState(false);
   const [selectedDockFilters, setSelectedDockFilters] = useState<Exclude<DockFilter, 'ALL'>[]>([
@@ -190,6 +199,7 @@ export default function App() {
       setIsRefreshing(false);
       setCurrentView('dashboard');
       setShowSettings(false);
+      setShowChangePassword(false);
       setActionDialog({ isOpen: false, truck: null });
       setWorkDetailTruck(null);
       setIsGpsPopupOpen(false);
@@ -690,12 +700,62 @@ export default function App() {
       setLoginError('');
       setCurrentView('dashboard');
       setShowSettings(false);
+      setShowChangePassword(false);
       setActionDialog({ isOpen: false, truck: null });
       setWorkDetailTruck(null);
       closeGpsPopup();
     }
   };
 
+  const openChangePassword = () => {
+    setCurrentPassword('');
+    setNewPassword('');
+    setConfirmNewPassword('');
+    setChangePasswordError('');
+    setChangePasswordSuccess('');
+    setShowSettings(false);
+    setShowChangePassword(true);
+  };
+  const closeChangePassword = () => {
+    if (isChangingPassword) return;
+    setShowChangePassword(false);
+    setCurrentPassword('');
+    setNewPassword('');
+    setConfirmNewPassword('');
+    setChangePasswordError('');
+    setChangePasswordSuccess('');
+  };
+  const handleChangePassword = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (isChangingPassword) return;
+    setChangePasswordError('');
+    setChangePasswordSuccess('');
+    if (newPassword !== confirmNewPassword) {
+      setChangePasswordError('รหัสผ่านใหม่และการยืนยันไม่ตรงกัน');
+      return;
+    }
+    setIsChangingPassword(true);
+    try {
+      const result = await changeElivePassword({
+        currentPassword,
+        newPassword,
+        confirmNewPassword,
+      });
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmNewPassword('');
+      setChangePasswordSuccess(
+        `${result.message} ยกเลิก Session อื่นแล้ว ${result.otherSessionsRevoked} รายการ`
+      );
+    } catch (error) {
+      console.error('Unable to change ELIVE password:', error);
+      setChangePasswordError(
+        error instanceof Error ? error.message : 'ไม่สามารถเปลี่ยนรหัสผ่านได้'
+      );
+    } finally {
+      setIsChangingPassword(false);
+    }
+  };
   if (isCheckingSession) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-50 font-sans">
@@ -1385,12 +1445,80 @@ export default function App() {
             : document.body
         )}
       <AnimatePresence>
+        {showChangePassword && (
+          <div className="fixed inset-0 z-[1600] flex items-center justify-center bg-slate-950/70 p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl"
+            >
+              <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
+                <div>
+                  <h3 className="flex items-center gap-2 text-lg font-bold text-slate-800">
+                    <KeyRound className="h-5 w-5 text-blue-600" /> เปลี่ยนรหัสผ่าน
+                  </h3>
+                  <p className="mt-1 text-xs text-slate-500">
+                    บัญชี {authenticatedUser.username} · {authenticatedUser.role}
+                  </p>
+                </div>
+                <button type="button" onClick={closeChangePassword} disabled={isChangingPassword} className="rounded-full p-2 text-slate-500 hover:bg-slate-100 disabled:opacity-50">
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              <form onSubmit={handleChangePassword} className="space-y-4 p-6">
+                <label className="block">
+                  <span className="mb-1 block text-sm font-medium text-slate-700">รหัสผ่านปัจจุบัน</span>
+                  <input type="password" value={currentPassword} onChange={event => setCurrentPassword(event.target.value)} autoComplete="current-password" required disabled={isChangingPassword} className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100" />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-sm font-medium text-slate-700">รหัสผ่านใหม่</span>
+                  <input type="password" value={newPassword} onChange={event => setNewPassword(event.target.value)} autoComplete="new-password" minLength={12} maxLength={128} required disabled={isChangingPassword} className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100" />
+                  <span className="mt-1 block text-xs text-slate-500">ความยาว 12-128 ตัวอักษร และต้องไม่เหมือนรหัสผ่านเดิม</span>
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-sm font-medium text-slate-700">ยืนยันรหัสผ่านใหม่</span>
+                  <input type="password" value={confirmNewPassword} onChange={event => setConfirmNewPassword(event.target.value)} autoComplete="new-password" minLength={12} maxLength={128} required disabled={isChangingPassword} className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100" />
+                </label>
+                {changePasswordError && <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{changePasswordError}</div>}
+                {changePasswordSuccess && <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{changePasswordSuccess}</div>}
+                <div className="flex justify-end gap-3 pt-2">
+                  <button type="button" onClick={closeChangePassword} disabled={isChangingPassword} className="rounded-lg px-4 py-2 text-slate-600 hover:bg-slate-100 disabled:opacity-50">ปิด</button>
+                  <button type="submit" disabled={isChangingPassword} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 font-bold text-white hover:bg-blue-700 disabled:opacity-50">
+                    {isChangingPassword && <RefreshCw className="h-4 w-4 animate-spin" />}
+                    {isChangingPassword ? 'กำลังเปลี่ยน...' : 'ยืนยันเปลี่ยนรหัสผ่าน'}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
         {showSettings && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
             <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
               <div className="mb-6 flex items-center justify-between">
                 <h3 className="flex items-center gap-2 text-lg font-bold text-slate-800"><Settings className="h-5 w-5 text-blue-500" />Settings</h3>
                 <button type="button" onClick={() => setShowSettings(false)} className="rounded-full p-2 text-slate-500 hover:bg-slate-100"><X className="h-5 w-5" /></button>
+              </div>
+              <div className="mb-5 rounded-xl border border-blue-200 bg-blue-50 p-4">
+                <div className="flex items-start gap-3">
+                  <KeyRound className="mt-0.5 h-5 w-5 text-blue-600" />
+                  <div className="flex-1">
+                    <div className="font-bold text-slate-800">เปลี่ยนรหัสผ่าน</div>
+                    <p className="mt-1 text-xs text-slate-600">
+                      ต้องยืนยันด้วยรหัสผ่านปัจจุบัน และระบบจะยกเลิก Session อื่นของบัญชีนี้
+                    </p>
+                    <button
+                      type="button"
+                      onClick={openChangePassword}
+                      className="mt-3 rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700"
+                    >
+                      เปิดเมนูเปลี่ยนรหัสผ่าน
+                    </button>
+                  </div>
+                </div>
               </div>
               <label className="block">
                 <span className="mb-1 block text-sm font-medium text-slate-700">ELIVE Backend API URL</span>
