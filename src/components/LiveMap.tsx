@@ -15,7 +15,6 @@ import {
 } from '../types';
 
 import {
-  evaluateGpsDock,
   fetchGpsDockStatus,
   fetchRouteToTpcap,
   GpsDockEvaluationResult,
@@ -568,8 +567,6 @@ export function LiveMap({
     useRef(0);
   const gpsDockRequestIdRef =
     useRef(0);
-  const lastEvaluatedGpsSignatureRef =
-    useRef('');
 
   const appliedInitialTruckIdRef =
     useRef<string | null>(
@@ -1132,23 +1129,12 @@ export function LiveMap({
   useEffect(() => {
     if (!selectedGpsLocation || !selectedTruck) {
       gpsDockRequestIdRef.current += 1;
-      lastEvaluatedGpsSignatureRef.current = '';
       setGpsDockResult(null);
       setGpsDockError(null);
       setIsGpsDockLoading(false);
       return;
     }
 
-    const gpsSignature = [
-      selectedTruck.id,
-      selectedGpsLocation.gpsId,
-      selectedGpsLocation.latitude,
-      selectedGpsLocation.longitude,
-      selectedGpsLocation.speed,
-      selectedGpsLocation.gpsStatus,
-      selectedGpsLocation.gpsTime,
-      selectedGpsLocation.receivedAt,
-    ].join('|');
     const requestId = gpsDockRequestIdRef.current + 1;
     gpsDockRequestIdRef.current = requestId;
     let cancelled = false;
@@ -1156,35 +1142,26 @@ export function LiveMap({
     const loadGpsDockStatus = async () => {
       setIsGpsDockLoading(true);
       setGpsDockError(null);
+
       try {
-        let result: GpsDockEvaluationResult | null;
-        if (lastEvaluatedGpsSignatureRef.current !== gpsSignature) {
-          result = await evaluateGpsDock({
-            codeRun: selectedTruck.id,
-            gpsId: selectedGpsLocation.gpsId,
-            licensePlate: selectedGpsLocation.licensePlate,
-            planLicensePlate: selectedTruck.licensePlate,
-            latitude: selectedGpsLocation.latitude,
-            longitude: selectedGpsLocation.longitude,
-            speed: selectedGpsLocation.speed,
-            gpsStatus: selectedGpsLocation.gpsStatus,
-            gpsTime: selectedGpsLocation.gpsTime,
-            receivedAt: selectedGpsLocation.receivedAt,
-          });
-          lastEvaluatedGpsSignatureRef.current = gpsSignature;
-        } else {
-          result = await fetchGpsDockStatus(selectedTruck.id);
+        const result = await fetchGpsDockStatus(selectedTruck.id);
+
+        if (cancelled || gpsDockRequestIdRef.current !== requestId) {
+          return;
         }
-        if (cancelled || gpsDockRequestIdRef.current !== requestId) return;
+
         setGpsDockResult(result);
       } catch (error) {
-        if (cancelled || gpsDockRequestIdRef.current !== requestId) return;
-        console.error('Unable to evaluate GPS Dock status:', error);
+        if (cancelled || gpsDockRequestIdRef.current !== requestId) {
+          return;
+        }
+
+        console.error('Unable to load GPS Dock status:', error);
         setGpsDockResult(null);
         setGpsDockError(
           error instanceof Error
             ? error.message
-            : 'ไม่สามารถตรวจสอบสถานะ GPS Geofence ได้'
+            : 'ไม่สามารถอ่านสถานะ GPS Geofence จากระบบหลังบ้านได้'
         );
       } finally {
         if (!cancelled && gpsDockRequestIdRef.current === requestId) {
@@ -1194,14 +1171,17 @@ export function LiveMap({
     };
 
     void loadGpsDockStatus();
+
     const intervalId = window.setInterval(() => {
       void loadGpsDockStatus();
     }, 30000);
+
     return () => {
       cancelled = true;
       window.clearInterval(intervalId);
     };
   }, [selectedGpsLocation, selectedTruck]);
+
   useEffect(() => {
     if (
       !selectedGpsLocation
@@ -1523,7 +1503,6 @@ export function LiveMap({
         null
       );
       gpsDockRequestIdRef.current += 1;
-      lastEvaluatedGpsSignatureRef.current = '';
       setGpsDockResult(null);
       setGpsDockError(null);
       setIsGpsDockLoading(false);
@@ -1986,7 +1965,7 @@ export function LiveMap({
                   {isGpsDockLoading && (
                     <div className="mt-2 flex items-center gap-2 text-xs text-blue-700">
                       <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-                      กำลังอัปเดต Dwell State
+                      กำลังอ่าน Dwell State จากระบบหลังบ้าน
                     </div>
                   )}
                   {gpsDockError && (
