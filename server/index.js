@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '11';
+const API_VERSION = '12';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -28,8 +28,8 @@ const APPS_SCRIPT_MAX_ATTEMPTS = 3;
 const APPS_SCRIPT_SIGNATURE_MAX_AGE_MS = 5 * 60 * 1000;
 const APPS_SCRIPT_SHARED_SECRET = String(process.env.APPS_SCRIPT_SHARED_SECRET || '').trim();
 const MAX_UPLOAD_ROWS = 500;
-const GPS_PARKING_SPEED_THRESHOLD_KMH = 3;
-const GPS_DWELL_THRESHOLD_MS = 5 * 60 * 1000;
+const GPS_PARKING_SPEED_THRESHOLD_KMH = 0;
+const GPS_DWELL_THRESHOLD_MS = 3 * 60 * 1000;
 const GPS_STALE_THRESHOLD_MS = 2 * 60 * 1000;
 const GPS_MOVEMENT_GRACE_MS = 30 * 1000;
 const GPS_DWELL_STATE_TTL_SECONDS = 4 * 60 * 60;
@@ -39,8 +39,8 @@ const GPS_VEHICLE_CYCLE_TTL_SECONDS = 36 * 60 * 60;
 const GPS_AUTO_STAMP_KEY_PREFIX = 'elive:gps-auto-stamp:';
 const GPS_AUTO_STAMP_LOCK_SECONDS = 90;
 const GPS_AUTO_STAMP_RESULT_TTL_SECONDS = 36 * 60 * 60;
-const GPS_AUTO_STAMP_ETA_ENABLED = true;
-const GPS_AUTO_STAMP_ETD_ENABLED = false;
+const GPS_AUTO_STAMP_ETA_ENABLED = cleanText(process.env.GPS_AUTO_STAMP_ETA_ENABLED || 'true').toLowerCase() === 'true';
+const GPS_AUTO_STAMP_ETD_ENABLED = cleanText(process.env.GPS_AUTO_STAMP_ETD_ENABLED || 'false').toLowerCase() === 'true';
 const GPS_BACKGROUND_WORKER_ENABLED = cleanText(process.env.GPS_BACKGROUND_WORKER_ENABLED || 'false').toLowerCase() === 'true';
 const GPS_BACKGROUND_WORKER_INTERVAL_MS = Math.max(15000, Number(process.env.GPS_BACKGROUND_WORKER_INTERVAL_MS || 30000));
 const GPS_WORKER_LOCK_KEY = 'elive:gps-worker:leader';
@@ -891,6 +891,38 @@ async function executeGpsAutoStampEta(state) {
     throw error;
   }
 }
+async function executeGpsAutoStampEtd(state, activeTrip) {
+  if (!GPS_AUTO_STAMP_ETD_ENABLED || !state?.readyForGpsStampEtd) return null;
+  if (!activeTrip?.stampEta || activeTrip?.stampEtd) return null;
+  if (!state.wasInsideBeforeExit || state.isInside || state.status !== 'OUTSIDE_GEOFENCE') return null;
+  if (!state.activeCodeRun || state.activeCodeRun !== state.codeRun) return null;
+  const client = requireRedisClient();
+  const key = getGpsAutoStampKey('ETD', state.activeCodeRun);
+  const lockAcquired = await client.set(key, JSON.stringify({ status: 'PROCESSING', startedAt: new Date().toISOString() }), { NX: true, EX: GPS_AUTO_STAMP_LOCK_SECONDS });
+  if (!lockAcquired) {
+    const existing = await client.get(key);
+    return existing ? JSON.parse(existing) : { status: 'PROCESSING' };
+  }
+  try {
+    const response = await stampActualData({
+      codeRun: state.activeCodeRun,
+      stampType: 'ETD',
+      stampSource: 'GPS_EXIT',
+      stampTime: state.gpsTime,
+      stampedBy: 'GPS SYSTEM',
+      geofence: state.lastInsideGeofenceName || state.geofenceName,
+      exitDetectedAt: state.gpsTime,
+      gpsSnapshot: { gpsTime: state.gpsTime, latitude: state.latitude, longitude: state.longitude, speed: state.speedKmh, geofence: state.lastInsideGeofenceName || state.geofenceName },
+    });
+    const stampResult = response?.result || response;
+    const stored = { status: stampResult?.written === false ? 'ALREADY_STAMPED' : 'STAMPED', result: stampResult, completedAt: new Date().toISOString() };
+    await client.set(key, JSON.stringify(stored), { EX: GPS_AUTO_STAMP_RESULT_TTL_SECONDS });
+    return stored;
+  } catch (error) {
+    await client.del(key);
+    throw error;
+  }
+}
 async function evaluateGpsDock(payload) {
   const input = validateGpsDockPayload(payload);
   const nowMs = Date.now();
@@ -900,7 +932,7 @@ async function evaluateGpsDock(payload) {
   const gpsAgeMs = Math.max(0, nowMs - gpsTimeMs);
   const nearest = findNearestGpsGeofence(input.latitude, input.longitude);
   const isInside = nearest.distanceMeters <= nearest.radiusMeters;
-  const isParked = input.speedKmh <= GPS_PARKING_SPEED_THRESHOLD_KMH && input.gpsStatus.includes('รถจอด');
+  const isParked = input.speedKmh === GPS_PARKING_SPEED_THRESHOLD_KMH;
   const tripResolution = await resolveVehicleTrip(input, isInside);
   const vehicleCycle = tripResolution.state;
   const activeTrip = tripResolution.activeTrip;
@@ -909,6 +941,9 @@ async function evaluateGpsDock(payload) {
     ? normalizeLicensePlate(input.licensePlate) === normalizeLicensePlate(activeTrip.planLicensePlate)
     : normalizeLicensePlate(input.licensePlate) === normalizeLicensePlate(input.planLicensePlate);
   const previous = await readGpsDwellState(effectiveCodeRun);
+  const wasInsideBeforeExit = previous?.isInside === true || previous?.hasBeenInside === true;
+  const hasBeenInside = isInside || wasInsideBeforeExit;
+  const lastInsideGeofenceName = isInside ? nearest.name : previous?.lastInsideGeofenceName || previous?.geofenceName || null;
   let parkingStartedAtMs = Number(previous?.parkingStartedAtMs || 0);
   let movingStartedAtMs = Number(previous?.movingStartedAtMs || 0);
   let status = 'OUTSIDE_GEOFENCE';
@@ -969,6 +1004,9 @@ async function evaluateGpsDock(payload) {
     radiusMeters: nearest.radiusMeters,
     distanceMeters: Number(nearest.distanceMeters.toFixed(2)),
     isInside,
+    wasInsideBeforeExit,
+    hasBeenInside,
+    lastInsideGeofenceName,
     isParked,
     speedKmh: input.speedKmh,
     gpsStatus: input.gpsStatus,
@@ -984,17 +1022,18 @@ async function evaluateGpsDock(payload) {
     confirmedAt: status === 'DOCK_IN_CONFIRMED'
       ? previous?.confirmedAt || new Date(eventTimeMs).toISOString()
       : null,
-    readyForGpsStampEta: status === 'DOCK_IN_CONFIRMED' && Boolean(activeTrip),
+    readyForGpsStampEta: status === 'DOCK_IN_CONFIRMED' && Boolean(activeTrip) && !activeTrip?.stampEta,
+    readyForGpsStampEtd: GPS_AUTO_STAMP_ETD_ENABLED && status === 'OUTSIDE_GEOFENCE' && wasInsideBeforeExit && Boolean(activeTrip?.stampEta) && !activeTrip?.stampEtd,
     autoStampExecuted: false,
+    autoStampEtaResult: null,
+    autoStampEtdResult: null,
   };
   await writeGpsDwellState(effectiveCodeRun, state);
-  let autoStampResult = null;
-  if (state.readyForGpsStampEta) {
-    autoStampResult = await executeGpsAutoStampEta(state);
-    state.autoStampExecuted = autoStampResult?.status === 'STAMPED' || autoStampResult?.status === 'ALREADY_STAMPED';
-    state.autoStampResult = autoStampResult;
-    await writeGpsDwellState(effectiveCodeRun, state);
-  }
+  if (state.readyForGpsStampEta) state.autoStampEtaResult = await executeGpsAutoStampEta(state);
+  if (state.readyForGpsStampEtd) state.autoStampEtdResult = await executeGpsAutoStampEtd(state, activeTrip);
+  state.autoStampResult = state.autoStampEtdResult || state.autoStampEtaResult;
+  state.autoStampExecuted = ['STAMPED', 'ALREADY_STAMPED'].includes(state.autoStampResult?.status);
+  await writeGpsDwellState(effectiveCodeRun, state);
   return createGpsDockResult(state);
 }
 function normalizeGpsHeader(value) {
@@ -1091,7 +1130,7 @@ async function runGpsBackgroundCycle() {
     return { skipped: true, reason: 'LEADER_LOCK_NOT_ACQUIRED' };
   }
   const startedAt = Date.now();
-  const summary = { processed: 0, confirmed: 0, stamped: 0, alreadyStamped: 0, failed: 0, failures: [] };
+  const summary = { processed: 0, confirmed: 0, etaStamped: 0, etdStamped: 0, stamped: 0, alreadyStamped: 0, failed: 0, failures: [] };
   try {
     const truckResult = await getTruckDataWithCache(true);
     const inputs = buildBackgroundGpsInputs(truckResult.data);
@@ -1101,6 +1140,8 @@ async function runGpsBackgroundCycle() {
         const result = await evaluateGpsDock(input);
         summary.processed += 1;
         if (result.status === 'DOCK_IN_CONFIRMED') summary.confirmed += 1;
+        if (result.autoStampEtaResult?.status === 'STAMPED') summary.etaStamped += 1;
+        if (result.autoStampEtdResult?.status === 'STAMPED') summary.etdStamped += 1;
         if (result.autoStampResult?.status === 'STAMPED') summary.stamped += 1;
         if (result.autoStampResult?.status === 'ALREADY_STAMPED') summary.alreadyStamped += 1;
       } catch (error) {
@@ -1740,24 +1781,20 @@ async function requestAppsScriptGet(action, parameters = {}) {
   for (const [key, value] of Object.entries(parameters)) {
     if (value !== undefined && value !== null) signedParameters[key] = String(value);
   }
-  const auth = createAppsScriptSignature('GET', action, signedParameters);
-  const queryData = {
-    action,
-    ...signedParameters,
-    authTimestamp: auth.timestamp,
-    authNonce: auth.nonce,
-    authSignature: auth.signature,
-    t: String(Date.now()),
-  };
-
-  const requestUrl = `${APPS_SCRIPT_URL}?${new URLSearchParams(
-    queryData
-  ).toString()}`;
-
   let finalError = null;
 
   for (let attempt = 1; attempt <= APPS_SCRIPT_MAX_ATTEMPTS; attempt += 1) {
     try {
+      const auth = createAppsScriptSignature('GET', action, signedParameters);
+      const queryData = {
+        action,
+        ...signedParameters,
+        authTimestamp: auth.timestamp,
+        authNonce: auth.nonce,
+        authSignature: auth.signature,
+        t: String(Date.now()),
+      };
+      const requestUrl = `${APPS_SCRIPT_URL}?${new URLSearchParams(queryData).toString()}`;
       console.log(`Calling Apps Script GET ${action}, attempt ${attempt}`);
 
       const response = await fetchWithTimeout(
@@ -2309,6 +2346,8 @@ app.get(['/health', '/api/health'], (req, res) => {
       movementGraceSeconds: Math.floor(GPS_MOVEMENT_GRACE_MS / 1000),
       multipleTripsPerVehiclePerDay: true,
       exitRequiredBeforeNextTrip: true,
+      etaRule: 'SPEED_EQUALS_ZERO_FOR_3_MINUTES',
+      etdRule: 'IMMEDIATE_ON_FIRST_FRESH_GPS_OUTSIDE_AFTER_INSIDE',
       vehicleCycleTtlSeconds: GPS_VEHICLE_CYCLE_TTL_SECONDS,
       geofences: GPS_GEOFENCES,
     },
