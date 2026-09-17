@@ -114,6 +114,9 @@ function getDockGroup(value?: string): Exclude<DockFilter, 'ALL'> | '' {
 function isInboundProject(truck: Truck): boolean {
   return String(truck.project || '').trim().toUpperCase() === 'INBOUND';
 }
+function hasNoWorkAction(truck: Truck): boolean {
+  return String(truck.actionProblem || '').includes('ไม่มีงานลง');
+}
 
 function getPlanEtaSortValue(value?: string): number {
   const match = String(value || '').trim().match(/^(\d{1,2}):(\d{2})/);
@@ -580,6 +583,9 @@ export default function App() {
   };
 
   const getRowClass = (truck: Truck): string => {
+    if (hasNoWorkAction(truck)) {
+      return 'bg-slate-300 hover:bg-slate-400 transition-colors';
+    }
     if (truck.status === 'COMPLETED' || truck.status === 'TRUCK_OUT') {
       return 'row-complete';
     }
@@ -1171,7 +1177,15 @@ export default function App() {
                               </div>
                             </td>
                             <td className="whitespace-nowrap px-3 py-1.5 font-mono text-slate-600">{truck.stampEtd || '-'}</td>
-                            <td className="whitespace-nowrap px-3 py-1.5"><StatusBadge status={truck.status} /></td>
+                            <td className="whitespace-nowrap px-3 py-1.5">
+                              {hasNoWorkAction(truck) ? (
+                                <span className="inline-flex rounded-full border border-slate-600 bg-slate-700 px-2.5 py-1 text-[10px] font-bold text-white">
+                                  ไม่มีงาน
+                                </span>
+                              ) : (
+                                <StatusBadge status={truck.status} />
+                              )}
+                            </td>
                             <td className="px-3 py-1.5 text-center">
                               <button type="button" onClick={() => handleOpenGps(truck.id)} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border-2 border-red-800 bg-red-700 text-white shadow-sm transition hover:bg-red-800 active:scale-95">
                                 <MapPin className="h-5 w-5" />
