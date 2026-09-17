@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '16';
+const API_VERSION = '17';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -735,6 +735,8 @@ function buildTripsForPlate(data, licensePlate, dateText) {
       planEtaMinutes: parsePlanMinutes(row[10]),
       stampEta: cleanText(actual[4]),
       stampEtd: cleanText(actual[5]),
+      actionProblem: cleanText(actual[6]),
+      noWorkAction: cleanText(actual[6]).includes('ไม่มีงาน'),
       completed: Boolean(cleanText(actual[5])),
     });
   }
@@ -746,7 +748,7 @@ function buildTripsForPlate(data, licensePlate, dateText) {
 }
 function selectTripForVehicle(trips, nowMinutes, previousCycle = null) {
   const inProgressTrips = trips
-    .filter(trip => trip.stampEta && !trip.stampEtd)
+    .filter(trip => trip.stampEta && !trip.stampEtd && !trip.noWorkAction)
     .sort(compareTripsByPlanTime);
   if (inProgressTrips.length) {
     const lockedInProgress = inProgressTrips.find(
@@ -758,7 +760,7 @@ function selectTripForVehicle(trips, nowMinutes, previousCycle = null) {
       planEtaDifferenceMinutes: null,
     };
   }
-  const pendingTrips = trips.filter(trip => !trip.stampEta && !trip.stampEtd);
+  const pendingTrips = trips.filter(trip => !trip.stampEta && !trip.stampEtd && !trip.noWorkAction);
   if (!pendingTrips.length) {
     return {
       activeTrip: null,
@@ -828,7 +830,7 @@ async function resolveVehicleTrip(input, isInside) {
   }
   const activeTrip = waitingForExit ? null : selected.activeTrip;
   const nextPendingTrip = trips
-    .filter(trip => !trip.stampEta && !trip.stampEtd)
+    .filter(trip => !trip.stampEta && !trip.stampEtd && !trip.noWorkAction)
     .sort(compareTripsByPlanTime)[0] || null;
   const state = {
     licensePlate: input.licensePlate,
@@ -947,6 +949,7 @@ async function stampActualData(payload) {
   return result;
 }
 async function executeGpsAutoStampEta(state) {
+  if (state?.noWorkAction) return { status: 'SKIPPED', reason: 'NO_WORK_ACTION' };
   if (!GPS_AUTO_STAMP_ETA_ENABLED || !state?.readyForGpsStampEta || state?.status !== 'DOCK_IN_CONFIRMED') return null;
   if (state.waitingForExit || !state.activeCodeRun || state.activeCodeRun !== state.codeRun) return null;
   const client = requireRedisClient();
@@ -991,6 +994,7 @@ async function executeGpsAutoStampEta(state) {
   }
 }
 async function executeGpsAutoStampEtd(state, activeTrip) {
+  if (state?.noWorkAction || activeTrip?.noWorkAction) return { status: 'SKIPPED', reason: 'NO_WORK_ACTION' };
   if (!GPS_AUTO_STAMP_ETD_ENABLED || !state?.readyForGpsStampEtd) return null;
   if (!activeTrip?.stampEta || activeTrip?.stampEtd) return null;
   if (!state.wasInsideBeforeExit || state.isInside || state.status !== 'OUTSIDE_GEOFENCE') return null;
@@ -1098,6 +1102,7 @@ async function evaluateGpsDock(payload) {
     gpsMinuteOfDay: vehicleCycle.gpsMinuteOfDay,
     nextPlanEta: vehicleCycle.nextPlanEta,
     tripOrdering: vehicleCycle.tripOrdering,
+    noWorkAction: activeTrip?.noWorkAction === true,
     gpsId: input.gpsId,
     latitude: input.latitude,
     longitude: input.longitude,
@@ -1128,8 +1133,8 @@ async function evaluateGpsDock(payload) {
     confirmedAt: status === 'DOCK_IN_CONFIRMED'
       ? previous?.confirmedAt || new Date(eventTimeMs).toISOString()
       : null,
-    readyForGpsStampEta: status === 'DOCK_IN_CONFIRMED' && Boolean(activeTrip) && !activeTrip?.stampEta,
-    readyForGpsStampEtd: GPS_AUTO_STAMP_ETD_ENABLED && status === 'OUTSIDE_GEOFENCE' && wasInsideBeforeExit && Boolean(activeTrip?.stampEta) && !activeTrip?.stampEtd,
+    readyForGpsStampEta: status === 'DOCK_IN_CONFIRMED' && Boolean(activeTrip) && !activeTrip?.noWorkAction && !activeTrip?.stampEta,
+    readyForGpsStampEtd: GPS_AUTO_STAMP_ETD_ENABLED && status === 'OUTSIDE_GEOFENCE' && wasInsideBeforeExit && Boolean(activeTrip?.stampEta) && !activeTrip?.noWorkAction && !activeTrip?.stampEtd,
     autoStampExecuted: false,
     autoStampEtaResult: null,
     autoStampEtdResult: null,
@@ -2607,6 +2612,8 @@ app.get(['/health', '/api/health'], (req, res) => {
       multipleTripsPerVehiclePerDay: true,
       tripSelectionPolicy: 'IN_PROGRESS_THEN_LOCKED_THEN_NEAREST_PLAN_ETA',
       activeTripLockEnabled: true,
+      noWorkActionKeyword: 'ไม่มีงาน',
+      noWorkActionAutoStampBlocked: true,
       tripTieBreaker: 'EARLIER_PLAN_ETA_THEN_CODE_RUN_NUMERIC',
       exitRequiredBeforeNextTrip: true,
       etaRule: 'SPEED_EQUALS_ZERO_FOR_3_MINUTES',
