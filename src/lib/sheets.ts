@@ -1376,6 +1376,7 @@ export async function fetchTrucksFromSheets(
       actionCountermeasure = String(actualRow[7] || '');
       actionResponsible = String(actualRow[8] || '');
       actionStatus = String(actualRow[9] || '');
+      actionUpdatedAt = String(actualRow[11] || '').trim();
     }
 
     const mappedStatus = mapTruckStatus(currentStatus);
@@ -1408,6 +1409,7 @@ export async function fetchTrucksFromSheets(
       actionCountermeasure,
       actionResponsible,
       actionStatus,
+      actionUpdatedAt,
       lastUpdated: new Date().toLocaleTimeString('en-GB', {
         timeZone: 'Asia/Bangkok',
         hour: '2-digit',
