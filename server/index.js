@@ -2220,7 +2220,7 @@ async function requestAppsScriptGet(action, parameters = {}) {
  * Mutation requests are sent once only. Do not retry automatically because
  * the first request may already have changed Google Sheets successfully.
  */
-async function requestAppsScriptPost(action, payload = {}, timeoutMilliseconds = timeoutMilliseconds) {
+async function requestAppsScriptPost(action, payload = {}, timeoutMilliseconds = APPS_SCRIPT_TIMEOUT_MS) {
   validateAppsScriptUrl();
 
   try {
@@ -2245,7 +2245,7 @@ async function requestAppsScriptPost(action, payload = {}, timeoutMilliseconds =
         }),
         cache: 'no-store',
       },
-      APPS_SCRIPT_TIMEOUT_MS
+      timeoutMilliseconds
     );
 
     const responseText = await response.text();
