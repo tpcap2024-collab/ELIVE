@@ -23,6 +23,11 @@ const FRESH_CACHE_DURATION_MS = 60000;
 const STALE_CACHE_DURATION_MS = 1800000;
 const MASTER_PLAN_CACHE_DURATION_MS = 60000;
 const APPS_SCRIPT_TIMEOUT_MS = 60000;
+const APPS_SCRIPT_PLAN_CREATE_TIMEOUT_MS = 120000;
+const APPS_SCRIPT_MUTATION_LOCK_KEY = 'elive:apps-script:mutation-lock';
+const APPS_SCRIPT_MUTATION_LOCK_SECONDS = 180;
+const APPS_SCRIPT_MUTATION_WAIT_MS = 185000;
+const APPS_SCRIPT_MUTATION_POLL_MS = 500;
 const ROUTE_TIMEOUT_MS = 15000;
 const APPS_SCRIPT_MAX_ATTEMPTS = 3;
 const APPS_SCRIPT_SIGNATURE_MAX_AGE_MS = 5 * 60 * 1000;
@@ -1346,6 +1351,21 @@ async function runGpsBackgroundCycle() {
   const startedAt = Date.now();
   const summary = { processed: 0, confirmed: 0, etaStamped: 0, etdStamped: 0, stamped: 0, alreadyStamped: 0, failed: 0, failures: [] };
   try {
+    if (await client.exists(APPS_SCRIPT_MUTATION_LOCK_KEY)) {
+      const status = {
+        enabled: true,
+        running: true,
+        skipped: true,
+        reason: 'APPS_SCRIPT_MUTATION_IN_PROGRESS',
+        lastCycleStartedAt: new Date(startedAt).toISOString(),
+        lastCycleCompletedAt: new Date().toISOString(),
+        durationMs: Date.now() - startedAt,
+        ...summary,
+      };
+      await writeGpsWorkerStatus(status);
+      console.log(JSON.stringify({ logType: 'ELIVE_GPS_WORKER', ...status }));
+      return status;
+    }
     const pendingRetrySummary = await processDuePendingGpsStamps();
     summary.pendingRetry = pendingRetrySummary;
     const truckResult = await getTruckDataWithCache(false);
@@ -2068,9 +2088,56 @@ function createAppsScriptSignature(method, action, payload) {
   const signature=createHmac('sha256',APPS_SCRIPT_SHARED_SECRET).update(canonicalText).digest('hex');
   return {timestamp,nonce,signature};
 }
+async function releaseRedisLock(client, key, token) {
+  await client.eval(
+    "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) else return 0 end",
+    { keys: [key], arguments: [token] }
+  );
+}
+async function waitForAppsScriptMutationToFinish() {
+  const client = requireRedisClient();
+  const deadline = Date.now() + APPS_SCRIPT_MUTATION_WAIT_MS;
+  while (await client.exists(APPS_SCRIPT_MUTATION_LOCK_KEY)) {
+    if (Date.now() >= deadline) throw new Error('APPS_SCRIPT_MUTATION_WAIT_TIMEOUT');
+    await wait(APPS_SCRIPT_MUTATION_POLL_MS);
+  }
+}
+async function acquireAppsScriptMutationLock(action) {
+  const client = requireRedisClient();
+  const token = randomUUID();
+  const deadline = Date.now() + APPS_SCRIPT_MUTATION_WAIT_MS;
+  while (Date.now() < deadline) {
+    const acquired = await client.set(
+      APPS_SCRIPT_MUTATION_LOCK_KEY,
+      JSON.stringify({ token, action, startedAt: new Date().toISOString() }),
+      { NX: true, EX: APPS_SCRIPT_MUTATION_LOCK_SECONDS }
+    );
+    if (acquired) return { client, token, action };
+    await wait(APPS_SCRIPT_MUTATION_POLL_MS);
+  }
+  throw new Error('APPS_SCRIPT_MUTATION_LOCK_TIMEOUT');
+}
+async function releaseAppsScriptMutationLock(lock) {
+  if (!lock) return;
+  const raw = await lock.client.get(APPS_SCRIPT_MUTATION_LOCK_KEY);
+  if (!raw) return;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed.token !== lock.token) return;
+  } catch {
+    return;
+  }
+  await releaseRedisLock(lock.client, APPS_SCRIPT_MUTATION_LOCK_KEY, raw);
+}
+async function waitForExistingAppsScriptReads() {
+  const pendingReads = [truckDataRequestPromise, masterPlanRequestPromise].filter(Boolean);
+  if (!pendingReads.length) return;
+  await Promise.allSettled(pendingReads);
+}
 
 async function requestAppsScriptGet(action, parameters = {}) {
   validateAppsScriptUrl();
+  await waitForAppsScriptMutationToFinish();
 
   const signedParameters = {};
   for (const [key, value] of Object.entries(parameters)) {
@@ -2153,7 +2220,7 @@ async function requestAppsScriptGet(action, parameters = {}) {
  * Mutation requests are sent once only. Do not retry automatically because
  * the first request may already have changed Google Sheets successfully.
  */
-async function requestAppsScriptPost(action, payload = {}) {
+async function requestAppsScriptPost(action, payload = {}, timeoutMilliseconds = timeoutMilliseconds) {
   validateAppsScriptUrl();
 
   try {
@@ -2741,6 +2808,9 @@ app.get(['/health', '/api/health'], (req, res) => {
       configured: Boolean(APPS_SCRIPT_URL),
       signatureConfigured: Boolean(APPS_SCRIPT_SHARED_SECRET && APPS_SCRIPT_SHARED_SECRET.length >= 32),
       signatureMaxAgeSeconds: Math.floor(APPS_SCRIPT_SIGNATURE_MAX_AGE_MS / 1000),
+      planCreateTimeoutSeconds: Math.floor(APPS_SCRIPT_PLAN_CREATE_TIMEOUT_MS / 1000),
+      mutationLockEnabled: true,
+      mutationLockTtlSeconds: APPS_SCRIPT_MUTATION_LOCK_SECONDS,
       validFormat: Boolean(
         APPS_SCRIPT_URL &&
           APPS_SCRIPT_URL.startsWith('https://script.google.com/macros/s/') &&
@@ -2970,13 +3040,54 @@ app.post('/api/plans/preview', requireAuthentication, requireMinimumRole('PLANNE
 });
 
 app.post('/api/plans/create', requireAuthentication, requireMinimumRole('PLANNER'), async (req, res) => {
+  let mutationLock = null;
   try {
     const request = validatePlanPeriodRequest(req.body);
-    const result = await requestAppsScriptPost('createPlanPeriod', request);
+    await waitForExistingAppsScriptReads();
+    mutationLock = await acquireAppsScriptMutationLock('createPlanPeriod');
+    const result = await requestAppsScriptPost(
+      'createPlanPeriod',
+      request,
+      APPS_SCRIPT_PLAN_CREATE_TIMEOUT_MS
+    );
     clearTruckCache();
+    clearMasterPlanCache();
+    req.auditDetails = {
+      source: request.source,
+      startDate: request.startDate,
+      endDate: request.endDate,
+      createdRowCount: Number(result?.result?.createdRowCount || 0),
+      mutationLockUsed: true,
+    };
     return res.status(200).json(result);
   } catch (error) {
+    const message = getErrorMessage(error);
+    const uncertainResult =
+      message.includes('This operation was aborted') ||
+      message.includes('HTTP 404') ||
+      message.includes('invalid JSON');
+    if (uncertainResult) {
+      req.auditDetails = {
+        reason: 'PLAN_CREATE_RESULT_UNKNOWN',
+        mutationLockUsed: Boolean(mutationLock),
+      };
+      return res.status(202).json({
+        success: true,
+        status: 'unknown',
+        result: {
+          success: true,
+          confirmationPending: true,
+          reason: 'PLAN_CREATE_RESULT_UNKNOWN',
+          message: 'ระบบส่งคำขอสร้างแผนแล้ว แต่ยังยืนยันผลตอบกลับไม่ได้ กรุณาตรวจสอบแผนประจำวันที่สร้างก่อนดำเนินการซ้ำ',
+        },
+        timestamp: new Date().toISOString(),
+      });
+    }
     return sendRouteError(res, error, 'Unable to create Plan period.');
+  } finally {
+    await releaseAppsScriptMutationLock(mutationLock).catch(error => {
+      console.error('Unable to release Apps Script mutation lock:', getErrorMessage(error));
+    });
   }
 });
 
