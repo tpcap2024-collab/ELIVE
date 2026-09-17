@@ -11,7 +11,8 @@ export type PerformanceStatus =
   | 'EARLY'
   | 'ON_PLAN'
   | 'DELAY'
-  | 'WARNING';
+  | 'WARNING'
+  | 'NO_DROP';
 
 export interface GpsLocation {
   gpsId: string;
@@ -58,6 +59,7 @@ export interface Truck {
   actionCountermeasure?: string;
   actionStatus?: string;
   actionResponsible?: string;
+  actionUpdatedAt?: string;
 }
 
 export type Priority =
