@@ -1949,11 +1949,14 @@ export function LiveMap({
                       <div className="font-bold">รอบงานของรถวันนี้</div>
                       <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-2">
                         <div><span className="text-slate-500">Active:</span> <b>{gpsDockResult.activeCodeRun || '-'}</b></div>
+                        <div><span className="text-slate-500">Plan ETA:</span> <b>{gpsDockResult.activePlanEta || '-'}</b></div>
+                        <div><span className="text-slate-500">ลำดับเที่ยว:</span> <b>{gpsDockResult.activeTripSequence || '-'} / {gpsDockResult.tripCountForVehicleToday}</b></div>
                         <div><span className="text-slate-500">Next:</span> <b>{gpsDockResult.nextCodeRun || '-'}</b></div>
+                        <div><span className="text-slate-500">Next ETA:</span> <b>{gpsDockResult.nextPlanEta || '-'}</b></div>
                         <div><span className="text-slate-500">Completed:</span> <b>{gpsDockResult.lastCompletedCodeRun || '-'}</b></div>
-                        <div><span className="text-slate-500">จำนวนรอบ:</span> <b>{gpsDockResult.tripCountForVehicleToday}</b></div>
                       </div>
                       <div className="mt-2 text-[11px]">Selection: {gpsDockResult.tripSelectionReason || '-'}</div>
+                      <div className="mt-1 text-[11px]">Ordering: {gpsDockResult.tripOrdering || 'PLAN_DATE_PLAN_ETA_CODE_RUN'}</div>
                       {gpsDockResult.waitingForExit && (
                         <div className="mt-2 font-bold">รอรถออกนอก Geofence ก่อนเริ่มรอบถัดไป</div>
                       )}
