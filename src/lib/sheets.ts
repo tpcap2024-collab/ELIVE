@@ -89,6 +89,13 @@ export interface GpsDockEvaluationResult {
   exitConfirmedAt: string | null;
   tripSelectionReason: string;
   tripCountForVehicleToday: number;
+  activePlanDate: string | null;
+  activePlanEta: string | null;
+  activeTripSequence: number | null;
+  planEtaDifferenceMinutes: number | null;
+  gpsMinuteOfDay: number | null;
+  nextPlanEta: string | null;
+  tripOrdering: string;
   gpsId: string;
   licensePlate: string;
   planLicensePlate: string;
@@ -733,6 +740,21 @@ function mapGpsDockEvaluation(value: any): GpsDockEvaluationResult {
     exitConfirmedAt: value?.exitConfirmedAt ? String(value.exitConfirmedAt) : null,
     tripSelectionReason: String(value?.tripSelectionReason || ''),
     tripCountForVehicleToday: Number(value?.tripCountForVehicleToday || 0),
+    activePlanDate: value?.activePlanDate ? String(value.activePlanDate) : null,
+    activePlanEta: value?.activePlanEta ? String(value.activePlanEta) : null,
+    activeTripSequence: Number.isFinite(Number(value?.activeTripSequence))
+      ? Number(value.activeTripSequence)
+      : null,
+    planEtaDifferenceMinutes: Number.isFinite(Number(value?.planEtaDifferenceMinutes))
+      ? Number(value.planEtaDifferenceMinutes)
+      : null,
+    gpsMinuteOfDay: Number.isFinite(Number(value?.gpsMinuteOfDay))
+      ? Number(value.gpsMinuteOfDay)
+      : null,
+    nextPlanEta: value?.nextPlanEta ? String(value.nextPlanEta) : null,
+    tripOrdering: String(
+      value?.tripOrdering || 'NEAREST_PLAN_ETA_THEN_EARLIER_PLAN_ETA_THEN_CODE_RUN'
+    ),
     gpsId: String(value?.gpsId || '').trim(),
     licensePlate: String(value?.licensePlate || '').trim(),
     planLicensePlate: String(value?.planLicensePlate || '').trim(),
@@ -1567,7 +1589,14 @@ export interface GpsVehicleCycleResult {
   normalizedLicensePlate: string;
   date: string;
   activeCodeRun: string | null;
+  activePlanDate: string | null;
+  activePlanEta: string | null;
+  activeTripSequence: number | null;
+  planEtaDifferenceMinutes: number | null;
+  gpsMinuteOfDay: number | null;
   nextCodeRun: string | null;
+  nextPlanEta: string | null;
+  tripOrdering: string;
   requestedCodeRun: string | null;
   lastCompletedCodeRun: string | null;
   waitingForExit: boolean;
@@ -1593,7 +1622,22 @@ export async function fetchGpsVehicleCycle(
     normalizedLicensePlate: String(value.normalizedLicensePlate || ''),
     date: String(value.date || ''),
     activeCodeRun: value.activeCodeRun ? String(value.activeCodeRun) : null,
+    activePlanDate: value.activePlanDate ? String(value.activePlanDate) : null,
+    activePlanEta: value.activePlanEta ? String(value.activePlanEta) : null,
+    activeTripSequence: Number.isFinite(Number(value.activeTripSequence))
+      ? Number(value.activeTripSequence)
+      : null,
+    planEtaDifferenceMinutes: Number.isFinite(Number(value.planEtaDifferenceMinutes))
+      ? Number(value.planEtaDifferenceMinutes)
+      : null,
+    gpsMinuteOfDay: Number.isFinite(Number(value.gpsMinuteOfDay))
+      ? Number(value.gpsMinuteOfDay)
+      : null,
     nextCodeRun: value.nextCodeRun ? String(value.nextCodeRun) : null,
+    nextPlanEta: value.nextPlanEta ? String(value.nextPlanEta) : null,
+    tripOrdering: String(
+      value.tripOrdering || 'NEAREST_PLAN_ETA_THEN_EARLIER_PLAN_ETA_THEN_CODE_RUN'
+    ),
     requestedCodeRun: value.requestedCodeRun ? String(value.requestedCodeRun) : null,
     lastCompletedCodeRun: value.lastCompletedCodeRun ? String(value.lastCompletedCodeRun) : null,
     waitingForExit: value.waitingForExit === true,
