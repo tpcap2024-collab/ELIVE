@@ -42,6 +42,9 @@ function getPlatformGroup(
 function isInboundProject(truck: Truck): boolean {
   return String(truck.project || '').trim().toUpperCase() === 'INBOUND';
 }
+function hasNoWorkAction(truck: Truck): boolean {
+  return String(truck.actionProblem || '').includes('ไม่มีงาน');
+}
 
 function getPlanEtaSortValue(value?: string): number {
   const match = String(value || '').trim().match(/^(\d{1,2}):(\d{2})/);
@@ -163,6 +166,7 @@ export function WarehouseStamp({
   };
   const activeTrucks = useMemo(() => {
     return inboundTrucks.filter(truck => {
+      if (hasNoWorkAction(truck)) return false;
       const hasBothStamps =
         Boolean(truck.stampEta) &&
         Boolean(truck.stampEtd);
