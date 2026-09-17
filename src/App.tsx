@@ -1190,7 +1190,7 @@ export default function App() {
                     <table className="w-full text-left text-sm">
                       <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-500">
                         <tr>
-                          {['Route', 'สังกัด', 'ทะเบียนรถ', 'จุดลงงาน', 'รายละเอียดงาน', 'Plan ETA', 'Actual ETA', 'Actual ETD', 'สถานะ', 'Status', 'GPS พิกัด', 'Action'].map((heading) => (
+                          {['Route', 'สังกัด', 'ทะเบียนรถ', 'จุดลงงาน', 'รายละเอียดงาน', 'Plan ETA', 'Actual ETA', 'Actual ETD', 'PERFORMANCE', 'TRUCK STATUS', 'GPS พิกัด', 'Action'].map((heading) => (
                             <th key={heading} className="whitespace-nowrap px-3 py-2">{heading}</th>
                           ))}
                         </tr>
@@ -1232,13 +1232,9 @@ export default function App() {
                               )}
                             </td>
                             <td className="whitespace-nowrap px-3 py-1.5">
-                              {hasNoWorkAction(truck) ? (
-                                <span className="inline-flex rounded-full border border-slate-600 bg-slate-700 px-2.5 py-1 text-[10px] font-bold text-white">
-                                  ไม่มีงาน
-                                </span>
-                              ) : (
-                                <StatusBadge status={truck.status} />
-                              )}
+                              <StatusBadge
+                                status={hasNoWorkAction(truck) ? 'COMPLETED' : truck.status}
+                              />
                             </td>
                             <td className="px-3 py-1.5 text-center">
                               <button type="button" onClick={() => handleOpenGps(truck.id)} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border-2 border-red-800 bg-red-700 text-white shadow-sm transition hover:bg-red-800 active:scale-95">
