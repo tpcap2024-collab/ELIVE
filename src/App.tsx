@@ -599,20 +599,32 @@ export default function App() {
     });
   }, [inboundTrucks, gpsLocations]);
 
+  const kpiTrucks = useMemo(
+    () =>
+      inboundTrucks.filter(truck =>
+        selectedDockFilters.includes(getDockGroup(truck.dropPoint))
+      ),
+    [inboundTrucks, selectedDockFilters]
+  );
+
   const stats = useMemo(() => ({
-    total: inboundTrucks.length,
-    unloading: inboundTrucks.filter((truck) =>
+    total: kpiTrucks.length,
+    unloading: kpiTrucks.filter((truck) =>
       truck.status === 'DOCK_IN' ||
       truck.status === 'UNLOADING' ||
       truck.status === 'UNLOADING_AT_TPCAP'
     ).length,
-    complete: inboundTrucks.filter((truck) =>
-      truck.status === 'COMPLETED' || truck.status === 'TRUCK_OUT'
+    complete: kpiTrucks.filter((truck) =>
+      hasNoWorkAction(truck) ||
+      truck.status === 'COMPLETED' ||
+      truck.status === 'TRUCK_OUT'
     ).length,
-    remain: inboundTrucks.filter((truck) =>
-      truck.status !== 'COMPLETED' && truck.status !== 'TRUCK_OUT'
+    remain: kpiTrucks.filter((truck) =>
+      !hasNoWorkAction(truck) &&
+      truck.status !== 'COMPLETED' &&
+      truck.status !== 'TRUCK_OUT'
     ).length,
-  }), [inboundTrucks]);
+  }), [kpiTrucks]);
 
   const isDelayedNoStamp = (truck: Truck): boolean => {
     if (truck.stampEta || truck.actualEta) return false;
