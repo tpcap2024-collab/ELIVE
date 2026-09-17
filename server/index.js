@@ -1800,12 +1800,15 @@ async function getSessionFromRequest(req) {
   if(!session?.username||!session?.role||!Number.isFinite(Number(session.expiresAt))||Number(session.expiresAt)<=Date.now()){ await client.del(getSessionKey(tokenHash)); return null; }
 
   const normalizedSession = {
+    ...session,
     username: cleanText(session.username).toLowerCase(),
     role: cleanText(session.role).toUpperCase(),
     createdAt: Number(session.createdAt || 0),
     expiresAt: Number(session.expiresAt),
     lastUserActivityAt: Number(session.lastUserActivityAt || session.createdAt || 0),
     credentialVersion: Number(session.credentialVersion || 0),
+    lastReauthenticatedAt: Number(session.lastReauthenticatedAt || 0),
+    passwordChangedAt: session.passwordChangedAt || null,
   };
   const idleDurationMs = Date.now() - normalizedSession.lastUserActivityAt;
   if (idleDurationMs >= SESSION_IDLE_TIMEOUT_MS) {
@@ -1840,14 +1843,42 @@ async function getSessionFromRequest(req) {
 }
 async function recordSessionUserActivity(tokenHash, session) {
   const client = requireRedisClient();
+  const sessionKey = getSessionKey(tokenHash);
+  const rawCurrentSession = await client.get(sessionKey);
+  if (!rawCurrentSession) throw new Error('SESSION_NOT_FOUND');
+  let currentSession;
+  try {
+    currentSession = JSON.parse(rawCurrentSession);
+  } catch {
+    await client.del(sessionKey);
+    throw new Error('SESSION_INVALID');
+  }
   const now = Date.now();
-  const updatedSession = { ...session, lastUserActivityAt: now };
+  const expiresAt = Number(currentSession.expiresAt || session.expiresAt);
+  if (!Number.isFinite(expiresAt) || expiresAt <= now) {
+    await client.del(sessionKey);
+    throw new Error('SESSION_EXPIRED');
+  }
+  const updatedSession = {
+    ...currentSession,
+    ...session,
+    credentialVersion: Number(
+      currentSession.credentialVersion ?? session.credentialVersion ?? 0
+    ),
+    lastReauthenticatedAt: Number(
+      currentSession.lastReauthenticatedAt ?? session.lastReauthenticatedAt ?? 0
+    ),
+    passwordChangedAt:
+      currentSession.passwordChangedAt ?? session.passwordChangedAt ?? null,
+    lastUserActivityAt: now,
+    expiresAt,
+  };
   const remainingTtlSeconds = Math.max(
     1,
-    Math.ceil((Number(session.expiresAt) - now) / 1000)
+    Math.ceil((expiresAt - now) / 1000)
   );
   await client.set(
-    getSessionKey(tokenHash),
+    sessionKey,
     JSON.stringify(updatedSession),
     { EX: remainingTtlSeconds }
   );
@@ -1881,7 +1912,19 @@ async function requireAuthentication(req,res,next){
             : 'Authentication required.'
       });
     }
-    req.auth={username:record.session.username,role:record.session.role,createdAt:record.session.createdAt,expiresAt:record.session.expiresAt,lastUserActivityAt:record.session.lastUserActivityAt}; req.authSessionTokenHash=record.tokenHash; return next();
+    req.auth={
+      ...record.session,
+      username:record.session.username,
+      role:record.session.role,
+      createdAt:record.session.createdAt,
+      expiresAt:record.session.expiresAt,
+      lastUserActivityAt:record.session.lastUserActivityAt,
+      credentialVersion:Number(record.session.credentialVersion || 0),
+      lastReauthenticatedAt:Number(record.session.lastReauthenticatedAt || 0),
+      passwordChangedAt:record.session.passwordChangedAt || null,
+    };
+    req.authSessionTokenHash=record.tokenHash;
+    return next();
   } catch(error){
     const errorCode=getErrorMessage(error);
     if(errorCode==='SESSION_STORE_UNAVAILABLE') return res.status(503).json({success:false,error:'Session service is temporarily unavailable.'});
