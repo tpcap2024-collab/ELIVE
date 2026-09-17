@@ -291,6 +291,7 @@ export function PlatformDiagram({ trucks }: PlatformDiagramProps) {
       if (String(truck.project || '').trim().toUpperCase() !== 'INBOUND') {
         return false;
       }
+
       const dropPoint = normalizePoint(truck.dropPoint);
       return selectedGroups.some(groupName =>
         dropPoint === groupName || dropPoint.startsWith(`${groupName}-`)
@@ -306,10 +307,10 @@ export function PlatformDiagram({ trucks }: PlatformDiagramProps) {
           truck.status === 'UNLOADING_AT_TPCAP'
       ).length,
       complete: inboundTrucksInSelectedGroups.filter(truck =>
-        completeStatuses.includes(getEffectiveTruckStatus(truck))
+        hasNoWorkAction(truck) || completeStatuses.includes(truck.status)
       ).length,
       remain: inboundTrucksInSelectedGroups.filter(truck =>
-        !completeStatuses.includes(getEffectiveTruckStatus(truck))
+        !hasNoWorkAction(truck) && !completeStatuses.includes(truck.status)
       ).length,
     };
   }, [trucks, selectedGroups]);
