@@ -52,6 +52,10 @@ export interface GpsDockMonitoringConfig {
   autoStampEnabled: boolean;
   autoStampEtaEnabled: boolean;
   autoStampEtdEnabled: boolean;
+  etaRule?: string;
+  pendingStampRetryQueueEnabled?: boolean;
+  pendingStampRetryBaseSeconds?: number;
+  pendingStampRetryMaximumSeconds?: number;
 }
 export interface GpsGeofencesResult {
   success: boolean;
@@ -59,6 +63,28 @@ export interface GpsGeofencesResult {
   config: GpsDockMonitoringConfig;
   timestamp: string;
 }
+export type GpsPendingStampStatus =
+  | 'PENDING'
+  | 'PROCESSING'
+  | 'RETRY_WAIT'
+  | 'STAMPED'
+  | 'ALREADY_STAMPED'
+  | 'BLOCKED_NO_WORK'
+  | 'MISSING';
+export interface GpsAutoStampResult {
+  pendingId?: string;
+  stampType?: 'ETA' | 'ETD';
+  codeRun?: string;
+  status: GpsPendingStampStatus | 'SKIPPED';
+  attemptCount?: number;
+  lastAttemptAt?: string | null;
+  lastError?: string | null;
+  nextRetryAt?: string | null;
+  completedAt?: string | null;
+  reason?: string;
+  result?: unknown;
+}
+
 export interface GpsDockEvaluationRequest {
   codeRun: string;
   requestedCodeRun: string;
@@ -126,9 +152,9 @@ export interface GpsDockEvaluationResult {
   readyForGpsStampEta: boolean;
   readyForGpsStampEtd: boolean;
   autoStampExecuted: boolean;
-  autoStampResult: unknown | null;
-  autoStampEtaResult: unknown | null;
-  autoStampEtdResult: unknown | null;
+  autoStampResult: GpsAutoStampResult | null;
+  autoStampEtaResult: GpsAutoStampResult | null;
+  autoStampEtdResult: GpsAutoStampResult | null;
   parkingSpeedThresholdKmh: number;
   gpsStaleThresholdSeconds: number;
 }
@@ -728,6 +754,27 @@ function mapDailyPlan(value: any): DailyPlan {
   };
 }
 
+function mapGpsAutoStampResult(value: any): GpsAutoStampResult | null {
+  if (!value || typeof value !== 'object') return null;
+  return {
+    pendingId: value.pendingId ? String(value.pendingId) : undefined,
+    stampType:
+      value.stampType === 'ETA' || value.stampType === 'ETD'
+        ? value.stampType
+        : undefined,
+    codeRun: value.codeRun ? String(value.codeRun).trim().toUpperCase() : undefined,
+    status: String(value.status || 'MISSING') as GpsAutoStampResult['status'],
+    attemptCount: Number.isFinite(Number(value.attemptCount))
+      ? Number(value.attemptCount)
+      : undefined,
+    lastAttemptAt: value.lastAttemptAt ? String(value.lastAttemptAt) : null,
+    lastError: value.lastError ? String(value.lastError) : null,
+    nextRetryAt: value.nextRetryAt ? String(value.nextRetryAt) : null,
+    completedAt: value.completedAt ? String(value.completedAt) : null,
+    reason: value.reason ? String(value.reason) : undefined,
+    result: value.result,
+  };
+}
 function mapGpsDockEvaluation(value: any): GpsDockEvaluationResult {
   const status = String(value?.status || 'OUTSIDE_GEOFENCE') as GpsDockStatus;
   return {
@@ -787,9 +834,9 @@ function mapGpsDockEvaluation(value: any): GpsDockEvaluationResult {
     readyForGpsStampEta: value?.readyForGpsStampEta === true,
     readyForGpsStampEtd: value?.readyForGpsStampEtd === true,
     autoStampExecuted: value?.autoStampExecuted === true,
-    autoStampResult: value?.autoStampResult ?? null,
-    autoStampEtaResult: value?.autoStampEtaResult ?? null,
-    autoStampEtdResult: value?.autoStampEtdResult ?? null,
+    autoStampResult: mapGpsAutoStampResult(value?.autoStampResult),
+    autoStampEtaResult: mapGpsAutoStampResult(value?.autoStampEtaResult),
+    autoStampEtdResult: mapGpsAutoStampResult(value?.autoStampEtdResult),
     parkingSpeedThresholdKmh: Number(value?.parkingSpeedThresholdKmh ?? 0),
     gpsStaleThresholdSeconds: Number(value?.gpsStaleThresholdSeconds ?? 300),
   };
@@ -1675,6 +1722,19 @@ export async function fetchGpsGeofences(): Promise<GpsGeofencesResult> {
       autoStampEnabled: data.config?.autoStampEnabled === true,
       autoStampEtaEnabled: data.config?.autoStampEtaEnabled === true,
       autoStampEtdEnabled: data.config?.autoStampEtdEnabled === true,
+      etaRule: data.config?.etaRule ? String(data.config.etaRule) : undefined,
+      pendingStampRetryQueueEnabled:
+        data.config?.pendingStampRetryQueueEnabled === true,
+      pendingStampRetryBaseSeconds: Number.isFinite(
+        Number(data.config?.pendingStampRetryBaseSeconds)
+      )
+        ? Number(data.config.pendingStampRetryBaseSeconds)
+        : undefined,
+      pendingStampRetryMaximumSeconds: Number.isFinite(
+        Number(data.config?.pendingStampRetryMaximumSeconds)
+      )
+        ? Number(data.config.pendingStampRetryMaximumSeconds)
+        : undefined,
     },
     timestamp: String(data.timestamp || ''),
   };
