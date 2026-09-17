@@ -117,6 +117,25 @@ function isInboundProject(truck: Truck): boolean {
 function hasNoWorkAction(truck: Truck): boolean {
   return String(truck.actionProblem || '').includes('ไม่มีงานลง');
 }
+const NO_WORK_DISPLAY_DURATION_MS = 10 * 60 * 1000;
+function parseActionUpdatedAt(truck: Truck): Date | null {
+  const value = String(
+    (truck as Truck & { actionUpdatedAt?: string }).actionUpdatedAt || ''
+  ).trim();
+  if (!value) return null;
+  const isoText = value.includes('T') ? value : value.replace(' ', 'T');
+  const normalizedText = /(?:Z|[+-]\d{2}:\d{2})$/.test(isoText)
+    ? isoText
+    : `${isoText}+07:00`;
+  const parsed = new Date(normalizedText);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+function shouldKeepNoWorkVisible(truck: Truck): boolean {
+  if (!hasNoWorkAction(truck)) return true;
+  const actionUpdatedAt = parseActionUpdatedAt(truck);
+  if (!actionUpdatedAt) return true;
+  return Date.now() - actionUpdatedAt.getTime() <= NO_WORK_DISPLAY_DURATION_MS;
+}
 
 function getPlanEtaSortValue(value?: string): number {
   const match = String(value || '').trim().match(/^(\d{1,2}):(\d{2})/);
@@ -395,7 +414,13 @@ export default function App() {
     const currentTruck = trucksRef.current.find(truck => truck.id === id);
     if (!currentTruck) return Promise.resolve();
 
-    const optimisticTruck = { ...currentTruck, ...updates };
+    const optimisticTruck = {
+      ...currentTruck,
+      ...updates,
+      ...(updates.actionProblem !== undefined || updates.actionStatus !== undefined
+        ? { actionUpdatedAt: new Date().toISOString() }
+        : {}),
+    } as Truck;
     trucksRef.current = trucksRef.current.map(truck =>
       truck.id === id ? optimisticTruck : truck
     );
@@ -621,6 +646,7 @@ export default function App() {
 
   const shouldShowTruck = (truck: Truck): boolean => {
     if (showHiddenRows) return true;
+    if (hasNoWorkAction(truck)) return shouldKeepNoWorkVisible(truck);
     if (truck.status !== 'COMPLETED' && truck.status !== 'TRUCK_OUT') return true;
     if (!truck.stampEtd) return true;
 
