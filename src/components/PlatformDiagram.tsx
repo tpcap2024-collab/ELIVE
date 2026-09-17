@@ -151,13 +151,7 @@ function isNonInboundProject(truck: Truck): boolean {
   return project !== 'INBOUND';
 }
 function hasNoWorkAction(truck: Truck): boolean {
-  return String(truck.actionProblem || '').includes('ไม่มีงานลง');
-}
-function getEffectiveTruckStatus(truck: Truck): Truck['status'] {
-  return hasNoWorkAction(truck) ? 'COMPLETED' : truck.status;
-}
-function getEffectivePerformanceStatus(truck: Truck): Truck['performanceStatus'] {
-  return hasNoWorkAction(truck) ? 'NO_DROP' : truck.performanceStatus;
+  return String(truck.actionProblem || '').includes('ไม่มีงาน');
 }
 
 function getHourBackgroundClass(hour: number): string {
@@ -165,8 +159,6 @@ function getHourBackgroundClass(hour: number): string {
 }
 
 function getTruckColor(truck: Truck): string {
-  const effectiveStatus = getEffectiveTruckStatus(truck);
-  const effectivePerformanceStatus = getEffectivePerformanceStatus(truck);
   if (hasNoWorkAction(truck)) {
     return 'bg-black border-black text-white shadow-sm shadow-slate-500/50';
   }
@@ -178,11 +170,11 @@ function getTruckColor(truck: Truck): string {
     return 'bg-red-600 border-red-800 text-white animate-pulse shadow-lg shadow-red-500/50';
   }
 
-  if (effectiveStatus === 'COMPLETED' || effectiveStatus === 'TRUCK_OUT') {
-    if (effectivePerformanceStatus === 'DELAY') {
+  if (truck.status === 'COMPLETED' || truck.status === 'TRUCK_OUT') {
+    if (truck.performanceStatus === 'DELAY') {
       return 'bg-red-500 border-red-700 text-white';
     }
-    if (effectivePerformanceStatus === 'EARLY') {
+    if (truck.performanceStatus === 'EARLY') {
       return 'bg-blue-500 border-blue-700 text-white';
     }
     return 'bg-green-500 border-green-700 text-white';
@@ -193,7 +185,7 @@ function getTruckColor(truck: Truck): string {
     truck.status === 'UNLOADING' ||
     truck.status === 'UNLOADING_AT_TPCAP'
   ) {
-    if (effectivePerformanceStatus === 'DELAY') {
+    if (truck.performanceStatus === 'DELAY') {
       return 'bg-orange-500 border-orange-700 text-white';
     }
     return 'bg-yellow-400 border-yellow-600 text-slate-900';
@@ -295,26 +287,32 @@ export function PlatformDiagram({ trucks }: PlatformDiagramProps) {
 
   const stats = useMemo(() => {
     const completeStatuses = ['COMPLETED', 'TRUCK_OUT'];
-    const inboundTrucks = trucks.filter(
-      truck => String(truck.project || '').trim().toUpperCase() === 'INBOUND'
-    );
+    const inboundTrucksInSelectedGroups = trucks.filter(truck => {
+      if (String(truck.project || '').trim().toUpperCase() !== 'INBOUND') {
+        return false;
+      }
+      const dropPoint = normalizePoint(truck.dropPoint);
+      return selectedGroups.some(groupName =>
+        dropPoint === groupName || dropPoint.startsWith(`${groupName}-`)
+      );
+    });
 
     return {
-      total: inboundTrucks.length,
-      unloading: inboundTrucks.filter(
+      total: inboundTrucksInSelectedGroups.length,
+      unloading: inboundTrucksInSelectedGroups.filter(
         truck =>
           truck.status === 'UNLOADING' ||
           truck.status === 'DOCK_IN' ||
           truck.status === 'UNLOADING_AT_TPCAP'
       ).length,
-      complete: inboundTrucks.filter(truck =>
+      complete: inboundTrucksInSelectedGroups.filter(truck =>
         completeStatuses.includes(getEffectiveTruckStatus(truck))
       ).length,
-      remain: inboundTrucks.filter(truck =>
+      remain: inboundTrucksInSelectedGroups.filter(truck =>
         !completeStatuses.includes(getEffectiveTruckStatus(truck))
       ).length,
     };
-  }, [trucks]);
+  }, [trucks, selectedGroups]);
 
   const allGroupsSelected = GROUP_FILTER_OPTIONS.every(groupName =>
     selectedGroups.includes(groupName)
@@ -640,8 +638,8 @@ export function PlatformDiagram({ trucks }: PlatformDiagramProps) {
                       ['Supplier', selectedTruck.supplierName || '-'],
                       ['Project', selectedTruck.project || '-'],
                       ['Drop Point', selectedTruck.dropPoint || '-'],
-                      ['Status', getEffectiveTruckStatus(selectedTruck) || '-'],
-                      ['Performance', getEffectivePerformanceStatus(selectedTruck) || '-'],
+                      ['Status', selectedTruck.status || '-'],
+                      ['Performance', selectedTruck.performanceStatus || '-'],
                       ['Plan ETA', selectedTruck.planEta || '-'],
                       ['Plan ETD', selectedTruck.planEtd || '-'],
                       ['Actual ETA', selectedTruck.stampEta || selectedTruck.actualEta || '-'],
