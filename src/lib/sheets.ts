@@ -1366,6 +1366,7 @@ export async function fetchTrucksFromSheets(
     let actionCountermeasure = '';
     let actionResponsible = '';
     let actionStatus = '';
+    let actionUpdatedAt = '';
 
     if (actualRow) {
       currentStatus = String(actualRow[1] || 'TRAVELING');
