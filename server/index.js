@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '15';
+const API_VERSION = '16';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -744,7 +744,7 @@ function buildTripsForPlate(data, licensePlate, dateText) {
     tripCount: sortedTrips.length,
   }));
 }
-function selectTripForVehicle(trips, previousCycle = null) {
+function selectTripForVehicle(trips, nowMinutes, previousCycle = null) {
   const inProgressTrips = trips
     .filter(trip => trip.stampEta && !trip.stampEtd)
     .sort(compareTripsByPlanTime);
@@ -755,23 +755,45 @@ function selectTripForVehicle(trips, previousCycle = null) {
     return {
       activeTrip: lockedInProgress || inProgressTrips[0],
       selectionReason: lockedInProgress ? 'LOCKED_ACTIVE_TRIP' : 'ETA_WITHOUT_ETD',
+      planEtaDifferenceMinutes: null,
     };
   }
-  const pendingTrips = trips
-    .filter(trip => !trip.stampEta && !trip.stampEtd)
-    .sort(compareTripsByPlanTime);
+  const pendingTrips = trips.filter(trip => !trip.stampEta && !trip.stampEtd);
   if (!pendingTrips.length) {
-    return { activeTrip: null, selectionReason: 'NO_PENDING_TRIP' };
+    return {
+      activeTrip: null,
+      selectionReason: 'NO_PENDING_TRIP',
+      planEtaDifferenceMinutes: null,
+    };
   }
   const lockedPending = pendingTrips.find(
     trip => trip.codeRun === previousCycle?.activeCodeRun
   );
   if (lockedPending) {
-    return { activeTrip: lockedPending, selectionReason: 'LOCKED_ACTIVE_TRIP' };
+    return {
+      activeTrip: lockedPending,
+      selectionReason: 'LOCKED_ACTIVE_TRIP',
+      planEtaDifferenceMinutes: lockedPending.planEtaMinutes === null
+        ? null
+        : Math.abs(lockedPending.planEtaMinutes - nowMinutes),
+    };
   }
+  const activeTrip = [...pendingTrips].sort((first, second) => {
+    const firstDistance = first.planEtaMinutes === null
+      ? Number.MAX_SAFE_INTEGER
+      : Math.abs(first.planEtaMinutes - nowMinutes);
+    const secondDistance = second.planEtaMinutes === null
+      ? Number.MAX_SAFE_INTEGER
+      : Math.abs(second.planEtaMinutes - nowMinutes);
+    if (firstDistance !== secondDistance) return firstDistance - secondDistance;
+    return compareTripsByPlanTime(first, second);
+  })[0];
   return {
-    activeTrip: pendingTrips[0],
-    selectionReason: 'EARLIEST_PENDING_PLAN_ETA',
+    activeTrip,
+    selectionReason: 'NEAREST_PENDING_PLAN_ETA',
+    planEtaDifferenceMinutes: activeTrip.planEtaMinutes === null
+      ? null
+      : Math.abs(activeTrip.planEtaMinutes - nowMinutes),
   };
 }
 async function resolveVehicleTrip(input, isInside) {
@@ -779,7 +801,8 @@ async function resolveVehicleTrip(input, isInside) {
   const dateText = getBangkokDateText(input.gpsTime);
   const trips = buildTripsForPlate(truckResult.data, input.licensePlate, dateText);
   const previousCycle = await readVehicleCycleState(input.licensePlate);
-  const selected = selectTripForVehicle(trips, previousCycle);
+  const nowMinutes = getBangkokMinuteOfDay(input.gpsTime);
+  const selected = selectTripForVehicle(trips, nowMinutes, previousCycle);
   const completedTrips = trips.filter(trip => trip.completed).sort(compareTripsByPlanTime);
   const latestCompletedTrip = completedTrips.length
     ? completedTrips[completedTrips.length - 1]
@@ -815,6 +838,8 @@ async function resolveVehicleTrip(input, isInside) {
     activePlanDate: activeTrip?.planDate || null,
     activePlanEta: activeTrip?.planEta || null,
     activeTripSequence: activeTrip?.tripSequence || null,
+    planEtaDifferenceMinutes: selected.planEtaDifferenceMinutes,
+    gpsMinuteOfDay: nowMinutes,
     nextCodeRun: nextPendingTrip?.codeRun || null,
     nextPlanEta: nextPendingTrip?.planEta || null,
     requestedCodeRun: input.codeRun,
@@ -825,7 +850,7 @@ async function resolveVehicleTrip(input, isInside) {
       ? 'WAITING_FOR_EXIT_AFTER_ETD'
       : selected.selectionReason,
     tripCount: trips.length,
-    tripOrdering: 'PLAN_DATE_PLAN_ETA_CODE_RUN',
+    tripOrdering: 'NEAREST_PLAN_ETA_THEN_EARLIER_PLAN_ETA_THEN_CODE_RUN',
     updatedAt: new Date().toISOString(),
   };
   await writeVehicleCycleState(input.licensePlate, state);
@@ -1069,6 +1094,8 @@ async function evaluateGpsDock(payload) {
     activePlanDate: vehicleCycle.activePlanDate,
     activePlanEta: vehicleCycle.activePlanEta,
     activeTripSequence: vehicleCycle.activeTripSequence,
+    planEtaDifferenceMinutes: vehicleCycle.planEtaDifferenceMinutes,
+    gpsMinuteOfDay: vehicleCycle.gpsMinuteOfDay,
     nextPlanEta: vehicleCycle.nextPlanEta,
     tripOrdering: vehicleCycle.tripOrdering,
     gpsId: input.gpsId,
@@ -2578,9 +2605,9 @@ app.get(['/health', '/api/health'], (req, res) => {
       gpsStaleThresholdSeconds: Math.floor(GPS_STALE_THRESHOLD_MS / 1000),
       movementGraceSeconds: Math.floor(GPS_MOVEMENT_GRACE_MS / 1000),
       multipleTripsPerVehiclePerDay: true,
-      tripSelectionPolicy: 'IN_PROGRESS_THEN_EARLIEST_PLAN_DATE_PLAN_ETA',
+      tripSelectionPolicy: 'IN_PROGRESS_THEN_LOCKED_THEN_NEAREST_PLAN_ETA',
       activeTripLockEnabled: true,
-      tripTieBreaker: 'CODE_RUN_NUMERIC',
+      tripTieBreaker: 'EARLIER_PLAN_ETA_THEN_CODE_RUN_NUMERIC',
       exitRequiredBeforeNextTrip: true,
       etaRule: 'SPEED_EQUALS_ZERO_FOR_3_MINUTES',
       etdRule: 'IMMEDIATE_ON_FIRST_FRESH_GPS_OUTSIDE_AFTER_INSIDE',
