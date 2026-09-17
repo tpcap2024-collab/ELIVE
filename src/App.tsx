@@ -335,7 +335,17 @@ export default function App() {
       if (authenticationGeneration !== authenticationGenerationRef.current) return;
 
       if (data.trucks.length > 0) {
-        setTrucks(data.trucks);
+        const normalizedTrucks = data.trucks.map(truck =>
+          hasNoWorkAction(truck)
+            ? {
+                ...truck,
+                status: 'COMPLETED' as const,
+                performanceStatus: 'NO_DROP' as const,
+              }
+            : truck
+        );
+        setTrucks(normalizedTrucks);
+        trucksRef.current = normalizedTrucks;
       }
 
       setGpsLocations(data.gpsLocations);
@@ -415,9 +425,20 @@ export default function App() {
     const currentTruck = trucksRef.current.find(truck => truck.id === id);
     if (!currentTruck) return Promise.resolve();
 
+    const willBeNoDrop = String(
+      updates.actionProblem !== undefined
+        ? updates.actionProblem
+        : currentTruck.actionProblem || ''
+    ).includes('ไม่มีงานลง');
     const optimisticTruck = {
       ...currentTruck,
       ...updates,
+      ...(willBeNoDrop
+        ? {
+            status: 'COMPLETED' as const,
+            performanceStatus: 'NO_DROP' as const,
+          }
+        : {}),
       ...(updates.actionProblem !== undefined || updates.actionStatus !== undefined
         ? { actionUpdatedAt: new Date().toISOString() }
         : {}),
@@ -629,6 +650,7 @@ export default function App() {
       ON_PLAN: 'bg-emerald-100 text-emerald-700',
       DELAY: 'animate-pulse bg-red-100 text-red-700',
       WARNING: 'bg-amber-100 text-amber-700',
+      NO_DROP: 'bg-slate-700 text-white',
     };
 
     const labels: Record<PerformanceStatus, string> = {
@@ -636,6 +658,7 @@ export default function App() {
       ON_PLAN: 'ON PLAN',
       DELAY: 'DELAY',
       WARNING: 'WARNING',
+      NO_DROP: 'NO DROP',
     };
 
     return (
@@ -1040,7 +1063,7 @@ export default function App() {
           </div>
         </header>
 
-        {sheetError && (
+        {sheetError && currentView !== 'dashboard' && currentView !== 'diagram' && (
           <div className="z-10 flex items-center gap-3 border-b border-amber-200 bg-amber-50 px-6 py-3 text-sm text-amber-800">
             <AlertTriangle className="h-5 w-5 shrink-0" />
             <div>
@@ -1167,14 +1190,14 @@ export default function App() {
                     <table className="w-full text-left text-sm">
                       <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-500">
                         <tr>
-                          {['Route', 'สังกัด', 'ทะเบียนรถ', 'จุดลงงาน', 'รายละเอียดงาน', 'Plan ETA', 'Actual ETA', 'Actual ETD', 'Status', 'GPS พิกัด', 'Action'].map((heading) => (
+                          {['Route', 'สังกัด', 'ทะเบียนรถ', 'จุดลงงาน', 'รายละเอียดงาน', 'Plan ETA', 'Actual ETA', 'Actual ETD', 'สถานะ', 'Status', 'GPS พิกัด', 'Action'].map((heading) => (
                             <th key={heading} className="whitespace-nowrap px-3 py-2">{heading}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {paginatedTrucks.length === 0 ? (
-                          <tr><td colSpan={11} className="px-6 py-8 text-center text-slate-500">No trucks found matching your criteria.</td></tr>
+                          <tr><td colSpan={12} className="px-6 py-8 text-center text-slate-500">No trucks found matching your criteria.</td></tr>
                         ) : paginatedTrucks.map((truck) => (
                           <tr key={truck.id} className={`${getRowClass(truck)} border-b border-slate-100/50`}>
                             <td className="whitespace-nowrap px-3 py-1.5 font-mono font-bold text-slate-800">{truck.route}</td>
@@ -1198,12 +1221,16 @@ export default function App() {
                             </td>
                             <td className="whitespace-nowrap px-3 py-1.5 font-mono text-slate-600">{truck.planEta || '-'}</td>
                             <td className="whitespace-nowrap px-3 py-1.5 font-mono">
-                              <div className="flex items-center gap-2">
-                                <span className={truck.performanceStatus === 'DELAY' ? 'font-bold text-red-600' : 'text-slate-800'}>{truck.stampEta || truck.actualEta || '-'}</span>
-                                {getPerformanceBadge(truck.performanceStatus)}
-                              </div>
+                              <span className={truck.performanceStatus === 'DELAY' ? 'font-bold text-red-600' : 'text-slate-800'}>
+                                {truck.stampEta || truck.actualEta || '-'}
+                              </span>
                             </td>
                             <td className="whitespace-nowrap px-3 py-1.5 font-mono text-slate-600">{truck.stampEtd || '-'}</td>
+                            <td className="whitespace-nowrap px-3 py-1.5">
+                              {getPerformanceBadge(
+                                hasNoWorkAction(truck) ? 'NO_DROP' : truck.performanceStatus
+                              )}
+                            </td>
                             <td className="whitespace-nowrap px-3 py-1.5">
                               {hasNoWorkAction(truck) ? (
                                 <span className="inline-flex rounded-full border border-slate-600 bg-slate-700 px-2.5 py-1 text-[10px] font-bold text-white">
