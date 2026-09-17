@@ -150,12 +150,18 @@ function isNonInboundProject(truck: Truck): boolean {
   const project = String(truck.project || '').trim().toUpperCase();
   return project !== 'INBOUND';
 }
+function hasNoWorkAction(truck: Truck): boolean {
+  return String(truck.actionProblem || '').includes('ไม่มีงาน');
+}
 
 function getHourBackgroundClass(hour: number): string {
   return hour === 12 ? 'bg-slate-200/80' : '';
 }
 
 function getTruckColor(truck: Truck): string {
+  if (hasNoWorkAction(truck)) {
+    return 'bg-black border-black text-white shadow-sm shadow-slate-500/50';
+  }
   if (isNonInboundProject(truck)) {
     return 'bg-pink-500 border-pink-700 text-white shadow-sm shadow-pink-300/60';
   }
