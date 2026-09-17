@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '14';
+const API_VERSION = '15';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -697,6 +697,15 @@ async function writeVehicleCycleState(licensePlate, state) {
   });
   return state;
 }
+function compareTripsByPlanTime(first, second) {
+  const firstDate = cleanText(first.planDate);
+  const secondDate = cleanText(second.planDate);
+  if (firstDate !== secondDate) return firstDate.localeCompare(secondDate);
+  const firstMinutes = first.planEtaMinutes ?? Number.MAX_SAFE_INTEGER;
+  const secondMinutes = second.planEtaMinutes ?? Number.MAX_SAFE_INTEGER;
+  if (firstMinutes !== secondMinutes) return firstMinutes - secondMinutes;
+  return first.codeRun.localeCompare(second.codeRun, undefined, { numeric: true });
+}
 function buildTripsForPlate(data, licensePlate, dateText) {
   const targetPlate = normalizeLicensePlate(licensePlate);
   const planRows = Array.isArray(data?.plan) ? data.plan : [];
@@ -711,14 +720,16 @@ function buildTripsForPlate(data, licensePlate, dateText) {
   for (const row of planRows.slice(1)) {
     if (!Array.isArray(row)) continue;
     const codeRun = cleanText(row[0]).toUpperCase();
+    const planDate = parseSheetDateText(row[1]);
     const planPlate = cleanText(row[4]);
     const remark = cleanText(row[12]).toUpperCase();
     if (!/^A\d+$/.test(codeRun) || remark === 'CANCEL') continue;
     if (normalizeLicensePlate(planPlate) !== targetPlate) continue;
-    if (parseSheetDateText(row[1]) !== dateText) continue;
+    if (planDate !== dateText) continue;
     const actual = actualByCodeRun.get(codeRun) || [];
     trips.push({
       codeRun,
+      planDate,
       planLicensePlate: planPlate,
       planEta: cleanText(row[10]),
       planEtaMinutes: parsePlanMinutes(row[10]),
@@ -727,38 +738,62 @@ function buildTripsForPlate(data, licensePlate, dateText) {
       completed: Boolean(cleanText(actual[5])),
     });
   }
-  return trips.sort((first, second) => {
-    const firstMinutes = first.planEtaMinutes ?? Number.MAX_SAFE_INTEGER;
-    const secondMinutes = second.planEtaMinutes ?? Number.MAX_SAFE_INTEGER;
-    if (firstMinutes !== secondMinutes) return firstMinutes - secondMinutes;
-    return first.codeRun.localeCompare(second.codeRun, undefined, { numeric: true });
-  });
+  return trips.sort(compareTripsByPlanTime).map((trip, index, sortedTrips) => ({
+    ...trip,
+    tripSequence: index + 1,
+    tripCount: sortedTrips.length,
+  }));
 }
-function selectTripForVehicle(trips, nowMinutes) {
-  const inProgress = trips.find(trip => trip.stampEta && !trip.stampEtd);
-  if (inProgress) return { activeTrip: inProgress, selectionReason: 'ETA_WITHOUT_ETD' };
-  const pendingTrips = trips.filter(trip => !trip.stampEta && !trip.stampEtd);
-  if (!pendingTrips.length) return { activeTrip: null, selectionReason: 'NO_PENDING_TRIP' };
-  const activeTrip = [...pendingTrips].sort((first, second) => {
-    const firstDistance = first.planEtaMinutes === null ? Number.MAX_SAFE_INTEGER : Math.abs(first.planEtaMinutes - nowMinutes);
-    const secondDistance = second.planEtaMinutes === null ? Number.MAX_SAFE_INTEGER : Math.abs(second.planEtaMinutes - nowMinutes);
-    if (firstDistance !== secondDistance) return firstDistance - secondDistance;
-    return first.codeRun.localeCompare(second.codeRun, undefined, { numeric: true });
-  })[0];
-  return { activeTrip, selectionReason: 'NEAREST_PENDING_PLAN_ETA' };
+function selectTripForVehicle(trips, previousCycle = null) {
+  const inProgressTrips = trips
+    .filter(trip => trip.stampEta && !trip.stampEtd)
+    .sort(compareTripsByPlanTime);
+  if (inProgressTrips.length) {
+    const lockedInProgress = inProgressTrips.find(
+      trip => trip.codeRun === previousCycle?.activeCodeRun
+    );
+    return {
+      activeTrip: lockedInProgress || inProgressTrips[0],
+      selectionReason: lockedInProgress ? 'LOCKED_ACTIVE_TRIP' : 'ETA_WITHOUT_ETD',
+    };
+  }
+  const pendingTrips = trips
+    .filter(trip => !trip.stampEta && !trip.stampEtd)
+    .sort(compareTripsByPlanTime);
+  if (!pendingTrips.length) {
+    return { activeTrip: null, selectionReason: 'NO_PENDING_TRIP' };
+  }
+  const lockedPending = pendingTrips.find(
+    trip => trip.codeRun === previousCycle?.activeCodeRun
+  );
+  if (lockedPending) {
+    return { activeTrip: lockedPending, selectionReason: 'LOCKED_ACTIVE_TRIP' };
+  }
+  return {
+    activeTrip: pendingTrips[0],
+    selectionReason: 'EARLIEST_PENDING_PLAN_ETA',
+  };
 }
 async function resolveVehicleTrip(input, isInside) {
   const truckResult = await getTruckDataWithCache(false);
   const dateText = getBangkokDateText(input.gpsTime);
   const trips = buildTripsForPlate(truckResult.data, input.licensePlate, dateText);
-  const selected = selectTripForVehicle(trips, getBangkokMinuteOfDay(input.gpsTime));
-  const completedTrips = trips.filter(trip => trip.completed);
-  const latestCompletedTrip = completedTrips.length ? completedTrips[completedTrips.length - 1] : null;
   const previousCycle = await readVehicleCycleState(input.licensePlate);
-  let waitingForExit = Boolean(previousCycle?.waitingForExit);
-  let exitConfirmedAt = previousCycle?.exitConfirmedAt || null;
+  const selected = selectTripForVehicle(trips, previousCycle);
+  const completedTrips = trips.filter(trip => trip.completed).sort(compareTripsByPlanTime);
+  const latestCompletedTrip = completedTrips.length
+    ? completedTrips[completedTrips.length - 1]
+    : null;
+  let waitingForExit = Boolean(
+    previousCycle?.date === dateText && previousCycle?.waitingForExit
+  );
+  let exitConfirmedAt = previousCycle?.date === dateText
+    ? previousCycle?.exitConfirmedAt || null
+    : null;
   const completedCodeRunChanged = Boolean(
-    latestCompletedTrip && previousCycle?.lastCompletedCodeRun !== latestCompletedTrip.codeRun
+    latestCompletedTrip &&
+    previousCycle?.date === dateText &&
+    previousCycle?.lastCompletedCodeRun !== latestCompletedTrip.codeRun
   );
   if (completedCodeRunChanged && isInside) {
     waitingForExit = true;
@@ -768,22 +803,33 @@ async function resolveVehicleTrip(input, isInside) {
     waitingForExit = false;
     exitConfirmedAt = new Date().toISOString();
   }
+  const activeTrip = waitingForExit ? null : selected.activeTrip;
+  const nextPendingTrip = trips
+    .filter(trip => !trip.stampEta && !trip.stampEtd)
+    .sort(compareTripsByPlanTime)[0] || null;
   const state = {
     licensePlate: input.licensePlate,
     normalizedLicensePlate: normalizeLicensePlate(input.licensePlate),
     date: dateText,
-    activeCodeRun: waitingForExit ? null : selected.activeTrip?.codeRun || null,
-    nextCodeRun: selected.activeTrip?.codeRun || null,
+    activeCodeRun: activeTrip?.codeRun || null,
+    activePlanDate: activeTrip?.planDate || null,
+    activePlanEta: activeTrip?.planEta || null,
+    activeTripSequence: activeTrip?.tripSequence || null,
+    nextCodeRun: nextPendingTrip?.codeRun || null,
+    nextPlanEta: nextPendingTrip?.planEta || null,
     requestedCodeRun: input.codeRun,
     lastCompletedCodeRun: latestCompletedTrip?.codeRun || previousCycle?.lastCompletedCodeRun || null,
     waitingForExit,
     exitConfirmedAt,
-    selectionReason: waitingForExit ? 'WAITING_FOR_EXIT_AFTER_ETD' : selected.selectionReason,
+    selectionReason: waitingForExit
+      ? 'WAITING_FOR_EXIT_AFTER_ETD'
+      : selected.selectionReason,
     tripCount: trips.length,
+    tripOrdering: 'PLAN_DATE_PLAN_ETA_CODE_RUN',
     updatedAt: new Date().toISOString(),
   };
   await writeVehicleCycleState(input.licensePlate, state);
-  return { state, activeTrip: waitingForExit ? null : selected.activeTrip, trips };
+  return { state, activeTrip, trips };
 }
 function getGpsDwellKey(codeRun) {
   return `${GPS_DWELL_KEY_PREFIX}${normalizeCodeRun(codeRun)}`;
@@ -1020,6 +1066,11 @@ async function evaluateGpsDock(payload) {
     exitConfirmedAt: vehicleCycle.exitConfirmedAt,
     tripSelectionReason: vehicleCycle.selectionReason,
     tripCountForVehicleToday: vehicleCycle.tripCount,
+    activePlanDate: vehicleCycle.activePlanDate,
+    activePlanEta: vehicleCycle.activePlanEta,
+    activeTripSequence: vehicleCycle.activeTripSequence,
+    nextPlanEta: vehicleCycle.nextPlanEta,
+    tripOrdering: vehicleCycle.tripOrdering,
     gpsId: input.gpsId,
     latitude: input.latitude,
     longitude: input.longitude,
@@ -1078,15 +1129,29 @@ function buildBackgroundGpsInputs(data) {
   const gpsRows = Array.isArray(data?.gps) ? data.gps : [];
   if (gpsRows.length <= 1 || planRows.length <= 1) return [];
   const today = getBangkokDateText(new Date());
-  const seedTripByPlate = new Map();
+  const seedTrips = [];
   for (const row of planRows.slice(1)) {
     if (!Array.isArray(row)) continue;
     const codeRun = cleanText(row[0]).toUpperCase();
+    const planDate = parseSheetDateText(row[1]);
     const plate = cleanText(row[4]);
     const remark = cleanText(row[12]).toUpperCase();
-    if (!/^A\d+$/.test(codeRun) || !plate || remark === 'CANCEL' || parseSheetDateText(row[1]) !== today) continue;
-    const normalizedPlate = normalizeLicensePlate(plate);
-    if (!seedTripByPlate.has(normalizedPlate)) seedTripByPlate.set(normalizedPlate, { codeRun, planLicensePlate: plate });
+    if (!/^A\d+$/.test(codeRun) || !plate || remark === 'CANCEL' || planDate !== today) continue;
+    seedTrips.push({
+      codeRun,
+      planDate,
+      planEta: cleanText(row[10]),
+      planEtaMinutes: parsePlanMinutes(row[10]),
+      planLicensePlate: plate,
+      normalizedPlate: normalizeLicensePlate(plate),
+    });
+  }
+  seedTrips.sort(compareTripsByPlanTime);
+  const seedTripByPlate = new Map();
+  for (const trip of seedTrips) {
+    if (!seedTripByPlate.has(trip.normalizedPlate)) {
+      seedTripByPlate.set(trip.normalizedPlate, trip);
+    }
   }
   const headers = gpsRows[0].map(normalizeGpsHeader);
   const gpsIdIndex = findGpsHeaderIndex(headers, ['GPS ID', 'GPSID', 'รหัส GPS']);
@@ -2513,6 +2578,9 @@ app.get(['/health', '/api/health'], (req, res) => {
       gpsStaleThresholdSeconds: Math.floor(GPS_STALE_THRESHOLD_MS / 1000),
       movementGraceSeconds: Math.floor(GPS_MOVEMENT_GRACE_MS / 1000),
       multipleTripsPerVehiclePerDay: true,
+      tripSelectionPolicy: 'IN_PROGRESS_THEN_EARLIEST_PLAN_DATE_PLAN_ETA',
+      activeTripLockEnabled: true,
+      tripTieBreaker: 'CODE_RUN_NUMERIC',
       exitRequiredBeforeNextTrip: true,
       etaRule: 'SPEED_EQUALS_ZERO_FOR_3_MINUTES',
       etdRule: 'IMMEDIATE_ON_FIRST_FRESH_GPS_OUTSIDE_AFTER_INSIDE',
