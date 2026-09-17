@@ -39,6 +39,14 @@ const GPS_VEHICLE_CYCLE_TTL_SECONDS = 36 * 60 * 60;
 const GPS_AUTO_STAMP_KEY_PREFIX = 'elive:gps-auto-stamp:';
 const GPS_AUTO_STAMP_LOCK_SECONDS = 90;
 const GPS_AUTO_STAMP_RESULT_TTL_SECONDS = 36 * 60 * 60;
+const GPS_PENDING_STAMP_KEY_PREFIX = 'elive:gps-pending-stamp:';
+const GPS_PENDING_STAMP_LOCK_PREFIX = 'elive:gps-pending-stamp-lock:';
+const GPS_PENDING_STAMP_SCHEDULE_KEY = 'elive:gps-pending-stamp:schedule';
+const GPS_PENDING_STAMP_TTL_SECONDS = 7 * 24 * 60 * 60;
+const GPS_PENDING_STAMP_LOCK_SECONDS = 90;
+const GPS_PENDING_STAMP_BASE_RETRY_MS = 30 * 1000;
+const GPS_PENDING_STAMP_MAX_RETRY_MS = 15 * 60 * 1000;
+const GPS_PENDING_STAMP_BATCH_SIZE = 100;
 const GPS_AUTO_STAMP_ETA_ENABLED = cleanText(process.env.GPS_AUTO_STAMP_ETA_ENABLED || 'true').toLowerCase() === 'true';
 const GPS_AUTO_STAMP_ETD_ENABLED = cleanText(process.env.GPS_AUTO_STAMP_ETD_ENABLED || 'false').toLowerCase() === 'true';
 const GPS_BACKGROUND_WORKER_ENABLED = cleanText(process.env.GPS_BACKGROUND_WORKER_ENABLED || 'false').toLowerCase() === 'true';
@@ -936,11 +944,14 @@ function findTripByCodeRun(data, codeRun) {
   if (!planRow) throw new Error(`Plan ${normalizedCodeRun} was not found.`);
   if (cleanText(planRow[12]).toUpperCase() === 'CANCEL') throw new Error(`Plan ${normalizedCodeRun} is cancelled.`);
   const actualRow = actualRows.slice(1).find(row => Array.isArray(row) && cleanText(row[0]).toUpperCase() === normalizedCodeRun) || [];
+  const actionProblem = cleanText(actualRow[6]);
   return {
     codeRun: normalizedCodeRun,
     planLicensePlate: cleanText(planRow[4]),
     stampEta: cleanText(actualRow[4]),
     stampEtd: cleanText(actualRow[5]),
+    actionProblem,
+    noWorkAction: actionProblem.includes('ไม่มีงานลง') || actionProblem.includes('ไม่มีงาน'),
   };
 }
 async function stampActualData(payload) {
@@ -948,83 +959,166 @@ async function stampActualData(payload) {
   clearTruckCache();
   return result;
 }
-async function executeGpsAutoStampEta(state) {
-  if (state?.noWorkAction) return { status: 'SKIPPED', reason: 'NO_WORK_ACTION' };
-  if (!GPS_AUTO_STAMP_ETA_ENABLED || !state?.readyForGpsStampEta || state?.status !== 'DOCK_IN_CONFIRMED') return null;
-  if (state.waitingForExit || !state.activeCodeRun || state.activeCodeRun !== state.codeRun) return null;
-  const client = requireRedisClient();
-  const key = getGpsAutoStampKey('ETA', state.activeCodeRun);
-  const lockAcquired = await client.set(key, JSON.stringify({ status: 'PROCESSING', startedAt: new Date().toISOString() }), {
-    NX: true,
-    EX: GPS_AUTO_STAMP_LOCK_SECONDS,
-  });
-  if (!lockAcquired) {
-    const existing = await client.get(key);
-    return existing ? JSON.parse(existing) : { status: 'PROCESSING' };
-  }
+function getPendingStampId(stampType, codeRun) {
+  return `${normalizeStampType(stampType)}:${normalizeCodeRun(codeRun)}`;
+}
+function getPendingStampKey(pendingId) {
+  return `${GPS_PENDING_STAMP_KEY_PREFIX}${pendingId}`;
+}
+function getPendingStampLockKey(pendingId) {
+  return `${GPS_PENDING_STAMP_LOCK_PREFIX}${pendingId}`;
+}
+function calculatePendingStampRetryDelayMs(attemptCount) {
+  const exponent = Math.max(0, Math.min(10, Number(attemptCount || 1) - 1));
+  return Math.min(GPS_PENDING_STAMP_MAX_RETRY_MS, GPS_PENDING_STAMP_BASE_RETRY_MS * (2 ** exponent));
+}
+async function readPendingStamp(pendingId) {
+  const raw = await requireRedisClient().get(getPendingStampKey(pendingId));
+  if (!raw) return null;
   try {
-    const response = await stampActualData({
-      codeRun: state.activeCodeRun,
-      stampType: 'ETA',
-      stampSource: 'GPS_DWELL',
-      stampTime: state.parkingStartedAt || state.gpsTime,
-      stampedBy: 'GPS SYSTEM',
-      geofence: state.geofenceName,
-      parkingStartedAt: state.parkingStartedAt,
-      dwellConfirmedAt: state.confirmedAt,
-      gpsSnapshot: {
-        gpsTime: state.gpsTime,
-        latitude: state.geofenceLatitude ? state.latitude || null : null,
-        longitude: state.geofenceLongitude ? state.longitude || null : null,
-        speed: state.speedKmh,
-        geofence: state.geofenceName,
-      },
-    });
-    const stampResult = response?.result || response;
-    const stored = {
-      status: stampResult?.written === false ? 'ALREADY_STAMPED' : 'STAMPED',
-      result: stampResult,
-      completedAt: new Date().toISOString(),
-    };
-    await client.set(key, JSON.stringify(stored), { EX: GPS_AUTO_STAMP_RESULT_TTL_SECONDS });
-    return stored;
-  } catch (error) {
-    await client.del(key);
-    throw error;
+    return JSON.parse(raw);
+  } catch {
+    await requireRedisClient().multi().del(getPendingStampKey(pendingId)).zRem(GPS_PENDING_STAMP_SCHEDULE_KEY, pendingId).exec();
+    return null;
   }
 }
+async function writePendingStamp(record, scheduleAtMs = null) {
+  const client = requireRedisClient();
+  const transaction = client.multi().set(getPendingStampKey(record.pendingId), JSON.stringify(record), { EX: GPS_PENDING_STAMP_TTL_SECONDS });
+  if (Number.isFinite(scheduleAtMs)) transaction.zAdd(GPS_PENDING_STAMP_SCHEDULE_KEY, [{ score: scheduleAtMs, value: record.pendingId }]);
+  else transaction.zRem(GPS_PENDING_STAMP_SCHEDULE_KEY, record.pendingId);
+  await transaction.exec();
+  return record;
+}
+async function createPendingGpsStamp(stampType, state) {
+  const normalizedStampType = normalizeStampType(stampType);
+  const codeRun = normalizeCodeRun(state.activeCodeRun || state.codeRun);
+  const pendingId = getPendingStampId(normalizedStampType, codeRun);
+  const now = new Date().toISOString();
+  const payload = normalizedStampType === 'ETA'
+    ? {
+        codeRun,
+        stampType: 'ETA',
+        stampSource: 'GPS_GEOFENCE_ENTRY',
+        stampTime: state.gpsTime,
+        stampedBy: 'GPS SYSTEM',
+        geofence: state.geofenceName,
+        gpsSnapshot: { gpsId: state.gpsId, gpsTime: state.gpsTime, latitude: state.latitude, longitude: state.longitude, speed: state.speedKmh, geofence: state.geofenceName },
+      }
+    : {
+        codeRun,
+        stampType: 'ETD',
+        stampSource: 'GPS_EXIT',
+        stampTime: state.gpsTime,
+        stampedBy: 'GPS SYSTEM',
+        geofence: state.lastInsideGeofenceName || state.geofenceName,
+        exitDetectedAt: state.gpsTime,
+        gpsSnapshot: { gpsId: state.gpsId, gpsTime: state.gpsTime, latitude: state.latitude, longitude: state.longitude, speed: state.speedKmh, geofence: state.lastInsideGeofenceName || state.geofenceName },
+      };
+  const initial = {
+    pendingId, stampType: normalizedStampType, codeRun,
+    licensePlate: state.licensePlate, normalizedLicensePlate: normalizeLicensePlate(state.licensePlate),
+    gpsId: state.gpsId, gpsTime: state.gpsTime, selectedPlanEta: state.activePlanEta || null,
+    geofence: payload.geofence || null, payload,
+    status: 'PENDING', attemptCount: 0, lastAttemptAt: null, lastError: null,
+    nextRetryAt: now, createdAt: now, updatedAt: now, completedAt: null,
+  };
+  const client = requireRedisClient();
+  const created = await client.set(getPendingStampKey(pendingId), JSON.stringify(initial), { NX: true, EX: GPS_PENDING_STAMP_TTL_SECONDS });
+  if (created) {
+    await client.zAdd(GPS_PENDING_STAMP_SCHEDULE_KEY, [{ score: Date.now(), value: pendingId }]);
+    console.log(JSON.stringify({ logType: 'ELIVE_GPS_STAMP', event: 'PENDING_STAMP_CREATED', pendingId, codeRun, stampType: normalizedStampType, licensePlate: state.licensePlate, gpsTime: state.gpsTime }));
+    return initial;
+  }
+  return await readPendingStamp(pendingId);
+}
+async function closePendingStamp(record, status, details = {}) {
+  const now = new Date().toISOString();
+  const completed = { ...record, ...details, status, nextRetryAt: null, updatedAt: now, completedAt: now };
+  await writePendingStamp(completed, null);
+  return completed;
+}
+async function processPendingGpsStamp(pendingId) {
+  const client = requireRedisClient();
+  const lockKey = getPendingStampLockKey(pendingId);
+  const lockToken = randomUUID();
+  const acquired = await client.set(lockKey, lockToken, { NX: true, EX: GPS_PENDING_STAMP_LOCK_SECONDS });
+  if (!acquired) return { status: 'PROCESSING', pendingId };
+  try {
+    let record = await readPendingStamp(pendingId);
+    if (!record) return { status: 'MISSING', pendingId };
+    if (['STAMPED', 'ALREADY_STAMPED', 'BLOCKED_NO_WORK'].includes(record.status)) return record;
+    const attemptCount = Number(record.attemptCount || 0) + 1;
+    const lastAttemptAt = new Date().toISOString();
+    record = { ...record, status: 'PROCESSING', attemptCount, lastAttemptAt, lastError: null, updatedAt: lastAttemptAt };
+    await writePendingStamp(record, null);
+    console.log(JSON.stringify({ logType: 'ELIVE_GPS_STAMP', event: 'PENDING_STAMP_CLAIMED', pendingId, attemptCount }));
+
+    const latestData = await requestAppsScriptGet('getTrucks');
+    truckDataCache = latestData;
+    truckDataCacheTime = Date.now();
+    const trip = findTripByCodeRun(latestData, record.codeRun);
+    if (trip.noWorkAction) {
+      console.log(JSON.stringify({ logType: 'ELIVE_GPS_STAMP', event: 'STAMP_BLOCKED_NO_WORK', pendingId, codeRun: record.codeRun }));
+      return await closePendingStamp(record, 'BLOCKED_NO_WORK', { lastError: 'NO_WORK_ACTION' });
+    }
+    const alreadyStamped = record.stampType === 'ETA' ? Boolean(trip.stampEta) : Boolean(trip.stampEtd);
+    if (alreadyStamped) {
+      console.log(JSON.stringify({ logType: 'ELIVE_GPS_STAMP', event: 'STAMP_ALREADY_EXISTS', pendingId, codeRun: record.codeRun }));
+      return await closePendingStamp(record, 'ALREADY_STAMPED');
+    }
+    if (record.stampType === 'ETD' && !trip.stampEta) {
+      throw new Error('STAMP_ETA_REQUIRED_BEFORE_ETD');
+    }
+    console.log(JSON.stringify({ logType: 'ELIVE_GPS_STAMP', event: 'STAMP_REQUEST_SENT', pendingId, codeRun: record.codeRun, stampType: record.stampType, attemptCount }));
+    const response = await stampActualData(record.payload);
+    const stampResult = response?.result || response;
+    const status = stampResult?.written === false ? 'ALREADY_STAMPED' : 'STAMPED';
+    console.log(JSON.stringify({ logType: 'ELIVE_GPS_STAMP', event: status === 'STAMPED' ? 'STAMP_CONFIRMED' : 'STAMP_ALREADY_EXISTS', pendingId, codeRun: record.codeRun }));
+    return await closePendingStamp(record, status, { result: stampResult });
+  } catch (error) {
+    const existing = await readPendingStamp(pendingId);
+    if (!existing) throw error;
+    const delayMs = calculatePendingStampRetryDelayMs(existing.attemptCount);
+    const nextRetryMs = Date.now() + delayMs;
+    const retryRecord = { ...existing, status: 'RETRY_WAIT', lastError: getErrorMessage(error), nextRetryAt: new Date(nextRetryMs).toISOString(), updatedAt: new Date().toISOString() };
+    await writePendingStamp(retryRecord, nextRetryMs);
+    console.error(JSON.stringify({ logType: 'ELIVE_GPS_STAMP', event: 'STAMP_RETRY_SCHEDULED', pendingId, attemptCount: retryRecord.attemptCount, lastError: retryRecord.lastError, nextRetryAt: retryRecord.nextRetryAt }));
+    return retryRecord;
+  } finally {
+    await client.eval("if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) else return 0 end", { keys: [lockKey], arguments: [lockToken] }).catch(() => {});
+  }
+}
+async function processDuePendingGpsStamps() {
+  const client = requireRedisClient();
+  const pendingIds = await client.zRangeByScore(GPS_PENDING_STAMP_SCHEDULE_KEY, 0, Date.now(), { LIMIT: { offset: 0, count: GPS_PENDING_STAMP_BATCH_SIZE } });
+  const summary = { due: pendingIds.length, processed: 0, stamped: 0, alreadyStamped: 0, blockedNoWork: 0, retryWait: 0 };
+  for (const pendingId of pendingIds) {
+    if (gpsWorkerStopping) break;
+    const result = await processPendingGpsStamp(pendingId);
+    summary.processed += 1;
+    if (result?.status === 'STAMPED') summary.stamped += 1;
+    if (result?.status === 'ALREADY_STAMPED') summary.alreadyStamped += 1;
+    if (result?.status === 'BLOCKED_NO_WORK') summary.blockedNoWork += 1;
+    if (result?.status === 'RETRY_WAIT') summary.retryWait += 1;
+  }
+  return summary;
+}
+async function executeGpsAutoStampEta(state) {
+  if (state?.noWorkAction) return { status: 'BLOCKED_NO_WORK', reason: 'NO_WORK_ACTION' };
+  if (!GPS_AUTO_STAMP_ETA_ENABLED || !state?.readyForGpsStampEta || !state?.isInside) return null;
+  if (state.waitingForExit || !state.activeCodeRun || state.activeCodeRun !== state.codeRun) return null;
+  const pending = await createPendingGpsStamp('ETA', state);
+  return await processPendingGpsStamp(pending.pendingId);
+}
 async function executeGpsAutoStampEtd(state, activeTrip) {
-  if (state?.noWorkAction || activeTrip?.noWorkAction) return { status: 'SKIPPED', reason: 'NO_WORK_ACTION' };
+  if (state?.noWorkAction || activeTrip?.noWorkAction) return { status: 'BLOCKED_NO_WORK', reason: 'NO_WORK_ACTION' };
   if (!GPS_AUTO_STAMP_ETD_ENABLED || !state?.readyForGpsStampEtd) return null;
   if (!activeTrip?.stampEta || activeTrip?.stampEtd) return null;
   if (!state.wasInsideBeforeExit || state.isInside || state.status !== 'OUTSIDE_GEOFENCE') return null;
   if (!state.activeCodeRun || state.activeCodeRun !== state.codeRun) return null;
-  const client = requireRedisClient();
-  const key = getGpsAutoStampKey('ETD', state.activeCodeRun);
-  const lockAcquired = await client.set(key, JSON.stringify({ status: 'PROCESSING', startedAt: new Date().toISOString() }), { NX: true, EX: GPS_AUTO_STAMP_LOCK_SECONDS });
-  if (!lockAcquired) {
-    const existing = await client.get(key);
-    return existing ? JSON.parse(existing) : { status: 'PROCESSING' };
-  }
-  try {
-    const response = await stampActualData({
-      codeRun: state.activeCodeRun,
-      stampType: 'ETD',
-      stampSource: 'GPS_EXIT',
-      stampTime: state.gpsTime,
-      stampedBy: 'GPS SYSTEM',
-      geofence: state.lastInsideGeofenceName || state.geofenceName,
-      exitDetectedAt: state.gpsTime,
-      gpsSnapshot: { gpsTime: state.gpsTime, latitude: state.latitude, longitude: state.longitude, speed: state.speedKmh, geofence: state.lastInsideGeofenceName || state.geofenceName },
-    });
-    const stampResult = response?.result || response;
-    const stored = { status: stampResult?.written === false ? 'ALREADY_STAMPED' : 'STAMPED', result: stampResult, completedAt: new Date().toISOString() };
-    await client.set(key, JSON.stringify(stored), { EX: GPS_AUTO_STAMP_RESULT_TTL_SECONDS });
-    return stored;
-  } catch (error) {
-    await client.del(key);
-    throw error;
-  }
+  const pending = await createPendingGpsStamp('ETD', state);
+  return await processPendingGpsStamp(pending.pendingId);
 }
 async function evaluateGpsDock(payload) {
   const input = validateGpsDockPayload(payload);
@@ -1069,17 +1163,12 @@ async function evaluateGpsDock(payload) {
     status = 'OUTSIDE_GEOFENCE';
     parkingStartedAtMs = 0;
     movingStartedAtMs = 0;
-  } else if (isParked) {
+  } else {
+    status = 'DOCK_IN_CONFIRMED';
     movingStartedAtMs = 0;
     if (!parkingStartedAtMs || previous?.geofenceId !== nearest.id || previous?.codeRun !== effectiveCodeRun) {
       parkingStartedAtMs = eventTimeMs;
     }
-    const dwellMs = Math.max(0, eventTimeMs - parkingStartedAtMs);
-    status = dwellMs >= GPS_DWELL_THRESHOLD_MS ? 'DOCK_IN_CONFIRMED' : 'DOCK_PENDING';
-  } else {
-    if (!movingStartedAtMs) movingStartedAtMs = eventTimeMs;
-    if (eventTimeMs - movingStartedAtMs >= GPS_MOVEMENT_GRACE_MS) parkingStartedAtMs = 0;
-    status = 'MOVING_IN_GEOFENCE';
   }
 
   const dwellSeconds = parkingStartedAtMs && isInside && isParked && !vehicleCycle.waitingForExit && activeTrip
@@ -1133,7 +1222,7 @@ async function evaluateGpsDock(payload) {
     confirmedAt: status === 'DOCK_IN_CONFIRMED'
       ? previous?.confirmedAt || new Date(eventTimeMs).toISOString()
       : null,
-    readyForGpsStampEta: status === 'DOCK_IN_CONFIRMED' && Boolean(activeTrip) && !activeTrip?.noWorkAction && !activeTrip?.stampEta,
+    readyForGpsStampEta: isInside && gpsAgeMs <= GPS_STALE_THRESHOLD_MS && Boolean(activeTrip) && !activeTrip?.noWorkAction && !activeTrip?.stampEta,
     readyForGpsStampEtd: GPS_AUTO_STAMP_ETD_ENABLED && status === 'OUTSIDE_GEOFENCE' && wasInsideBeforeExit && Boolean(activeTrip?.stampEta) && !activeTrip?.noWorkAction && !activeTrip?.stampEtd,
     autoStampExecuted: false,
     autoStampEtaResult: null,
@@ -1257,6 +1346,8 @@ async function runGpsBackgroundCycle() {
   const startedAt = Date.now();
   const summary = { processed: 0, confirmed: 0, etaStamped: 0, etdStamped: 0, stamped: 0, alreadyStamped: 0, failed: 0, failures: [] };
   try {
+    const pendingRetrySummary = await processDuePendingGpsStamps();
+    summary.pendingRetry = pendingRetrySummary;
     const truckResult = await getTruckDataWithCache(false);
     const inputs = buildBackgroundGpsInputs(truckResult.data);
     for (const input of inputs) {
@@ -2616,7 +2707,10 @@ app.get(['/health', '/api/health'], (req, res) => {
       noWorkActionAutoStampBlocked: true,
       tripTieBreaker: 'EARLIER_PLAN_ETA_THEN_CODE_RUN_NUMERIC',
       exitRequiredBeforeNextTrip: true,
-      etaRule: 'SPEED_EQUALS_ZERO_FOR_3_MINUTES',
+      etaRule: 'IMMEDIATE_ON_FIRST_FRESH_GPS_INSIDE_GEOFENCE',
+      pendingStampRetryQueueEnabled: true,
+      pendingStampRetryBaseSeconds: Math.floor(GPS_PENDING_STAMP_BASE_RETRY_MS / 1000),
+      pendingStampRetryMaximumSeconds: Math.floor(GPS_PENDING_STAMP_MAX_RETRY_MS / 1000),
       etdRule: 'IMMEDIATE_ON_FIRST_FRESH_GPS_OUTSIDE_AFTER_INSIDE',
       vehicleCycleTtlSeconds: GPS_VEHICLE_CYCLE_TTL_SECONDS,
       geofences: GPS_GEOFENCES,
