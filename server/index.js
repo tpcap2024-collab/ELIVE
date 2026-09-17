@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '17';
+const API_VERSION = '18';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -23,6 +23,8 @@ const FRESH_CACHE_DURATION_MS = 60000;
 const STALE_CACHE_DURATION_MS = 1800000;
 const MASTER_PLAN_CACHE_DURATION_MS = 60000;
 const APPS_SCRIPT_TIMEOUT_MS = 60000;
+const APPS_SCRIPT_GET_TRUCKS_TIMEOUT_MS = 120000;
+const APPS_SCRIPT_GET_TRUCKS_MAX_ATTEMPTS = 2;
 const APPS_SCRIPT_PLAN_CREATE_TIMEOUT_MS = 120000;
 const APPS_SCRIPT_MUTATION_LOCK_KEY = 'elive:apps-script:mutation-lock';
 const APPS_SCRIPT_MUTATION_LOCK_SECONDS = 180;
@@ -55,7 +57,7 @@ const GPS_PENDING_STAMP_BATCH_SIZE = 100;
 const GPS_AUTO_STAMP_ETA_ENABLED = cleanText(process.env.GPS_AUTO_STAMP_ETA_ENABLED || 'true').toLowerCase() === 'true';
 const GPS_AUTO_STAMP_ETD_ENABLED = cleanText(process.env.GPS_AUTO_STAMP_ETD_ENABLED || 'false').toLowerCase() === 'true';
 const GPS_BACKGROUND_WORKER_ENABLED = cleanText(process.env.GPS_BACKGROUND_WORKER_ENABLED || 'false').toLowerCase() === 'true';
-const GPS_BACKGROUND_WORKER_INTERVAL_MS = Math.max(15000, Number(process.env.GPS_BACKGROUND_WORKER_INTERVAL_MS || 30000));
+const GPS_BACKGROUND_WORKER_INTERVAL_MS = Math.max(15000, Number(process.env.GPS_BACKGROUND_WORKER_INTERVAL_MS || 60000));
 const GPS_WORKER_LOCK_KEY = 'elive:gps-worker:leader';
 const GPS_WORKER_LOCK_SECONDS = Math.max(30, Math.ceil(GPS_BACKGROUND_WORKER_INTERVAL_MS / 1000) + 30);
 const GPS_WORKER_STATUS_KEY = 'elive:gps-worker:status';
@@ -1862,26 +1864,14 @@ async function recordSessionUserActivity(tokenHash, session) {
   const updatedSession = {
     ...currentSession,
     ...session,
-    credentialVersion: Number(
-      currentSession.credentialVersion ?? session.credentialVersion ?? 0
-    ),
-    lastReauthenticatedAt: Number(
-      currentSession.lastReauthenticatedAt ?? session.lastReauthenticatedAt ?? 0
-    ),
-    passwordChangedAt:
-      currentSession.passwordChangedAt ?? session.passwordChangedAt ?? null,
+    credentialVersion: Number(currentSession.credentialVersion ?? session.credentialVersion ?? 0),
+    lastReauthenticatedAt: Number(currentSession.lastReauthenticatedAt ?? session.lastReauthenticatedAt ?? 0),
+    passwordChangedAt: currentSession.passwordChangedAt ?? session.passwordChangedAt ?? null,
     lastUserActivityAt: now,
     expiresAt,
   };
-  const remainingTtlSeconds = Math.max(
-    1,
-    Math.ceil((expiresAt - now) / 1000)
-  );
-  await client.set(
-    sessionKey,
-    JSON.stringify(updatedSession),
-    { EX: remainingTtlSeconds }
-  );
+  const remainingTtlSeconds = Math.max(1, Math.ceil((expiresAt - now) / 1000));
+  await client.set(sessionKey, JSON.stringify(updatedSession), { EX: remainingTtlSeconds });
   return updatedSession;
 }
 
@@ -1912,19 +1902,7 @@ async function requireAuthentication(req,res,next){
             : 'Authentication required.'
       });
     }
-    req.auth={
-      ...record.session,
-      username:record.session.username,
-      role:record.session.role,
-      createdAt:record.session.createdAt,
-      expiresAt:record.session.expiresAt,
-      lastUserActivityAt:record.session.lastUserActivityAt,
-      credentialVersion:Number(record.session.credentialVersion || 0),
-      lastReauthenticatedAt:Number(record.session.lastReauthenticatedAt || 0),
-      passwordChangedAt:record.session.passwordChangedAt || null,
-    };
-    req.authSessionTokenHash=record.tokenHash;
-    return next();
+    req.auth={...record.session,username:record.session.username,role:record.session.role,createdAt:record.session.createdAt,expiresAt:record.session.expiresAt,lastUserActivityAt:record.session.lastUserActivityAt,credentialVersion:Number(record.session.credentialVersion || 0),lastReauthenticatedAt:Number(record.session.lastReauthenticatedAt || 0),passwordChangedAt:record.session.passwordChangedAt || null}; req.authSessionTokenHash=record.tokenHash; return next();
   } catch(error){
     const errorCode=getErrorMessage(error);
     if(errorCode==='SESSION_STORE_UNAVAILABLE') return res.status(503).json({success:false,error:'Session service is temporarily unavailable.'});
@@ -2186,9 +2164,15 @@ async function requestAppsScriptGet(action, parameters = {}) {
   for (const [key, value] of Object.entries(parameters)) {
     if (value !== undefined && value !== null) signedParameters[key] = String(value);
   }
+  const requestTimeoutMilliseconds = action === 'getTrucks'
+    ? APPS_SCRIPT_GET_TRUCKS_TIMEOUT_MS
+    : APPS_SCRIPT_TIMEOUT_MS;
+  const maximumAttempts = action === 'getTrucks'
+    ? APPS_SCRIPT_GET_TRUCKS_MAX_ATTEMPTS
+    : APPS_SCRIPT_MAX_ATTEMPTS;
   let finalError = null;
 
-  for (let attempt = 1; attempt <= APPS_SCRIPT_MAX_ATTEMPTS; attempt += 1) {
+  for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
     try {
       const auth = createAppsScriptSignature('GET', action, signedParameters);
       const queryData = {
@@ -2213,7 +2197,7 @@ async function requestAppsScriptGet(action, parameters = {}) {
           },
           cache: 'no-store',
         },
-        APPS_SCRIPT_TIMEOUT_MS
+        requestTimeoutMilliseconds
       );
 
       const responseText = await response.text();
@@ -2249,7 +2233,7 @@ async function requestAppsScriptGet(action, parameters = {}) {
       if (!isRetryableAppsScriptError(error)) break;
     }
 
-    if (attempt < APPS_SCRIPT_MAX_ATTEMPTS) {
+    if (attempt < maximumAttempts) {
       await wait(attempt === 1 ? 1000 : 2500);
     }
   }
@@ -2851,6 +2835,9 @@ app.get(['/health', '/api/health'], (req, res) => {
       configured: Boolean(APPS_SCRIPT_URL),
       signatureConfigured: Boolean(APPS_SCRIPT_SHARED_SECRET && APPS_SCRIPT_SHARED_SECRET.length >= 32),
       signatureMaxAgeSeconds: Math.floor(APPS_SCRIPT_SIGNATURE_MAX_AGE_MS / 1000),
+      defaultTimeoutSeconds: Math.floor(APPS_SCRIPT_TIMEOUT_MS / 1000),
+      getTrucksTimeoutSeconds: Math.floor(APPS_SCRIPT_GET_TRUCKS_TIMEOUT_MS / 1000),
+      getTrucksMaximumAttempts: APPS_SCRIPT_GET_TRUCKS_MAX_ATTEMPTS,
       planCreateTimeoutSeconds: Math.floor(APPS_SCRIPT_PLAN_CREATE_TIMEOUT_MS / 1000),
       mutationLockEnabled: true,
       mutationLockTtlSeconds: APPS_SCRIPT_MUTATION_LOCK_SECONDS,
