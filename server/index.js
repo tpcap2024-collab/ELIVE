@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '20';
+const API_VERSION = '21';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -799,6 +799,7 @@ function buildTripsForPlate(data, licensePlate, dateText) {
       codeRun,
       planDate,
       planLicensePlate: planPlate,
+      dropPoint: cleanText(row[9]).toUpperCase(),
       planEta: cleanText(row[10]),
       planEtaMinutes: parsePlanMinutes(row[10]),
       stampEta: cleanText(actual[4]),
@@ -813,6 +814,25 @@ function buildTripsForPlate(data, licensePlate, dateText) {
     tripSequence: index + 1,
     tripCount: sortedTrips.length,
   }));
+}
+function getGeofenceIdForDropPoint(dropPoint) {
+  const normalizedDropPoint = cleanText(dropPoint).toUpperCase();
+  if (/^R1(?:-|\b)/.test(normalizedDropPoint)) return 'TPCAP-R1';
+  if (/^R2(?:-|\b)/.test(normalizedDropPoint)) return 'TPCAP-R2';
+  if (/^(?:L1|L2|L3|M1)(?:-|\b)/.test(normalizedDropPoint)) return 'TPCAP-LSP';
+  return null;
+}
+function selectGpsEtaStampTrips(trips, nowMinutes, geofenceId) {
+  return trips
+    .filter(trip =>
+      !trip.stampEta &&
+      !trip.stampEtd &&
+      !trip.noWorkAction &&
+      (trip.planEtaMinutes === null ||
+        nowMinutes >= trip.planEtaMinutes - GPS_NEXT_TRIP_EARLY_WINDOW_MINUTES) &&
+      getGeofenceIdForDropPoint(trip.dropPoint) === geofenceId
+    )
+    .sort(compareTripsByPlanTime);
 }
 function selectTripForVehicle(trips, nowMinutes, previousCycle = null) {
   const inProgressTrips = trips
@@ -941,7 +961,7 @@ async function resolveVehicleTrip(input, isInside, dataOverride = null) {
     updatedAt: new Date().toISOString(),
   };
   await writeVehicleCycleState(input.licensePlate, state);
-  return { state, activeTrip, trips };
+  return { state, activeTrip, trips, nowMinutes };
 }
 function getGpsDwellKey(codeRun) {
   return `${GPS_DWELL_KEY_PREFIX}${normalizeCodeRun(codeRun)}`;
@@ -1188,6 +1208,33 @@ async function executeGpsAutoStampEta(state) {
   const pending = await createPendingGpsStamp('ETA', state);
   return await processPendingGpsStamp(pending.pendingId);
 }
+async function executeGpsAutoStampEtaBatch(state, trips) {
+  if (!GPS_AUTO_STAMP_ETA_ENABLED || !state?.isInside || state.waitingForExit) {
+    return [];
+  }
+  const results = [];
+  for (const trip of trips) {
+    const tripState = {
+      ...state,
+      codeRun: trip.codeRun,
+      activeCodeRun: trip.codeRun,
+      activePlanDate: trip.planDate,
+      activePlanEta: trip.planEta,
+      activeTripSequence: trip.tripSequence,
+      planLicensePlate: trip.planLicensePlate,
+      noWorkAction: trip.noWorkAction === true,
+      readyForGpsStampEta: true,
+    };
+    const result = await executeGpsAutoStampEta(tripState);
+    results.push({
+      codeRun: trip.codeRun,
+      dropPoint: trip.dropPoint,
+      geofenceId: state.geofenceId,
+      result,
+    });
+  }
+  return results;
+}
 async function executeGpsAutoStampEtd(state, activeTrip) {
   if (state?.noWorkAction || activeTrip?.noWorkAction) return { status: 'BLOCKED_NO_WORK', reason: 'NO_WORK_ACTION' };
   if (!GPS_AUTO_STAMP_ETD_ENABLED || !state?.readyForGpsStampEtd) return null;
@@ -1210,7 +1257,12 @@ async function evaluateGpsDock(payload, dataOverride = null) {
   const tripResolution = await resolveVehicleTrip(input, isInside, dataOverride);
   const vehicleCycle = tripResolution.state;
   const activeTrip = tripResolution.activeTrip;
-  const effectiveCodeRun = activeTrip?.codeRun || input.codeRun;
+  const eligibleEtaTrips = selectGpsEtaStampTrips(
+    tripResolution.trips,
+    tripResolution.nowMinutes,
+    nearest.id
+  );
+  const effectiveCodeRun = activeTrip?.codeRun || eligibleEtaTrips[0]?.codeRun || input.codeRun;
   const platesMatch = activeTrip
     ? normalizeLicensePlate(input.licensePlate) === normalizeLicensePlate(activeTrip.planLicensePlate)
     : normalizeLicensePlate(input.licensePlate) === normalizeLicensePlate(input.planLicensePlate);
@@ -1271,6 +1323,8 @@ async function evaluateGpsDock(payload, dataOverride = null) {
     nextPlanEta: vehicleCycle.nextPlanEta,
     tripOrdering: vehicleCycle.tripOrdering,
     noWorkAction: activeTrip?.noWorkAction === true,
+    eligibleEtaCodeRuns: eligibleEtaTrips.map(trip => trip.codeRun),
+    eligibleEtaTripCount: eligibleEtaTrips.length,
     gpsId: input.gpsId,
     latitude: input.latitude,
     longitude: input.longitude,
@@ -1301,17 +1355,29 @@ async function evaluateGpsDock(payload, dataOverride = null) {
     confirmedAt: status === 'DOCK_IN_CONFIRMED'
       ? previous?.confirmedAt || new Date(eventTimeMs).toISOString()
       : null,
-    readyForGpsStampEta: isInside && gpsAgeMs <= GPS_STALE_THRESHOLD_MS && Boolean(activeTrip) && !activeTrip?.noWorkAction && !activeTrip?.stampEta,
+    readyForGpsStampEta: isInside && gpsAgeMs <= GPS_STALE_THRESHOLD_MS && !vehicleCycle.waitingForExit && eligibleEtaTrips.length > 0,
     readyForGpsStampEtd: GPS_AUTO_STAMP_ETD_ENABLED && status === 'OUTSIDE_GEOFENCE' && wasInsideBeforeExit && Boolean(activeTrip?.stampEta) && !activeTrip?.noWorkAction && !activeTrip?.stampEtd,
     autoStampExecuted: false,
     autoStampEtaResult: null,
+    autoStampEtaResults: [],
     autoStampEtdResult: null,
   };
   await writeGpsDwellState(effectiveCodeRun, state);
-  if (state.readyForGpsStampEta) state.autoStampEtaResult = await executeGpsAutoStampEta(state);
+  if (state.readyForGpsStampEta) {
+    state.autoStampEtaResults = await executeGpsAutoStampEtaBatch(state, eligibleEtaTrips);
+    const etaResults = state.autoStampEtaResults
+      .map(item => item.result)
+      .filter(Boolean);
+    state.autoStampEtaResult = etaResults.find(item => item.status === 'STAMPED')
+      || etaResults.find(item => item.status === 'ALREADY_STAMPED')
+      || etaResults[0]
+      || null;
+  }
   if (state.readyForGpsStampEtd) state.autoStampEtdResult = await executeGpsAutoStampEtd(state, activeTrip);
   state.autoStampResult = state.autoStampEtdResult || state.autoStampEtaResult;
-  state.autoStampExecuted = ['STAMPED', 'ALREADY_STAMPED'].includes(state.autoStampResult?.status);
+  state.autoStampExecuted = state.autoStampEtaResults.some(item =>
+    ['STAMPED', 'ALREADY_STAMPED'].includes(item.result?.status)
+  ) || ['STAMPED', 'ALREADY_STAMPED'].includes(state.autoStampEtdResult?.status);
   await writeGpsDwellState(effectiveCodeRun, state);
   return createGpsDockResult(state);
 }
@@ -1452,10 +1518,15 @@ async function runGpsBackgroundCycle() {
         const result = await evaluateGpsDock(input, workerDataResult.data);
         summary.processed += 1;
         if (result.status === 'DOCK_IN_CONFIRMED') summary.confirmed += 1;
-        if (result.autoStampEtaResult?.status === 'STAMPED') summary.etaStamped += 1;
+        const etaBatchResults = Array.isArray(result.autoStampEtaResults)
+          ? result.autoStampEtaResults.map(item => item.result).filter(Boolean)
+          : result.autoStampEtaResult ? [result.autoStampEtaResult] : [];
+        const etaStampedCount = etaBatchResults.filter(item => item.status === 'STAMPED').length;
+        const etaAlreadyStampedCount = etaBatchResults.filter(item => item.status === 'ALREADY_STAMPED').length;
+        summary.etaStamped += etaStampedCount;
         if (result.autoStampEtdResult?.status === 'STAMPED') summary.etdStamped += 1;
-        if (result.autoStampResult?.status === 'STAMPED') summary.stamped += 1;
-        if (result.autoStampResult?.status === 'ALREADY_STAMPED') summary.alreadyStamped += 1;
+        summary.stamped += etaStampedCount + (result.autoStampEtdResult?.status === 'STAMPED' ? 1 : 0);
+        summary.alreadyStamped += etaAlreadyStampedCount + (result.autoStampEtdResult?.status === 'ALREADY_STAMPED' ? 1 : 0);
       } catch (error) {
         summary.failed += 1;
         summary.failures.push({ gpsIdHash: hashAuditValue(input.gpsId), error: getErrorMessage(error) });
@@ -2881,7 +2952,9 @@ app.get(['/health', '/api/health'], (req, res) => {
       noWorkActionAutoStampBlocked: true,
       tripTieBreaker: 'EARLIER_PLAN_ETA_THEN_CODE_RUN_NUMERIC',
       exitRequiredBeforeNextTrip: true,
-      etaRule: 'IMMEDIATE_ON_FIRST_FRESH_GPS_INSIDE_GEOFENCE',
+      etaRule: 'STAMP_ALL_ELIGIBLE_TRIPS_IN_MATCHING_GEOFENCE',
+      multiDropSameGeofenceEtaEnabled: true,
+      dropPointGeofenceMapping: { L1: 'TPCAP-LSP', L2: 'TPCAP-LSP', L3: 'TPCAP-LSP', M1: 'TPCAP-LSP', R1: 'TPCAP-R1', R2: 'TPCAP-R2' },
       pendingStampRetryQueueEnabled: true,
       pendingStampRetryBaseSeconds: Math.floor(GPS_PENDING_STAMP_BASE_RETRY_MS / 1000),
       pendingStampRetryMaximumSeconds: Math.floor(GPS_PENDING_STAMP_MAX_RETRY_MS / 1000),
