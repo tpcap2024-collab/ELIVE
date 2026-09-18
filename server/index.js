@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '22';
+const API_VERSION = '23';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -65,6 +65,9 @@ const GPS_WORKER_STATUS_KEY = 'elive:gps-worker:status';
 const GPS_WORKER_STATUS_TTL_SECONDS = 5 * 60;
 const GPS_DAILY_PLAN_CACHE_PREFIX = 'elive:gps-worker:daily-plan:';
 const GPS_DAILY_PLAN_CACHE_TTL_SECONDS = 36 * 60 * 60;
+const GPS_REALTIME_CACHE_KEY = 'elive:gps-worker:realtime-snapshot';
+const GPS_REALTIME_CACHE_TTL_SECONDS = 10 * 60;
+const GPS_REALTIME_FALLBACK_MAX_AGE_MS = 5 * 60 * 1000;
 const SERVICE_MODE = cleanText(process.env.SERVICE_MODE || 'web').toLowerCase();
 const GPS_GEOFENCES = Object.freeze([
   Object.freeze({
@@ -153,7 +156,6 @@ const NON_RETRYABLE_APPS_SCRIPT_ERROR_PATTERNS = Object.freeze([
   'http 400',
   'http 401',
   'http 403',
-  'http 404',
 ]);
 
 const SECURITY_HEADERS = Object.freeze({
@@ -773,19 +775,41 @@ async function clearGpsWorkerDailyPlanCache(dateText = null) {
   } while (cursor !== '0');
   return deletedCount;
 }
+async function writeGpsWorkerRealtimeSnapshot(realtime) {
+  const snapshot = { actual: Array.isArray(realtime?.actual) ? realtime.actual : [], gps: Array.isArray(realtime?.gps) ? realtime.gps : [], cachedAtMs: Date.now(), cachedAt: new Date().toISOString() };
+  await requireRedisClient().set(GPS_REALTIME_CACHE_KEY, JSON.stringify(snapshot), { EX: GPS_REALTIME_CACHE_TTL_SECONDS });
+  return snapshot;
+}
+async function readGpsWorkerRealtimeFallback() {
+  const raw = await requireRedisClient().get(GPS_REALTIME_CACHE_KEY);
+  if (!raw) return null;
+  try {
+    const snapshot = JSON.parse(raw);
+    const ageMs = Date.now() - Number(snapshot.cachedAtMs || 0);
+    if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > GPS_REALTIME_FALLBACK_MAX_AGE_MS) return null;
+    if (!Array.isArray(snapshot.actual) || !Array.isArray(snapshot.gps)) return null;
+    return { ...snapshot, ageMs };
+  } catch {
+    await requireRedisClient().del(GPS_REALTIME_CACHE_KEY);
+    return null;
+  }
+}
+async function getGpsWorkerRealtimeWithFallback() {
+  try {
+    const realtime = await requestAppsScriptGet('getGpsWorkerRealtime');
+    await writeGpsWorkerRealtimeSnapshot(realtime);
+    return { realtime, source: 'google-apps-script', fallbackUsed: false, fallbackAgeMs: 0 };
+  } catch (error) {
+    const fallback = await readGpsWorkerRealtimeFallback();
+    if (!fallback) throw error;
+    console.warn(JSON.stringify({ logType: 'ELIVE_GPS_WORKER', event: 'REALTIME_FALLBACK_USED', reason: getErrorMessage(error), fallbackAgeMs: fallback.ageMs, cachedAt: fallback.cachedAt }));
+    return { realtime: fallback, source: 'redis-realtime-fallback', fallbackUsed: true, fallbackAgeMs: fallback.ageMs };
+  }
+}
 async function getGpsWorkerCycleData(dateText) {
-  const [dailyPlanResult, realtime] = await Promise.all([
-    getGpsWorkerDailyPlan(dateText),
-    requestAppsScriptGet('getGpsWorkerRealtime'),
-  ]);
-  return {
-    data: {
-      plan: dailyPlanResult.plan,
-      actual: Array.isArray(realtime?.actual) ? realtime.actual : [],
-      gps: Array.isArray(realtime?.gps) ? realtime.gps : [],
-    },
-    planSource: dailyPlanResult.source,
-  };
+  const [dailyPlanResult, realtimeResult] = await Promise.all([getGpsWorkerDailyPlan(dateText), getGpsWorkerRealtimeWithFallback()]);
+  const realtime = realtimeResult.realtime;
+  return { data: { plan: dailyPlanResult.plan, actual: Array.isArray(realtime?.actual) ? realtime.actual : [], gps: Array.isArray(realtime?.gps) ? realtime.gps : [] }, planSource: dailyPlanResult.source, realtimeSource: realtimeResult.source, realtimeFallbackUsed: realtimeResult.fallbackUsed, realtimeFallbackAgeMs: realtimeResult.fallbackAgeMs };
 }
 function compareTripsByPlanTime(first, second) {
   const firstDate = cleanText(first.planDate);
@@ -1533,6 +1557,9 @@ async function runGpsBackgroundCycle() {
     const workerDate = getBangkokDateText(new Date());
     const workerDataResult = await getGpsWorkerCycleData(workerDate);
     summary.dailyPlanSource = workerDataResult.planSource;
+    summary.realtimeSource = workerDataResult.realtimeSource;
+    summary.realtimeFallbackUsed = workerDataResult.realtimeFallbackUsed;
+    summary.realtimeFallbackAgeMs = workerDataResult.realtimeFallbackAgeMs;
     const inputs = buildBackgroundGpsInputs(workerDataResult.data);
     for (const input of inputs) {
       if (gpsWorkerStopping) break;
@@ -2390,7 +2417,10 @@ async function requestAppsScriptGet(action, parameters = {}) {
         responsePreview: getResponsePreview(responseText),
       });
 
-      if (!RETRYABLE_STATUS_CODES.has(response.status)) break;
+      const contentType = cleanText(response.headers.get('content-type')).toLowerCase();
+      const looksLikeHtml = contentType.includes('text/html') || /^\s*<!doctype html/i.test(responseText);
+      const retryableTransient404 = response.status === 404 && looksLikeHtml;
+      if (!RETRYABLE_STATUS_CODES.has(response.status) && !retryableTransient404) break;
     } catch (error) {
       finalError = error;
       console.error(`Apps Script GET ${action} connection error:`, {
@@ -2962,7 +2992,11 @@ app.get(['/health', '/api/health'], (req, res) => {
       dailyPlanCacheKeyPrefix: GPS_DAILY_PLAN_CACHE_PREFIX,
       realtimeRefreshSeconds: Math.floor(GPS_BACKGROUND_WORKER_INTERVAL_MS / 1000),
       workerForcesFullTruckRefreshEveryCycle: false,
-      appsScriptGetRetryPolicy: 'RETRY_TIMEOUT_408_425_429_5XX_NO_RETRY_4XX',
+      appsScriptGetRetryPolicy: 'RETRY_TIMEOUT_408_425_429_5XX_AND_TRANSIENT_HTML_404',
+      realtimeRedisFallbackEnabled: true,
+      realtimeCacheTtlSeconds: GPS_REALTIME_CACHE_TTL_SECONDS,
+      realtimeFallbackMaximumAgeSeconds: Math.floor(GPS_REALTIME_FALLBACK_MAX_AGE_MS / 1000),
+      realtimeFallbackStillEnforcesGpsStaleGuard: true,
       serviceMode: SERVICE_MODE,
       parkingSpeedThresholdKmh: GPS_PARKING_SPEED_THRESHOLD_KMH,
       dwellThresholdSeconds: Math.floor(GPS_DWELL_THRESHOLD_MS / 1000),
@@ -3625,10 +3659,12 @@ app.post('/api/cache/clear', requireAuthentication, requireMinimumRole('ADMIN'),
   clearTruckCache();
   clearMasterPlanCache();
   const deletedDailyPlanCacheCount = await clearGpsWorkerDailyPlanCache();
+  const deletedRealtimeCacheCount = await requireRedisClient().del(GPS_REALTIME_CACHE_KEY);
 
   return res.json({
     success: true,
     deletedDailyPlanCacheCount,
+    deletedRealtimeCacheCount,
     message: 'ELIVE API cache cleared.',
     timestamp: new Date().toISOString(),
   });
