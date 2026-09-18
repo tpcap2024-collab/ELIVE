@@ -313,6 +313,24 @@ function formatEta(
   );
 }
 
+function formatPlanTime(value?: string): string {
+  const text = String(value || '').trim();
+  if (!text) return '-';
+  const directTime = text.match(/^(\d{1,2}):(\d{2})/);
+  if (directTime) {
+    return `${directTime[1].padStart(2, '0')}:${directTime[2]}`;
+  }
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) return text;
+  const sheetsTime = date.getUTCFullYear() === 1899 || date.getUTCFullYear() === 1900;
+  return date.toLocaleTimeString('en-GB', {
+    timeZone: sheetsTime ? 'UTC' : 'Asia/Bangkok',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+}
+
 function formatDuration(
   totalMinutes?: number
 ): string {
@@ -361,12 +379,6 @@ function formatDuration(
   );
 }
 
-function formatDwellClock(totalSeconds?: number): string {
-  const safeSeconds = Math.max(0, Math.floor(Number(totalSeconds || 0)));
-  const minutes = Math.floor(safeSeconds / 60);
-  const seconds = safeSeconds % 60;
-  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-}
 function calculateDistanceMeters(
   firstLatitude: number,
   firstLongitude: number,
@@ -1542,6 +1554,15 @@ export function LiveMap({
       0 &&
     !selectedGpsLocation;
 
+  const hasStampedEta = Boolean(
+    selectedTruck?.stampEta ||
+    selectedTruck?.actualEta ||
+    gpsDockResult?.autoStampEtaResult
+  );
+  const hasStampedEtd = Boolean(
+    selectedTruck?.stampEtd ||
+    gpsDockResult?.autoStampEtdResult
+  );
   return (
     <div className="flex h-full min-h-0 flex-col bg-slate-50 p-4 md:p-6 lg:p-8">
       <div className="shrink-0 rounded-t-xl border border-b-0 border-slate-200 bg-white p-4 shadow-sm">
@@ -1949,10 +1970,10 @@ export function LiveMap({
                       <div className="font-bold">รอบงานของรถวันนี้</div>
                       <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-2">
                         <div><span className="text-slate-500">Active:</span> <b>{gpsDockResult.activeCodeRun || '-'}</b></div>
-                        <div><span className="text-slate-500">Plan ETA:</span> <b>{gpsDockResult.activePlanEta || '-'}</b></div>
+                        <div><span className="text-slate-500">Plan ETA:</span> <b>{formatPlanTime(gpsDockResult.activePlanEta)}</b></div>
                         <div><span className="text-slate-500">ลำดับเที่ยว:</span> <b>{gpsDockResult.activeTripSequence || '-'} / {gpsDockResult.tripCountForVehicleToday}</b></div>
                         <div><span className="text-slate-500">Next:</span> <b>{gpsDockResult.nextCodeRun || '-'}</b></div>
-                        <div><span className="text-slate-500">Next ETA:</span> <b>{gpsDockResult.nextPlanEta || '-'}</b></div>
+                        <div><span className="text-slate-500">Next ETA:</span> <b>{formatPlanTime(gpsDockResult.nextPlanEta)}</b></div>
                         <div><span className="text-slate-500">Completed:</span> <b>{gpsDockResult.lastCompletedCodeRun || '-'}</b></div>
                       </div>
                       <div className="mt-2 text-[11px]">Selection: {gpsDockResult.tripSelectionReason || '-'}</div>
@@ -1977,43 +1998,13 @@ export function LiveMap({
                     </div>
                   )}
                   {gpsDockResult && (
-                    <div className="mt-3">
-                      <div className="flex items-center justify-between text-xs font-semibold text-slate-600">
-                        <span>เวลาจอดต่อเนื่อง</span>
-                        <span className="font-mono">{formatDwellClock(gpsDockResult.dwellSeconds)} / {formatDwellClock(gpsDockResult.requiredDwellSeconds)}</span>
-                      </div>
-                      <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200">
-                        <div
-                          className={`h-full rounded-full transition-all ${gpsDockResult.readyForGpsStampEta ? 'bg-emerald-500' : 'bg-amber-500'}`}
-                          style={{
-                            width: `${Math.min(100, Math.max(0, gpsDockResult.dwellSeconds / Math.max(1, gpsDockResult.requiredDwellSeconds) * 100))}%`,
-                          }}
-                        />
-                      </div>
-                      <div className="mt-2 text-xs text-slate-600">
-                        {gpsDockResult.status === 'DOCK_IN_CONFIRMED'
-                          ? 'ยืนยันเข้าช่องครบ 3 นาทีแล้ว ระบบดำเนินการ GPS Auto Stamp ETA'
-                          : gpsDockResult.status === 'DOCK_PENDING'
-                            ? `เหลือ ${formatDwellClock(gpsDockResult.remainingDwellSeconds)} เพื่อยืนยันเข้าช่อง`
-                            : gpsDockResult.status === 'WAITING_FOR_EXIT_AFTER_ETD'
-                              ? 'รอรถออกนอก Geofence เพื่อปิดรอบเดิมก่อนเริ่มเที่ยวถัดไป'
-                              : gpsDockResult.status === 'NO_ACTIVE_TRIP'
-                                ? 'ไม่พบ Code run ที่รอทำงานสำหรับรถคันนี้ในวันนี้'
-                                : 'ระบบจะเริ่มจับเวลาเมื่อรถอยู่ในพื้นที่และความเร็วเท่ากับ 0 km/h'}
-                      </div>
-                      <div className="mt-2 flex flex-wrap gap-2 text-[10px] font-bold">
-                        <span className="rounded-full bg-blue-100 px-2 py-1 text-blue-700">
-                          ETA: {gpsDockResult.autoStampEtaResult ? 'STAMPED' : gpsDockResult.readyForGpsStampEta ? 'READY' : 'WAITING'}
-                        </span>
-                        <span className="rounded-full bg-orange-100 px-2 py-1 text-orange-700">
-                          ETD: {gpsDockResult.autoStampEtdResult ? 'STAMPED' : gpsDockResult.readyForGpsStampEtd ? 'READY' : 'WAITING'}
-                        </span>
-                      </div>
-                      {gpsDockResult.parkingStartedAt && (
-                        <div className="mt-1 text-[11px] text-slate-500">
-                          เริ่มจอด: {formatGpsDateTime(gpsDockResult.parkingStartedAt)}
-                        </div>
-                      )}
+                    <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-bold">
+                      <span className="rounded-full bg-blue-100 px-2 py-1 text-blue-700">
+                        ETA: {hasStampedEta ? 'STAMPED' : gpsDockResult.readyForGpsStampEta ? 'READY' : 'WAITING'}
+                      </span>
+                      <span className="rounded-full bg-orange-100 px-2 py-1 text-orange-700">
+                        ETD: {hasStampedEtd ? 'STAMPED' : gpsDockResult.readyForGpsStampEtd ? 'READY' : 'WAITING'}
+                      </span>
                     </div>
                   )}
                 </div>
