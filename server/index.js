@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '18';
+const API_VERSION = '19';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -39,6 +39,7 @@ const GPS_PARKING_SPEED_THRESHOLD_KMH = 0;
 const GPS_DWELL_THRESHOLD_MS = 3 * 60 * 1000;
 const GPS_STALE_THRESHOLD_MS = 5 * 60 * 1000;
 const GPS_MOVEMENT_GRACE_MS = 30 * 1000;
+const GPS_NEXT_TRIP_EARLY_WINDOW_MINUTES = 120;
 const GPS_DWELL_STATE_TTL_SECONDS = 4 * 60 * 60;
 const GPS_DWELL_KEY_PREFIX = 'elive:gps-dwell:';
 const GPS_VEHICLE_CYCLE_KEY_PREFIX = 'elive:gps-vehicle-cycle:';
@@ -775,7 +776,9 @@ function selectTripForVehicle(trips, nowMinutes, previousCycle = null) {
       planEtaDifferenceMinutes: null,
     };
   }
-  const pendingTrips = trips.filter(trip => !trip.stampEta && !trip.stampEtd && !trip.noWorkAction);
+  const pendingTrips = trips.filter(
+    trip => !trip.stampEta && !trip.stampEtd && !trip.noWorkAction
+  );
   if (!pendingTrips.length) {
     return {
       activeTrip: null,
@@ -783,7 +786,22 @@ function selectTripForVehicle(trips, nowMinutes, previousCycle = null) {
       planEtaDifferenceMinutes: null,
     };
   }
-  const lockedPending = pendingTrips.find(
+  const eligiblePendingTrips = pendingTrips.filter(trip =>
+    trip.planEtaMinutes === null ||
+    nowMinutes >= trip.planEtaMinutes - GPS_NEXT_TRIP_EARLY_WINDOW_MINUTES
+  );
+  if (!eligiblePendingTrips.length) {
+    const nextTrip = [...pendingTrips].sort(compareTripsByPlanTime)[0] || null;
+    return {
+      activeTrip: null,
+      selectionReason: 'WAITING_FOR_PLAN_WINDOW',
+      planEtaDifferenceMinutes:
+        nextTrip?.planEtaMinutes === null || nextTrip?.planEtaMinutes === undefined
+          ? null
+          : nextTrip.planEtaMinutes - nowMinutes,
+    };
+  }
+  const lockedPending = eligiblePendingTrips.find(
     trip => trip.codeRun === previousCycle?.activeCodeRun
   );
   if (lockedPending) {
@@ -795,7 +813,7 @@ function selectTripForVehicle(trips, nowMinutes, previousCycle = null) {
         : Math.abs(lockedPending.planEtaMinutes - nowMinutes),
     };
   }
-  const activeTrip = [...pendingTrips].sort((first, second) => {
+  const activeTrip = [...eligiblePendingTrips].sort((first, second) => {
     const firstDistance = first.planEtaMinutes === null
       ? Number.MAX_SAFE_INTEGER
       : Math.abs(first.planEtaMinutes - nowMinutes);
@@ -1157,7 +1175,9 @@ async function evaluateGpsDock(payload) {
     parkingStartedAtMs = 0;
     movingStartedAtMs = 0;
   } else if (!activeTrip) {
-    status = 'NO_ACTIVE_TRIP';
+    status = vehicleCycle.selectionReason === 'WAITING_FOR_PLAN_WINDOW'
+      ? 'WAITING_FOR_PLAN_WINDOW'
+      : 'NO_ACTIVE_TRIP';
     parkingStartedAtMs = 0;
     movingStartedAtMs = 0;
   } else if (!platesMatch) {
@@ -2795,8 +2815,10 @@ app.get(['/health', '/api/health'], (req, res) => {
       gpsStaleThresholdSeconds: Math.floor(GPS_STALE_THRESHOLD_MS / 1000),
       movementGraceSeconds: Math.floor(GPS_MOVEMENT_GRACE_MS / 1000),
       multipleTripsPerVehiclePerDay: true,
-      tripSelectionPolicy: 'IN_PROGRESS_THEN_LOCKED_THEN_NEAREST_PLAN_ETA',
+      tripSelectionPolicy: 'IN_PROGRESS_THEN_PLAN_WINDOW_THEN_LOCKED_THEN_NEAREST_PLAN_ETA',
       activeTripLockEnabled: true,
+      futureTripGuardEnabled: true,
+      nextTripEarlyWindowMinutes: GPS_NEXT_TRIP_EARLY_WINDOW_MINUTES,
       noWorkActionKeyword: 'ไม่มีงาน',
       noWorkActionAutoStampBlocked: true,
       tripTieBreaker: 'EARLIER_PLAN_ETA_THEN_CODE_RUN_NUMERIC',
