@@ -1,3509 +1,2201 @@
-import express from 'express';
-import cors from 'cors';
-import { createHash, pbkdf2 as pbkdf2Callback, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
-import { promisify } from 'node:util';
-import { createClient } from 'redis';
+import React, {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
-const app = express();
-const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '19';
+import L from 'leaflet';
 
-const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
-const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
-  .trim()
-  .replace(/^['"]|['"];?$/g, '')
-  .replace(/[;\s]+$/g, '')
-  .replace(/\/+$/, '');
+import 'leaflet/dist/leaflet.css';
 
-const TPCAP_LATITUDE = 13.623729606202758;
-const TPCAP_LONGITUDE = 101.01501162061923;
-const OSRM_BASE_URL = 'https://router.project-osrm.org';
+import {
+  GpsLocation,
+  Truck,
+} from '../types';
 
-const FRESH_CACHE_DURATION_MS = 60000;
-const STALE_CACHE_DURATION_MS = 1800000;
-const MASTER_PLAN_CACHE_DURATION_MS = 60000;
-const APPS_SCRIPT_TIMEOUT_MS = 60000;
-const APPS_SCRIPT_GET_TRUCKS_TIMEOUT_MS = 120000;
-const APPS_SCRIPT_GET_TRUCKS_MAX_ATTEMPTS = 2;
-const APPS_SCRIPT_PLAN_CREATE_TIMEOUT_MS = 120000;
-const APPS_SCRIPT_MUTATION_LOCK_KEY = 'elive:apps-script:mutation-lock';
-const APPS_SCRIPT_MUTATION_LOCK_SECONDS = 180;
-const APPS_SCRIPT_MUTATION_WAIT_MS = 185000;
-const APPS_SCRIPT_MUTATION_POLL_MS = 500;
-const ROUTE_TIMEOUT_MS = 15000;
-const APPS_SCRIPT_MAX_ATTEMPTS = 3;
-const APPS_SCRIPT_SIGNATURE_MAX_AGE_MS = 5 * 60 * 1000;
-const APPS_SCRIPT_SHARED_SECRET = String(process.env.APPS_SCRIPT_SHARED_SECRET || '').trim();
-const MAX_UPLOAD_ROWS = 500;
-const GPS_PARKING_SPEED_THRESHOLD_KMH = 0;
-const GPS_DWELL_THRESHOLD_MS = 3 * 60 * 1000;
-const GPS_STALE_THRESHOLD_MS = 5 * 60 * 1000;
-const GPS_MOVEMENT_GRACE_MS = 30 * 1000;
-const GPS_NEXT_TRIP_EARLY_WINDOW_MINUTES = 120;
-const GPS_DWELL_STATE_TTL_SECONDS = 4 * 60 * 60;
-const GPS_DWELL_KEY_PREFIX = 'elive:gps-dwell:';
-const GPS_VEHICLE_CYCLE_KEY_PREFIX = 'elive:gps-vehicle-cycle:';
-const GPS_VEHICLE_CYCLE_TTL_SECONDS = 36 * 60 * 60;
-const GPS_AUTO_STAMP_KEY_PREFIX = 'elive:gps-auto-stamp:';
-const GPS_AUTO_STAMP_LOCK_SECONDS = 90;
-const GPS_AUTO_STAMP_RESULT_TTL_SECONDS = 36 * 60 * 60;
-const GPS_PENDING_STAMP_KEY_PREFIX = 'elive:gps-pending-stamp:';
-const GPS_PENDING_STAMP_LOCK_PREFIX = 'elive:gps-pending-stamp-lock:';
-const GPS_PENDING_STAMP_SCHEDULE_KEY = 'elive:gps-pending-stamp:schedule';
-const GPS_PENDING_STAMP_TTL_SECONDS = 7 * 24 * 60 * 60;
-const GPS_PENDING_STAMP_LOCK_SECONDS = 90;
-const GPS_PENDING_STAMP_BASE_RETRY_MS = 30 * 1000;
-const GPS_PENDING_STAMP_MAX_RETRY_MS = 15 * 60 * 1000;
-const GPS_PENDING_STAMP_BATCH_SIZE = 100;
-const GPS_AUTO_STAMP_ETA_ENABLED = cleanText(process.env.GPS_AUTO_STAMP_ETA_ENABLED || 'true').toLowerCase() === 'true';
-const GPS_AUTO_STAMP_ETD_ENABLED = cleanText(process.env.GPS_AUTO_STAMP_ETD_ENABLED || 'false').toLowerCase() === 'true';
-const GPS_BACKGROUND_WORKER_ENABLED = cleanText(process.env.GPS_BACKGROUND_WORKER_ENABLED || 'false').toLowerCase() === 'true';
-const GPS_BACKGROUND_WORKER_INTERVAL_MS = Math.max(15000, Number(process.env.GPS_BACKGROUND_WORKER_INTERVAL_MS || 60000));
-const GPS_WORKER_LOCK_KEY = 'elive:gps-worker:leader';
-const GPS_WORKER_LOCK_SECONDS = Math.max(30, Math.ceil(GPS_BACKGROUND_WORKER_INTERVAL_MS / 1000) + 30);
-const GPS_WORKER_STATUS_KEY = 'elive:gps-worker:status';
-const GPS_WORKER_STATUS_TTL_SECONDS = 5 * 60;
-const SERVICE_MODE = cleanText(process.env.SERVICE_MODE || 'web').toLowerCase();
-const GPS_GEOFENCES = Object.freeze([
-  Object.freeze({
+import {
+  fetchGpsDockStatus,
+  fetchRouteToTpcap,
+  GpsDockEvaluationResult,
+  normalizeLicensePlate,
+  RouteToTpcapResult,
+} from '../lib/sheets';
+
+import {
+  AlertTriangle,
+  Building2,
+  Clock,
+  LoaderCircle,
+  MapPin,
+  Navigation,
+  RefreshCw,
+  Route,
+  Search,
+  Truck as TruckIcon,
+  UserRound,
+  Wifi,
+  WifiOff,
+  X,
+} from 'lucide-react';
+
+interface LiveMapProps {
+  trucks: Truck[];
+  gpsLocations: GpsLocation[];
+  initialTruckId?: string | null;
+  onRefresh?: () => void | Promise<void>;
+  isRefreshing?: boolean;
+}
+
+type GpsFreshness =
+  | 'LIVE'
+  | 'STALE'
+  | 'OFFLINE';
+type GeofenceConfig = {
+  id: 'TPCAP-LSP' | 'TPCAP-R2' | 'TPCAP-R1';
+  name: string;
+  latitude: number;
+  longitude: number;
+  radiusMeters: number;
+  color: string;
+};
+type GeofenceEvaluation = GeofenceConfig & {
+  distanceMeters: number;
+  isInside: boolean;
+};
+const DEFAULT_GEOFENCE_RADIUS_METERS = 50;
+const GPS_GEOFENCES: GeofenceConfig[] = [
+  {
     id: 'TPCAP-LSP',
     name: 'TPCAP-LSP',
     latitude: 13.624391050915499,
     longitude: 101.01532262451346,
     radiusMeters: 80,
-  }),
-  Object.freeze({
+    color: '#7c3aed',
+  },
+  {
     id: 'TPCAP-R2',
     name: 'TPCAP-R2',
     latitude: 13.624670855780815,
     longitude: 101.01287491445134,
-    radiusMeters: 50,
-  }),
-  Object.freeze({
+    radiusMeters: DEFAULT_GEOFENCE_RADIUS_METERS,
+    color: '#0284c7',
+  },
+  {
     id: 'TPCAP-R1',
     name: 'TPCAP-R1',
     latitude: 13.626408220162133,
     longitude: 101.01512843208137,
     radiusMeters: 80,
-  }),
-]);
-const MAX_LOGIN_USERNAME_LENGTH = 100;
-const MAX_LOGIN_PASSWORD_LENGTH = 200;
-const LOGIN_FAILURE_DELAY_MS = 650;
-const LOGIN_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
-const LOGIN_RATE_LIMIT_MAX_FAILURES = 5;
-const LOGIN_IP_RATE_LIMIT_MAX_FAILURES = 20;
-const LOGIN_RATE_LIMIT_WINDOW_SECONDS = Math.floor(
-  LOGIN_RATE_LIMIT_WINDOW_MS / 1000
-);
-const LOGIN_RATE_LIMIT_KEY_PREFIX = 'elive:rate-limit:login:';
-const PASSWORD_CHANGE_RATE_LIMIT_KEY_PREFIX = 'elive:rate-limit:password-change:';
-const PASSWORD_CHANGE_RATE_LIMIT_MAX_FAILURES = 5;
-const AUTH_USER_OVERRIDE_KEY_PREFIX = 'elive:auth-user-override:';
-const PASSWORD_MIN_LENGTH = 12;
-const PASSWORD_MAX_LENGTH = 128;
-const PASSWORD_HASH_ITERATIONS = 310000;
-const PBKDF2_MIN_ITERATIONS = 210000;
-const PBKDF2_MAX_ITERATIONS = 1000000;
-const PBKDF2_KEY_LENGTH = 32;
-const PBKDF2_DIGEST = 'sha256';
-const pbkdf2Async = promisify(pbkdf2Callback);
-const SESSION_COOKIE_NAME = '__Host-elive_session';
-const SESSION_DURATION_MS = 12 * 60 * 60 * 1000;
-const SESSION_IDLE_TIMEOUT_MS = 60 * 60 * 1000;
-const SESSION_TTL_SECONDS = Math.floor(SESSION_DURATION_MS / 1000);
-const SESSION_KEY_PREFIX = 'elive:session:';
-const SESSION_USER_INDEX_PREFIX = 'elive:session-user:';
-const SESSION_LIMITS_BY_ROLE = Object.freeze({
-  TV_VIEWER: 3,
-  OPERATOR: 2,
-  PLANNER: 2,
-  SUPERVISOR: 2,
-  ADMIN: 1,
-});
-const REDIS_URL = String(process.env.REDIS_URL || '').trim();
-let redisClient = null;
-let redisReady = false;
-let lastRedisError = null;
-const ROLE_LEVELS = Object.freeze({
-  TV_VIEWER: 10,
-  OPERATOR: 20,
-  PLANNER: 30,
-  SUPERVISOR: 40,
-  ADMIN: 50,
-});
-const ROLE_NAMES = Object.freeze(Object.keys(ROLE_LEVELS));
-
-const RETRYABLE_STATUS_CODES = new Set([
-  408,
-  425,
-  429,
-  500,
-  502,
-  503,
-  504,
-]);
-const NON_RETRYABLE_APPS_SCRIPT_ERROR_PATTERNS = Object.freeze([
-  'nonce has already been used',
-  'signature verification failed',
-  'signature has expired',
-  'request signature',
-  'http 400',
-  'http 401',
-  'http 403',
-  'http 404',
-]);
-
-const SECURITY_HEADERS = Object.freeze({
-  'Content-Security-Policy': "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
-  'Cross-Origin-Opener-Policy': 'same-origin',
-  'Referrer-Policy': 'no-referrer',
-  'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
-  'X-Content-Type-Options': 'nosniff',
-  'X-DNS-Prefetch-Control': 'off',
-  'X-Download-Options': 'noopen',
-  'X-Frame-Options': 'DENY',
-  'X-Permitted-Cross-Domain-Policies': 'none',
-});
-const allowedOrigins = [
-  'https://elive.onrender.com',
-  'http://localhost:5173',
-  'http://localhost:3000',
+    color: '#059669',
+  },
 ];
 
-let truckDataCache = null;
-let truckDataCacheTime = 0;
-let truckDataRequestPromise = null;
+const DEFAULT_MAP_CENTER:
+  [number, number] = [
+    13.623729606202758,
+    101.01501162061923,
+  ];
 
-let masterPlanCache = null;
-let masterPlanCacheTime = 0;
-let masterPlanRequestPromise = null;
+const TPCAP_POSITION:
+  [number, number] = [
+    13.623729606202758,
+    101.01501162061923,
+  ];
 
-let lastAppsScriptSuccessTime = null;
-let lastAppsScriptErrorTime = null;
-let lastAppsScriptError = null;
-let gpsWorkerTimer = null;
-let gpsWorkerStopping = false;
-let gpsWorkerCycleRunning = false;
-
-app.disable('x-powered-by');
-app.set('trust proxy', 1);
-app.use((req, res, next) => {
-  for (const [headerName, headerValue] of Object.entries(SECURITY_HEADERS)) {
-    res.setHeader(headerName, headerValue);
+function parseGpsDateTime(
+  value?: string
+): Date | null {
+  if (!value) {
+    return null;
   }
 
-  res.setHeader(
-    'Permissions-Policy',
-    'camera=(), microphone=(), geolocation=(), payment=(), usb=()'
-  );
+  const text =
+    String(value).trim();
 
-  if (req.path.startsWith('/api/auth/')) {
-    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-    res.setHeader('Pragma', 'no-cache');
-    res.setHeader('Expires', '0');
+  if (!text) {
+    return null;
   }
 
-  return next();
-});
+  const isoText =
+    text.includes('T')
+      ? text
+      : text.replace(
+          ' ',
+          'T'
+        );
 
-app.use(
-  cors({
-    origin(origin, callback) {
-      if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true);
-        return;
-      }
-
-      callback(new Error(`Origin not allowed: ${origin}`));
-    },
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Accept'],
-    credentials: true,
-  })
-);
-
-app.use(express.json({ limit: '10mb' }));
-
-function requireTrustedMutationOrigin(req, res, next) {
-  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
-    return next();
-  }
-
-  const origin = cleanText(req.headers.origin);
-  const fetchSite = cleanText(req.headers['sec-fetch-site']).toLowerCase();
-
-  if (!origin || !allowedOrigins.includes(origin)) {
-    return res.status(403).json({
-      success: false,
-      error: 'Request origin is not allowed.',
-    });
-  }
-
-  if (fetchSite && !['same-origin', 'same-site', 'cross-site'].includes(fetchSite)) {
-    return res.status(403).json({
-      success: false,
-      error: 'Request context is not allowed.',
-    });
-  }
-
-  return next();
-}
-
-app.use(requireTrustedMutationOrigin);
-
-function hashAuditValue(value) {
-  const text = cleanText(value);
-  if (!text) return null;
-  return createHash('sha256').update(text).digest('hex').slice(0, 16);
-}
-
-function getRequestIp(req) {
-  const forwardedFor = cleanText(req.headers['x-forwarded-for']);
-  if (forwardedFor) return forwardedFor.split(',')[0].trim();
-  return cleanText(req.socket?.remoteAddress) || 'unknown';
-}
-
-function getRateLimitKey(req, username) {
-  return hashAuditValue(`${getRequestIp(req)}|${cleanText(username).toLowerCase()}`);
-}
-
-function getRateLimitIpKey(req) {
-  return hashAuditValue(getRequestIp(req));
-}
-
-function getLoginUserRateLimitKey(req, username) {
-  return `${LOGIN_RATE_LIMIT_KEY_PREFIX}user:${getRateLimitKey(req, username)}`;
-}
-
-function getLoginIpRateLimitKey(req) {
-  return `${LOGIN_RATE_LIMIT_KEY_PREFIX}ip:${getRateLimitIpKey(req)}`;
-}
-
-async function getRateLimitState(client, key, maximumFailures) {
-  const values = await client.multi().get(key).ttl(key).exec();
-  const count = Number(values[0] || 0);
-  const ttlSeconds = Number(values[1] || LOGIN_RATE_LIMIT_WINDOW_SECONDS);
-  return {
-    count,
-    blocked: count >= maximumFailures,
-    retryAfterSeconds: Math.max(1, ttlSeconds),
-  };
-}
-
-async function incrementRateLimitFailure(client, key) {
-  await client.eval(
-    `
-      local count = redis.call('INCR', KEYS[1])
-      if count == 1 then
-        redis.call('EXPIRE', KEYS[1], ARGV[1])
-      end
-      return count
-    `,
-    {
-      keys: [key],
-      arguments: [String(LOGIN_RATE_LIMIT_WINDOW_SECONDS)],
-    }
-  );
-}
-
-async function clearLoginRateLimit(req, username) {
-  const client = requireRedisClient();
-  await client.del([
-    getLoginUserRateLimitKey(req, username),
-    getLoginIpRateLimitKey(req),
-  ]);
-}
-
-async function loginRateLimit(req, res, next) {
-  try {
-    const client = requireRedisClient();
-    const username = cleanText(req.body?.username).toLowerCase();
-    const userKey = getLoginUserRateLimitKey(req, username);
-    const ipKey = getLoginIpRateLimitKey(req);
-    const [userState, ipState] = await Promise.all([
-      getRateLimitState(client, userKey, LOGIN_RATE_LIMIT_MAX_FAILURES),
-      getRateLimitState(client, ipKey, LOGIN_IP_RATE_LIMIT_MAX_FAILURES),
-    ]);
-    const blockedState = userState.blocked
-      ? userState
-      : ipState.blocked
-        ? ipState
-        : null;
-
-    if (blockedState) {
-      res.setHeader('Retry-After', String(blockedState.retryAfterSeconds));
-      res.setHeader('X-RateLimit-Limit', String(LOGIN_RATE_LIMIT_MAX_FAILURES));
-      res.setHeader('X-RateLimit-Remaining', '0');
-      return res.status(429).json({
-        success: false,
-        error: 'Too many login attempts. Please try again later.',
-        retryAfterSeconds: blockedState.retryAfterSeconds,
-      });
-    }
-
-    res.on('finish', () => {
-      if (res.statusCode === 200) {
-        void clearLoginRateLimit(req, username).catch(error => {
-          console.error('Unable to clear Login Rate Limit:', getErrorMessage(error));
-        });
-        return;
-      }
-      if (res.statusCode === 400 || res.statusCode === 401) {
-        void Promise.all([
-          incrementRateLimitFailure(client, userKey),
-          incrementRateLimitFailure(client, ipKey),
-        ]).catch(error => {
-          console.error('Unable to update Login Rate Limit:', getErrorMessage(error));
-        });
-      }
-    });
-
-    res.setHeader('X-RateLimit-Limit', String(LOGIN_RATE_LIMIT_MAX_FAILURES));
-    res.setHeader(
-      'X-RateLimit-Remaining',
-      String(Math.max(0, LOGIN_RATE_LIMIT_MAX_FAILURES - userState.count))
+  const hasTimeZone =
+    isoText.endsWith('Z') ||
+    /[+-]\d{2}:\d{2}$/.test(
+      isoText
     );
-    return next();
-  } catch (error) {
-    if (getErrorMessage(error) === 'SESSION_STORE_UNAVAILABLE') {
-      return res.status(503).json({
-        success: false,
-        error: 'Security service is temporarily unavailable.',
-      });
-    }
-    return next(error);
-  }
-}
 
-function getMaskedRequestIp(req) {
-  const forwardedFor = cleanText(req.headers['x-forwarded-for']);
-  const rawIp = forwardedFor
-    ? forwardedFor.split(',')[0].trim()
-    : cleanText(req.socket?.remoteAddress);
-  return rawIp ? `sha256:${hashAuditValue(rawIp)}` : null;
-}
+  const normalizedText =
+    hasTimeZone
+      ? isoText
+      : `${isoText}+07:00`;
 
-function getAuditDescriptor(req) {
-  const method = String(req.method || '').toUpperCase();
-  const path = String(req.path || '');
-
-  if (method === 'POST' && path === '/api/auth/login') {
-    return {
-      action: 'AUTH_LOGIN',
-      targetType: 'AUTH_USER',
-      targetIdHash: hashAuditValue(req.body?.username),
-    };
-  }
-  if (method === 'POST' && path === '/api/auth/logout') {
-    return { action: 'AUTH_LOGOUT', targetType: 'SESSION', targetIdHash: null };
-  }
-  if (method === 'POST' && path === '/api/auth/change-password') {
-    return {
-      action: 'AUTH_PASSWORD_CHANGE',
-      targetType: 'AUTH_USER',
-      targetIdHash: hashAuditValue(req.auth?.username),
-    };
-  }
-  if (method === 'POST' && path === '/api/master-plan/rows') {
-    return { action: 'MASTER_PLAN_CREATE', targetType: 'MASTER_PLAN_ROW', targetIdHash: null };
-  }
-  if (method === 'PUT' && /^\/api\/master-plan\/rows\/\d+$/.test(path)) {
-    return {
-      action: 'MASTER_PLAN_UPDATE',
-      targetType: 'MASTER_PLAN_ROW',
-      targetIdHash: hashAuditValue(path.split('/').pop()),
-    };
-  }
-  if (method === 'DELETE' && /^\/api\/master-plan\/rows\/\d+$/.test(path)) {
-    return {
-      action: 'MASTER_PLAN_DELETE',
-      targetType: 'MASTER_PLAN_ROW',
-      targetIdHash: hashAuditValue(path.split('/').pop()),
-    };
-  }
-  if (method === 'POST' && path === '/api/plans/create') {
-    return { action: 'PLAN_PERIOD_CREATE', targetType: 'PLAN_PERIOD', targetIdHash: null };
-  }
-  if (method === 'POST' && path === '/api/plans/extra') {
-    return { action: 'PLAN_EXTRA_CREATE', targetType: 'PLAN', targetIdHash: null };
-  }
-  if (method === 'POST' && path === '/api/plans/delete-batch') {
-    return { action: 'PLAN_BATCH_DELETE', targetType: 'PLAN_BATCH', targetIdHash: hashAuditValue((req.body?.codeRuns || []).join('|')) };
-  }
-  if (method === 'DELETE' && /^\/api\/plans\/A\d+$/i.test(path)) {
-    return {
-      action: 'PLAN_DELETE',
-      targetType: 'PLAN',
-      targetIdHash: hashAuditValue(path.split('/').pop()),
-    };
-  }
-  if (method === 'PUT' && /^\/api\/plans\/A\d+$/i.test(path)) {
-    return {
-      action: 'PLAN_UPDATE',
-      targetType: 'PLAN',
-      targetIdHash: hashAuditValue(path.split('/').pop()),
-    };
-  }
-  if (method === 'POST' && /^\/api\/plans\/A\d+\/stamp$/i.test(path)) {
-    return {
-      action: 'PLAN_STAMP',
-      targetType: 'ACTUAL_STAMP',
-      targetIdHash: hashAuditValue(path.split('/')[3]),
-    };
-  }
-  if (method === 'POST' && /^\/api\/plans\/A\d+\/confirm-work-detail$/i.test(path)) {
-    return {
-      action: 'WORK_DETAIL_CONFIRM',
-      targetType: 'PLAN',
-      targetIdHash: hashAuditValue(path.split('/')[3]),
-    };
-  }
-  if (method === 'POST' && /^\/api\/plans\/A\d+\/cancel$/i.test(path)) {
-    return {
-      action: 'PLAN_CANCEL',
-      targetType: 'PLAN',
-      targetIdHash: hashAuditValue(path.split('/')[3]),
-    };
-  }
-  if (method === 'POST' && /^\/api\/plans\/A\d+\/restore$/i.test(path)) {
-    return {
-      action: 'PLAN_RESTORE',
-      targetType: 'PLAN',
-      targetIdHash: hashAuditValue(path.split('/')[3]),
-    };
-  }
-  if (method === 'POST' && path === '/api/gps/dock/evaluate') {
-    return {
-      action: 'GPS_DOCK_EVALUATE',
-      targetType: 'GPS_DWELL',
-      targetIdHash: hashAuditValue(req.body?.codeRun || req.body?.gpsId),
-    };
-  }
-  if (method === 'GET' && path === '/api/gps/vehicle-cycle') {
-    return {
-      action: 'GPS_VEHICLE_CYCLE_READ',
-      targetType: 'GPS_VEHICLE_CYCLE',
-      targetIdHash: hashAuditValue(req.query?.licensePlate),
-    };
-  }
-  if (method === 'DELETE' && /^\/api\/gps\/dock-status\/A\d+$/i.test(path)) {
-    return {
-      action: 'GPS_DOCK_RESET',
-      targetType: 'GPS_DWELL',
-      targetIdHash: hashAuditValue(path.split('/').pop()),
-    };
-  }
-  if (method === 'POST' && path === '/api/trucks/update') {
-    return {
-      action: 'TRUCK_UPDATE',
-      targetType: 'TRUCK',
-      targetIdHash: hashAuditValue(req.body?.truckId),
-    };
-  }
-  if (method === 'GET' && path === '/api/admin/sessions') {
-    return {
-      action: 'ADMIN_SESSION_LIST',
-      targetType: 'SESSION',
-      targetIdHash: null,
-    };
-  }
-  if (method === 'POST' && path === '/api/admin/sessions/revoke-user') {
-    return {
-      action: 'ADMIN_SESSION_REVOKE_USER',
-      targetType: 'AUTH_USER',
-      targetIdHash: hashAuditValue(req.body?.username),
-    };
-  }
-  if (method === 'POST' && path === '/api/admin/sessions/revoke-all') {
-    return {
-      action: 'ADMIN_SESSION_REVOKE_ALL',
-      targetType: 'SESSION',
-      targetIdHash: null,
-    };
-  }
-  if (method === 'POST' && path === '/api/cache/clear') {
-    return { action: 'CACHE_CLEAR', targetType: 'CACHE', targetIdHash: null };
-  }
-  return null;
-}
-
-function writeAuditLog(event) {
-  console.log(JSON.stringify({
-    logType: 'ELIVE_AUDIT',
-    ...event,
-  }));
-}
-
-function writeSessionRevocationAudit(req, record) {
-  if (!record?.invalidReason || !record?.session) return;
-
-  writeAuditLog({
-    requestId: randomUUID(),
-    timestamp: new Date().toISOString(),
-    actorUsername: record.session.username,
-    actorRole: record.session.role,
-    method: req.method,
-    path: req.path,
-    action: 'SESSION_REVOKED',
-    targetType: 'SESSION',
-    targetIdHash: hashAuditValue(record.session.username),
-    reason: record.invalidReason,
-    result: 'SUCCESS',
-    statusCode: 401,
-    durationMs: 0,
-    ipHash: getMaskedRequestIp(req),
-    userAgentHash: hashAuditValue(req.headers['user-agent']),
-  });
-}
-
-app.use((req, res, next) => {
-  const descriptor = getAuditDescriptor(req);
-  if (!descriptor) return next();
-
-  const requestId = randomUUID();
-  const startedAt = Date.now();
-  res.setHeader('X-Request-ID', requestId);
-
-  res.on('finish', () => {
-    const actorUsername = req.auth?.username || (
-      descriptor.action === 'AUTH_LOGIN'
-        ? cleanText(req.body?.username).toLowerCase() || null
-        : null
+  const date =
+    new Date(
+      normalizedText
     );
-    const statusCode = Number(res.statusCode || 500);
 
-    writeAuditLog({
-      requestId,
-      timestamp: new Date().toISOString(),
-      actorUsername,
-      actorRole: req.auth?.role || null,
-      method: req.method,
-      path: req.path,
-      action: descriptor.action,
-      targetType: descriptor.targetType,
-      targetIdHash: descriptor.targetIdHash,
-      ...(req.auditDetails || {}),
-      result: statusCode >= 200 && statusCode < 400 ? 'SUCCESS' : 'FAILURE',
-      statusCode,
-      durationMs: Math.max(0, Date.now() - startedAt),
-      ipHash: getMaskedRequestIp(req),
-      userAgentHash: hashAuditValue(req.headers['user-agent']),
-    });
-  });
-
-  return next();
-});
-
-function wait(milliseconds) {
-  return new Promise(resolve => {
-    setTimeout(resolve, milliseconds);
-  });
-}
-
-function getErrorMessage(error) {
-  if (error instanceof Error && error.message) {
-    return error.message;
+  if (
+    Number.isNaN(
+      date.getTime()
+    )
+  ) {
+    return null;
   }
 
-  return String(error || 'Unknown error');
-}
-
-function cleanText(value) {
-  return String(value ?? '').trim();
-}
-function normalizeLicensePlate(value) {
-  const source = cleanText(value)
-    .normalize('NFKC')
-    .replace(/[\u200B-\u200D\u2060\uFEFF]/g, '')
-    .toUpperCase();
-  const match = source.match(/^([0-9A-Zก-๙]{1,4})\s*-?\s*([0-9]{1,4})/u);
-  if (match) return `${match[1]}${match[2]}`.replace(/[\s-]/g, '');
-  return source
-    .split('(')[0]
-    .replace(/\s*(?:EXTRA|EX)(?:\s*-.*)?$/i, '')
-    .replace(/[\s-]/g, '');
-}
-function parseBangkokDateTime(value, fieldName) {
-  const text = cleanText(value);
-  if (!text) throw new Error(`${fieldName} is required.`);
-  const isoText = text.includes('T') ? text : text.replace(' ', 'T');
-  const normalizedText = /(?:Z|[+-]\d{2}:\d{2})$/.test(isoText)
-    ? isoText
-    : `${isoText}+07:00`;
-  const date = new Date(normalizedText);
-  if (Number.isNaN(date.getTime())) throw new Error(`${fieldName} is invalid.`);
   return date;
 }
-function calculateDistanceMeters(firstLatitude, firstLongitude, secondLatitude, secondLongitude) {
+
+function getGpsFreshness(
+  location: GpsLocation
+): GpsFreshness {
+  const gpsDate =
+    parseGpsDateTime(
+      location.gpsTime
+    );
+
+  const receivedDate =
+    parseGpsDateTime(
+      location.receivedAt
+    );
+
+  const referenceDate =
+    gpsDate ||
+    receivedDate;
+
+  if (!referenceDate) {
+    return 'OFFLINE';
+  }
+
+  const ageMs =
+    Date.now() -
+    referenceDate.getTime();
+
+  if (
+    ageMs <= 300000
+  ) {
+    return 'LIVE';
+  }
+
+  if (
+    ageMs <= 600000
+  ) {
+    return 'STALE';
+  }
+
+  return 'OFFLINE';
+}
+
+function getFreshnessClasses(
+  freshness: GpsFreshness
+): string {
+  if (
+    freshness === 'LIVE'
+  ) {
+    return [
+      'border-emerald-200',
+      'bg-emerald-50',
+      'text-emerald-700',
+    ].join(' ');
+  }
+
+  if (
+    freshness === 'STALE'
+  ) {
+    return [
+      'border-amber-200',
+      'bg-amber-50',
+      'text-amber-700',
+    ].join(' ');
+  }
+
+  return [
+    'border-slate-200',
+    'bg-slate-100',
+    'text-slate-600',
+  ].join(' ');
+}
+
+function formatGpsDateTime(
+  value?: string
+): string {
+  if (!value) {
+    return '-';
+  }
+
+  const date =
+    parseGpsDateTime(
+      value
+    );
+
+  if (!date) {
+    return value;
+  }
+
+  return date.toLocaleString(
+    'en-GB',
+    {
+      timeZone:
+        'Asia/Bangkok',
+
+      day:
+        '2-digit',
+
+      month:
+        '2-digit',
+
+      year:
+        'numeric',
+
+      hour:
+        '2-digit',
+
+      minute:
+        '2-digit',
+
+      second:
+        '2-digit',
+
+      hour12:
+        false,
+    }
+  );
+}
+
+function formatEta(
+  value?: string
+): string {
+  if (!value) {
+    return '-';
+  }
+
+  const date =
+    new Date(value);
+
+  if (
+    Number.isNaN(
+      date.getTime()
+    )
+  ) {
+    return value;
+  }
+
+  return date.toLocaleString(
+    'en-GB',
+    {
+      timeZone:
+        'Asia/Bangkok',
+
+      day:
+        '2-digit',
+
+      month:
+        '2-digit',
+
+      year:
+        'numeric',
+
+      hour:
+        '2-digit',
+
+      minute:
+        '2-digit',
+
+      hour12:
+        false,
+    }
+  );
+}
+
+function formatPlanTime(value?: string): string {
+  const text = String(value || '').trim();
+  if (!text) return '-';
+  const directTime = text.match(/^(\d{1,2}):(\d{2})/);
+  if (directTime) {
+    return `${directTime[1].padStart(2, '0')}:${directTime[2]}`;
+  }
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) return text;
+  const sheetsTime = date.getUTCFullYear() === 1899 || date.getUTCFullYear() === 1900;
+  return date.toLocaleTimeString('en-GB', {
+    timeZone: sheetsTime ? 'UTC' : 'Asia/Bangkok',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+}
+
+function formatDuration(
+  totalMinutes?: number
+): string {
+  if (
+    totalMinutes === undefined ||
+    !Number.isFinite(
+      totalMinutes
+    )
+  ) {
+    return '-';
+  }
+
+  const roundedMinutes =
+    Math.max(
+      1,
+      Math.round(
+        totalMinutes
+      )
+    );
+
+  const hours =
+    Math.floor(
+      roundedMinutes /
+      60
+    );
+
+  const minutes =
+    roundedMinutes %
+    60;
+
+  if (
+    hours <= 0
+  ) {
+    return `${minutes} นาที`;
+  }
+
+  if (
+    minutes === 0
+  ) {
+    return `${hours} ชั่วโมง`;
+  }
+
+  return (
+    `${hours} ชั่วโมง ` +
+    `${minutes} นาที`
+  );
+}
+
+function calculateDistanceMeters(
+  firstLatitude: number,
+  firstLongitude: number,
+  secondLatitude: number,
+  secondLongitude: number
+): number {
   const earthRadiusMeters = 6371000;
-  const toRadians = value => value * Math.PI / 180;
+  const toRadians = (value: number) => value * Math.PI / 180;
   const latitudeDelta = toRadians(secondLatitude - firstLatitude);
   const longitudeDelta = toRadians(secondLongitude - firstLongitude);
   const firstLatitudeRadians = toRadians(firstLatitude);
   const secondLatitudeRadians = toRadians(secondLatitude);
   const haversine =
     Math.sin(latitudeDelta / 2) ** 2 +
-    Math.cos(firstLatitudeRadians) * Math.cos(secondLatitudeRadians) *
-    Math.sin(longitudeDelta / 2) ** 2;
+    Math.cos(firstLatitudeRadians) *
+      Math.cos(secondLatitudeRadians) *
+      Math.sin(longitudeDelta / 2) ** 2;
   return 2 * earthRadiusMeters * Math.asin(Math.sqrt(haversine));
 }
-function getBangkokDateText(date = new Date()) {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Bangkok',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(date);
-}
-function parseSheetDateText(value) {
-  const text = cleanText(value);
-  if (!text) return '';
-  const isoMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (isoMatch) return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
-  const slashMatch = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (slashMatch) {
-    return `${slashMatch[3]}-${String(Number(slashMatch[2])).padStart(2, '0')}-${String(Number(slashMatch[1])).padStart(2, '0')}`;
-  }
-  const date = new Date(text);
-  return Number.isNaN(date.getTime()) ? '' : getBangkokDateText(date);
-}
-function parsePlanMinutes(value) {
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return Math.round((((value * 1440) % 1440) + 1440) % 1440);
-  }
-  const text = cleanText(value);
-  const match = text.match(/^(\d{1,2}):(\d{2})/);
-  if (!match) return null;
-  const hour = Number(match[1]);
-  const minute = Number(match[2]);
-  return hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59 ? hour * 60 + minute : null;
-}
-function getBangkokMinuteOfDay(date = new Date()) {
-  const parts = new Intl.DateTimeFormat('en-GB', {
-    timeZone: 'Asia/Bangkok',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).formatToParts(date);
-  const hour = Number(parts.find(part => part.type === 'hour')?.value || 0) % 24;
-  const minute = Number(parts.find(part => part.type === 'minute')?.value || 0);
-  return hour * 60 + minute;
-}
-function getVehicleCycleKey(licensePlate) {
-  const normalizedPlate = normalizeLicensePlate(licensePlate);
-  if (!normalizedPlate) throw new Error('licensePlate is required for Vehicle Cycle.');
-  return `${GPS_VEHICLE_CYCLE_KEY_PREFIX}${createHash('sha256').update(normalizedPlate).digest('hex')}`;
-}
-async function readVehicleCycleState(licensePlate) {
-  const client = requireRedisClient();
-  const raw = await client.get(getVehicleCycleKey(licensePlate));
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw);
-  } catch {
-    await client.del(getVehicleCycleKey(licensePlate));
-    return null;
-  }
-}
-async function writeVehicleCycleState(licensePlate, state) {
-  const client = requireRedisClient();
-  await client.set(getVehicleCycleKey(licensePlate), JSON.stringify(state), {
-    EX: GPS_VEHICLE_CYCLE_TTL_SECONDS,
+function createGeofenceMarkerIcon(
+  name: string,
+  color: string
+): L.DivIcon {
+  return L.divIcon({
+    className: 'elive-geofence-marker',
+    html: `
+      <div style="display:flex;flex-direction:column;align-items:center;">
+        <div style="width:18px;height:18px;border-radius:50%;background:${color};border:4px solid white;box-shadow:0 2px 10px rgba(15,23,42,0.35);box-sizing:border-box;"></div>
+        <div style="margin-top:4px;padding:3px 7px;border-radius:6px;background:white;border:1px solid ${color};color:${color};font-size:10px;font-weight:800;white-space:nowrap;box-shadow:0 2px 8px rgba(15,23,42,0.18);">${name}</div>
+      </div>
+    `,
+    iconSize: [100, 44],
+    iconAnchor: [50, 9],
   });
-  return state;
 }
-function compareTripsByPlanTime(first, second) {
-  const firstDate = cleanText(first.planDate);
-  const secondDate = cleanText(second.planDate);
-  if (firstDate !== secondDate) return firstDate.localeCompare(secondDate);
-  const firstMinutes = first.planEtaMinutes ?? Number.MAX_SAFE_INTEGER;
-  const secondMinutes = second.planEtaMinutes ?? Number.MAX_SAFE_INTEGER;
-  if (firstMinutes !== secondMinutes) return firstMinutes - secondMinutes;
-  return first.codeRun.localeCompare(second.codeRun, undefined, { numeric: true });
-}
-function buildTripsForPlate(data, licensePlate, dateText) {
-  const targetPlate = normalizeLicensePlate(licensePlate);
-  const planRows = Array.isArray(data?.plan) ? data.plan : [];
-  const actualRows = Array.isArray(data?.actual) ? data.actual : [];
-  const actualByCodeRun = new Map();
-  for (const row of actualRows.slice(1)) {
-    if (!Array.isArray(row)) continue;
-    const codeRun = cleanText(row[0]).toUpperCase();
-    if (codeRun) actualByCodeRun.set(codeRun, row);
-  }
-  const trips = [];
-  for (const row of planRows.slice(1)) {
-    if (!Array.isArray(row)) continue;
-    const codeRun = cleanText(row[0]).toUpperCase();
-    const planDate = parseSheetDateText(row[1]);
-    const planPlate = cleanText(row[4]);
-    const remark = cleanText(row[12]).toUpperCase();
-    if (!/^A\d+$/.test(codeRun) || remark === 'CANCEL') continue;
-    if (normalizeLicensePlate(planPlate) !== targetPlate) continue;
-    if (planDate !== dateText) continue;
-    const actual = actualByCodeRun.get(codeRun) || [];
-    trips.push({
-      codeRun,
-      planDate,
-      planLicensePlate: planPlate,
-      planEta: cleanText(row[10]),
-      planEtaMinutes: parsePlanMinutes(row[10]),
-      stampEta: cleanText(actual[4]),
-      stampEtd: cleanText(actual[5]),
-      actionProblem: cleanText(actual[6]),
-      noWorkAction: cleanText(actual[6]).includes('ไม่มีงาน'),
-      completed: Boolean(cleanText(actual[5])),
-    });
-  }
-  return trips.sort(compareTripsByPlanTime).map((trip, index, sortedTrips) => ({
-    ...trip,
-    tripSequence: index + 1,
-    tripCount: sortedTrips.length,
-  }));
-}
-function selectTripForVehicle(trips, nowMinutes, previousCycle = null) {
-  const inProgressTrips = trips
-    .filter(trip => trip.stampEta && !trip.stampEtd && !trip.noWorkAction)
-    .sort(compareTripsByPlanTime);
-  if (inProgressTrips.length) {
-    const lockedInProgress = inProgressTrips.find(
-      trip => trip.codeRun === previousCycle?.activeCodeRun
-    );
-    return {
-      activeTrip: lockedInProgress || inProgressTrips[0],
-      selectionReason: lockedInProgress ? 'LOCKED_ACTIVE_TRIP' : 'ETA_WITHOUT_ETD',
-      planEtaDifferenceMinutes: null,
-    };
-  }
-  const pendingTrips = trips.filter(
-    trip => !trip.stampEta && !trip.stampEtd && !trip.noWorkAction
-  );
-  if (!pendingTrips.length) {
-    return {
-      activeTrip: null,
-      selectionReason: 'NO_PENDING_TRIP',
-      planEtaDifferenceMinutes: null,
-    };
-  }
-  const eligiblePendingTrips = pendingTrips.filter(trip =>
-    trip.planEtaMinutes === null ||
-    nowMinutes >= trip.planEtaMinutes - GPS_NEXT_TRIP_EARLY_WINDOW_MINUTES
-  );
-  if (!eligiblePendingTrips.length) {
-    const nextTrip = [...pendingTrips].sort(compareTripsByPlanTime)[0] || null;
-    return {
-      activeTrip: null,
-      selectionReason: 'WAITING_FOR_PLAN_WINDOW',
-      planEtaDifferenceMinutes:
-        nextTrip?.planEtaMinutes === null || nextTrip?.planEtaMinutes === undefined
-          ? null
-          : nextTrip.planEtaMinutes - nowMinutes,
-    };
-  }
-  const lockedPending = eligiblePendingTrips.find(
-    trip => trip.codeRun === previousCycle?.activeCodeRun
-  );
-  if (lockedPending) {
-    return {
-      activeTrip: lockedPending,
-      selectionReason: 'LOCKED_ACTIVE_TRIP',
-      planEtaDifferenceMinutes: lockedPending.planEtaMinutes === null
-        ? null
-        : Math.abs(lockedPending.planEtaMinutes - nowMinutes),
-    };
-  }
-  const activeTrip = [...eligiblePendingTrips].sort((first, second) => {
-    const firstDistance = first.planEtaMinutes === null
-      ? Number.MAX_SAFE_INTEGER
-      : Math.abs(first.planEtaMinutes - nowMinutes);
-    const secondDistance = second.planEtaMinutes === null
-      ? Number.MAX_SAFE_INTEGER
-      : Math.abs(second.planEtaMinutes - nowMinutes);
-    if (firstDistance !== secondDistance) return firstDistance - secondDistance;
-    return compareTripsByPlanTime(first, second);
-  })[0];
-  return {
-    activeTrip,
-    selectionReason: 'NEAREST_PENDING_PLAN_ETA',
-    planEtaDifferenceMinutes: activeTrip.planEtaMinutes === null
-      ? null
-      : Math.abs(activeTrip.planEtaMinutes - nowMinutes),
-  };
-}
-async function resolveVehicleTrip(input, isInside) {
-  const truckResult = await getTruckDataWithCache(false);
-  const dateText = getBangkokDateText(input.gpsTime);
-  const trips = buildTripsForPlate(truckResult.data, input.licensePlate, dateText);
-  const previousCycle = await readVehicleCycleState(input.licensePlate);
-  const nowMinutes = getBangkokMinuteOfDay(input.gpsTime);
-  const selected = selectTripForVehicle(trips, nowMinutes, previousCycle);
-  const completedTrips = trips.filter(trip => trip.completed).sort(compareTripsByPlanTime);
-  const latestCompletedTrip = completedTrips.length
-    ? completedTrips[completedTrips.length - 1]
-    : null;
-  let waitingForExit = Boolean(
-    previousCycle?.date === dateText && previousCycle?.waitingForExit
-  );
-  let exitConfirmedAt = previousCycle?.date === dateText
-    ? previousCycle?.exitConfirmedAt || null
-    : null;
-  const completedCodeRunChanged = Boolean(
-    latestCompletedTrip &&
-    previousCycle?.date === dateText &&
-    previousCycle?.lastCompletedCodeRun !== latestCompletedTrip.codeRun
-  );
-  if (completedCodeRunChanged && isInside) {
-    waitingForExit = true;
-    exitConfirmedAt = null;
-  }
-  if (waitingForExit && !isInside) {
-    waitingForExit = false;
-    exitConfirmedAt = new Date().toISOString();
-  }
-  const activeTrip = waitingForExit ? null : selected.activeTrip;
-  const nextPendingTrip = trips
-    .filter(trip => !trip.stampEta && !trip.stampEtd && !trip.noWorkAction)
-    .sort(compareTripsByPlanTime)[0] || null;
-  const state = {
-    licensePlate: input.licensePlate,
-    normalizedLicensePlate: normalizeLicensePlate(input.licensePlate),
-    date: dateText,
-    activeCodeRun: activeTrip?.codeRun || null,
-    activePlanDate: activeTrip?.planDate || null,
-    activePlanEta: activeTrip?.planEta || null,
-    activeTripSequence: activeTrip?.tripSequence || null,
-    planEtaDifferenceMinutes: selected.planEtaDifferenceMinutes,
-    gpsMinuteOfDay: nowMinutes,
-    nextCodeRun: nextPendingTrip?.codeRun || null,
-    nextPlanEta: nextPendingTrip?.planEta || null,
-    requestedCodeRun: input.codeRun,
-    lastCompletedCodeRun: latestCompletedTrip?.codeRun || previousCycle?.lastCompletedCodeRun || null,
-    waitingForExit,
-    exitConfirmedAt,
-    selectionReason: waitingForExit
-      ? 'WAITING_FOR_EXIT_AFTER_ETD'
-      : selected.selectionReason,
-    tripCount: trips.length,
-    tripOrdering: 'NEAREST_PLAN_ETA_THEN_EARLIER_PLAN_ETA_THEN_CODE_RUN',
-    updatedAt: new Date().toISOString(),
-  };
-  await writeVehicleCycleState(input.licensePlate, state);
-  return { state, activeTrip, trips };
-}
-function getGpsDwellKey(codeRun) {
-  return `${GPS_DWELL_KEY_PREFIX}${normalizeCodeRun(codeRun)}`;
-}
-function validateGpsDockPayload(body) {
-  if (!body || typeof body !== 'object' || Array.isArray(body)) {
-    throw new Error('GPS dock evaluation payload is required.');
-  }
-  const codeRun = normalizeCodeRun(body.codeRun);
-  const gpsId = cleanText(body.gpsId);
-  const licensePlate = cleanText(body.licensePlate);
-  const planLicensePlate = cleanText(body.planLicensePlate || body.licensePlate);
-  const latitude = Number(body.latitude);
-  const longitude = Number(body.longitude);
-  const speedKmh = Number(body.speedKmh ?? body.speed);
-  const gpsStatus = cleanText(body.gpsStatus);
-  const gpsTime = parseBangkokDateTime(body.gpsTime, 'gpsTime');
-  const receivedAt = parseBangkokDateTime(body.receivedAt, 'receivedAt');
-  if (!gpsId) throw new Error('gpsId is required.');
-  if (!licensePlate) throw new Error('licensePlate is required.');
-  if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) throw new Error('latitude is invalid.');
-  if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) throw new Error('longitude is invalid.');
-  if (!Number.isFinite(speedKmh) || speedKmh < 0 || speedKmh > 300) throw new Error('speed is invalid.');
-  return { codeRun, gpsId, licensePlate, planLicensePlate, latitude, longitude, speedKmh, gpsStatus, gpsTime, receivedAt };
-}
-function findNearestGpsGeofence(latitude, longitude) {
-  return GPS_GEOFENCES
-    .map(geofence => ({
-      ...geofence,
-      distanceMeters: calculateDistanceMeters(latitude, longitude, geofence.latitude, geofence.longitude),
-    }))
-    .sort((first, second) => first.distanceMeters - second.distanceMeters)[0];
-}
-async function readGpsDwellState(codeRun) {
-  const client = requireRedisClient();
-  const rawState = await client.get(getGpsDwellKey(codeRun));
-  if (!rawState) return null;
-  try {
-    return JSON.parse(rawState);
-  } catch {
-    await client.del(getGpsDwellKey(codeRun));
-    return null;
-  }
-}
-async function writeGpsDwellState(codeRun, state) {
-  const client = requireRedisClient();
-  await client.set(getGpsDwellKey(codeRun), JSON.stringify(state), {
-    EX: GPS_DWELL_STATE_TTL_SECONDS,
-  });
-  return state;
-}
-function createGpsDockResult(state) {
-  const dwellSeconds = Math.max(0, Number(state.dwellSeconds || 0));
-  return {
-    ...state,
-    dwellSeconds,
-    dwellMinutes: Number((dwellSeconds / 60).toFixed(2)),
-    requiredDwellSeconds: Math.floor(GPS_DWELL_THRESHOLD_MS / 1000),
-    remainingDwellSeconds: Math.max(0, Math.floor(GPS_DWELL_THRESHOLD_MS / 1000) - dwellSeconds),
-    parkingSpeedThresholdKmh: GPS_PARKING_SPEED_THRESHOLD_KMH,
-    gpsStaleThresholdSeconds: Math.floor(GPS_STALE_THRESHOLD_MS / 1000),
-  };
-}
-function getGpsAutoStampKey(stampType, codeRun) {
-  return `${GPS_AUTO_STAMP_KEY_PREFIX}${cleanText(stampType).toUpperCase()}:${normalizeCodeRun(codeRun)}`;
-}
-function normalizeStampType(value) {
-  const stampType = cleanText(value).toUpperCase();
-  if (stampType !== 'ETA' && stampType !== 'ETD') throw new Error('stampType must be ETA or ETD.');
-  return stampType;
-}
-function findTripByCodeRun(data, codeRun) {
-  const normalizedCodeRun = normalizeCodeRun(codeRun);
-  const planRows = Array.isArray(data?.plan) ? data.plan : [];
-  const actualRows = Array.isArray(data?.actual) ? data.actual : [];
-  const planRow = planRows.slice(1).find(row => Array.isArray(row) && cleanText(row[0]).toUpperCase() === normalizedCodeRun);
-  if (!planRow) throw new Error(`Plan ${normalizedCodeRun} was not found.`);
-  if (cleanText(planRow[12]).toUpperCase() === 'CANCEL') throw new Error(`Plan ${normalizedCodeRun} is cancelled.`);
-  const actualRow = actualRows.slice(1).find(row => Array.isArray(row) && cleanText(row[0]).toUpperCase() === normalizedCodeRun) || [];
-  const actionProblem = cleanText(actualRow[6]);
-  return {
-    codeRun: normalizedCodeRun,
-    planLicensePlate: cleanText(planRow[4]),
-    stampEta: cleanText(actualRow[4]),
-    stampEtd: cleanText(actualRow[5]),
-    actionProblem,
-    noWorkAction: actionProblem.includes('ไม่มีงานลง') || actionProblem.includes('ไม่มีงาน'),
-  };
-}
-async function stampActualData(payload) {
-  const result = await requestAppsScriptPost('stampActualData', payload);
-  clearTruckCache();
-  return result;
-}
-function getPendingStampId(stampType, codeRun) {
-  return `${normalizeStampType(stampType)}:${normalizeCodeRun(codeRun)}`;
-}
-function getPendingStampKey(pendingId) {
-  return `${GPS_PENDING_STAMP_KEY_PREFIX}${pendingId}`;
-}
-function getPendingStampLockKey(pendingId) {
-  return `${GPS_PENDING_STAMP_LOCK_PREFIX}${pendingId}`;
-}
-function calculatePendingStampRetryDelayMs(attemptCount) {
-  const exponent = Math.max(0, Math.min(10, Number(attemptCount || 1) - 1));
-  return Math.min(GPS_PENDING_STAMP_MAX_RETRY_MS, GPS_PENDING_STAMP_BASE_RETRY_MS * (2 ** exponent));
-}
-async function readPendingStamp(pendingId) {
-  const raw = await requireRedisClient().get(getPendingStampKey(pendingId));
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw);
-  } catch {
-    await requireRedisClient().multi().del(getPendingStampKey(pendingId)).zRem(GPS_PENDING_STAMP_SCHEDULE_KEY, pendingId).exec();
-    return null;
-  }
-}
-async function writePendingStamp(record, scheduleAtMs = null) {
-  const client = requireRedisClient();
-  const transaction = client.multi().set(getPendingStampKey(record.pendingId), JSON.stringify(record), { EX: GPS_PENDING_STAMP_TTL_SECONDS });
-  if (Number.isFinite(scheduleAtMs)) transaction.zAdd(GPS_PENDING_STAMP_SCHEDULE_KEY, [{ score: scheduleAtMs, value: record.pendingId }]);
-  else transaction.zRem(GPS_PENDING_STAMP_SCHEDULE_KEY, record.pendingId);
-  await transaction.exec();
-  return record;
-}
-async function createPendingGpsStamp(stampType, state) {
-  const normalizedStampType = normalizeStampType(stampType);
-  const codeRun = normalizeCodeRun(state.activeCodeRun || state.codeRun);
-  const pendingId = getPendingStampId(normalizedStampType, codeRun);
-  const now = new Date().toISOString();
-  const payload = normalizedStampType === 'ETA'
-    ? {
-        codeRun,
-        stampType: 'ETA',
-        stampSource: 'GPS_GEOFENCE_ENTRY',
-        stampTime: state.gpsTime,
-        stampedBy: 'GPS SYSTEM',
-        geofence: state.geofenceName,
-        gpsSnapshot: { gpsId: state.gpsId, gpsTime: state.gpsTime, latitude: state.latitude, longitude: state.longitude, speed: state.speedKmh, geofence: state.geofenceName },
-      }
-    : {
-        codeRun,
-        stampType: 'ETD',
-        stampSource: 'GPS_EXIT',
-        stampTime: state.gpsTime,
-        stampedBy: 'GPS SYSTEM',
-        geofence: state.lastInsideGeofenceName || state.geofenceName,
-        exitDetectedAt: state.gpsTime,
-        gpsSnapshot: { gpsId: state.gpsId, gpsTime: state.gpsTime, latitude: state.latitude, longitude: state.longitude, speed: state.speedKmh, geofence: state.lastInsideGeofenceName || state.geofenceName },
-      };
-  const initial = {
-    pendingId, stampType: normalizedStampType, codeRun,
-    licensePlate: state.licensePlate, normalizedLicensePlate: normalizeLicensePlate(state.licensePlate),
-    gpsId: state.gpsId, gpsTime: state.gpsTime, selectedPlanEta: state.activePlanEta || null,
-    geofence: payload.geofence || null, payload,
-    status: 'PENDING', attemptCount: 0, lastAttemptAt: null, lastError: null,
-    nextRetryAt: now, createdAt: now, updatedAt: now, completedAt: null,
-  };
-  const client = requireRedisClient();
-  const created = await client.set(getPendingStampKey(pendingId), JSON.stringify(initial), { NX: true, EX: GPS_PENDING_STAMP_TTL_SECONDS });
-  if (created) {
-    await client.zAdd(GPS_PENDING_STAMP_SCHEDULE_KEY, [{ score: Date.now(), value: pendingId }]);
-    console.log(JSON.stringify({ logType: 'ELIVE_GPS_STAMP', event: 'PENDING_STAMP_CREATED', pendingId, codeRun, stampType: normalizedStampType, licensePlate: state.licensePlate, gpsTime: state.gpsTime }));
-    return initial;
-  }
-  return await readPendingStamp(pendingId);
-}
-async function closePendingStamp(record, status, details = {}) {
-  const now = new Date().toISOString();
-  const completed = { ...record, ...details, status, nextRetryAt: null, updatedAt: now, completedAt: now };
-  await writePendingStamp(completed, null);
-  return completed;
-}
-async function processPendingGpsStamp(pendingId) {
-  const client = requireRedisClient();
-  const lockKey = getPendingStampLockKey(pendingId);
-  const lockToken = randomUUID();
-  const acquired = await client.set(lockKey, lockToken, { NX: true, EX: GPS_PENDING_STAMP_LOCK_SECONDS });
-  if (!acquired) return { status: 'PROCESSING', pendingId };
-  try {
-    let record = await readPendingStamp(pendingId);
-    if (!record) return { status: 'MISSING', pendingId };
-    if (['STAMPED', 'ALREADY_STAMPED', 'BLOCKED_NO_WORK'].includes(record.status)) return record;
-    const attemptCount = Number(record.attemptCount || 0) + 1;
-    const lastAttemptAt = new Date().toISOString();
-    record = { ...record, status: 'PROCESSING', attemptCount, lastAttemptAt, lastError: null, updatedAt: lastAttemptAt };
-    await writePendingStamp(record, null);
-    console.log(JSON.stringify({ logType: 'ELIVE_GPS_STAMP', event: 'PENDING_STAMP_CLAIMED', pendingId, attemptCount }));
+function createTruckMarkerIcon(
+  heading: number
+): L.DivIcon {
+  const safeHeading =
+    Number.isFinite(
+      heading
+    )
+      ? heading
+      : 0;
 
-    const latestData = await requestAppsScriptGet('getTrucks');
-    truckDataCache = latestData;
-    truckDataCacheTime = Date.now();
-    const trip = findTripByCodeRun(latestData, record.codeRun);
-    if (trip.noWorkAction) {
-      console.log(JSON.stringify({ logType: 'ELIVE_GPS_STAMP', event: 'STAMP_BLOCKED_NO_WORK', pendingId, codeRun: record.codeRun }));
-      return await closePendingStamp(record, 'BLOCKED_NO_WORK', { lastError: 'NO_WORK_ACTION' });
-    }
-    const alreadyStamped = record.stampType === 'ETA' ? Boolean(trip.stampEta) : Boolean(trip.stampEtd);
-    if (alreadyStamped) {
-      console.log(JSON.stringify({ logType: 'ELIVE_GPS_STAMP', event: 'STAMP_ALREADY_EXISTS', pendingId, codeRun: record.codeRun }));
-      return await closePendingStamp(record, 'ALREADY_STAMPED');
-    }
-    if (record.stampType === 'ETD' && !trip.stampEta) {
-      throw new Error('STAMP_ETA_REQUIRED_BEFORE_ETD');
-    }
-    console.log(JSON.stringify({ logType: 'ELIVE_GPS_STAMP', event: 'STAMP_REQUEST_SENT', pendingId, codeRun: record.codeRun, stampType: record.stampType, attemptCount }));
-    const response = await stampActualData(record.payload);
-    const stampResult = response?.result || response;
-    const status = stampResult?.written === false ? 'ALREADY_STAMPED' : 'STAMPED';
-    console.log(JSON.stringify({ logType: 'ELIVE_GPS_STAMP', event: status === 'STAMPED' ? 'STAMP_CONFIRMED' : 'STAMP_ALREADY_EXISTS', pendingId, codeRun: record.codeRun }));
-    return await closePendingStamp(record, status, { result: stampResult });
-  } catch (error) {
-    const existing = await readPendingStamp(pendingId);
-    if (!existing) throw error;
-    const delayMs = calculatePendingStampRetryDelayMs(existing.attemptCount);
-    const nextRetryMs = Date.now() + delayMs;
-    const retryRecord = { ...existing, status: 'RETRY_WAIT', lastError: getErrorMessage(error), nextRetryAt: new Date(nextRetryMs).toISOString(), updatedAt: new Date().toISOString() };
-    await writePendingStamp(retryRecord, nextRetryMs);
-    console.error(JSON.stringify({ logType: 'ELIVE_GPS_STAMP', event: 'STAMP_RETRY_SCHEDULED', pendingId, attemptCount: retryRecord.attemptCount, lastError: retryRecord.lastError, nextRetryAt: retryRecord.nextRetryAt }));
-    return retryRecord;
-  } finally {
-    await client.eval("if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) else return 0 end", { keys: [lockKey], arguments: [lockToken] }).catch(() => {});
-  }
-}
-async function processDuePendingGpsStamps() {
-  const client = requireRedisClient();
-  const pendingIds = await client.zRangeByScore(GPS_PENDING_STAMP_SCHEDULE_KEY, 0, Date.now(), { LIMIT: { offset: 0, count: GPS_PENDING_STAMP_BATCH_SIZE } });
-  const summary = { due: pendingIds.length, processed: 0, stamped: 0, alreadyStamped: 0, blockedNoWork: 0, retryWait: 0 };
-  for (const pendingId of pendingIds) {
-    if (gpsWorkerStopping) break;
-    const result = await processPendingGpsStamp(pendingId);
-    summary.processed += 1;
-    if (result?.status === 'STAMPED') summary.stamped += 1;
-    if (result?.status === 'ALREADY_STAMPED') summary.alreadyStamped += 1;
-    if (result?.status === 'BLOCKED_NO_WORK') summary.blockedNoWork += 1;
-    if (result?.status === 'RETRY_WAIT') summary.retryWait += 1;
-  }
-  return summary;
-}
-async function executeGpsAutoStampEta(state) {
-  if (state?.noWorkAction) return { status: 'BLOCKED_NO_WORK', reason: 'NO_WORK_ACTION' };
-  if (!GPS_AUTO_STAMP_ETA_ENABLED || !state?.readyForGpsStampEta || !state?.isInside) return null;
-  if (state.waitingForExit || !state.activeCodeRun || state.activeCodeRun !== state.codeRun) return null;
-  const pending = await createPendingGpsStamp('ETA', state);
-  return await processPendingGpsStamp(pending.pendingId);
-}
-async function executeGpsAutoStampEtd(state, activeTrip) {
-  if (state?.noWorkAction || activeTrip?.noWorkAction) return { status: 'BLOCKED_NO_WORK', reason: 'NO_WORK_ACTION' };
-  if (!GPS_AUTO_STAMP_ETD_ENABLED || !state?.readyForGpsStampEtd) return null;
-  if (!activeTrip?.stampEta || activeTrip?.stampEtd) return null;
-  if (!state.wasInsideBeforeExit || state.isInside || state.status !== 'OUTSIDE_GEOFENCE') return null;
-  if (!state.activeCodeRun || state.activeCodeRun !== state.codeRun) return null;
-  const pending = await createPendingGpsStamp('ETD', state);
-  return await processPendingGpsStamp(pending.pendingId);
-}
-async function evaluateGpsDock(payload) {
-  const input = validateGpsDockPayload(payload);
-  const nowMs = Date.now();
-  const gpsTimeMs = input.gpsTime.getTime();
-  const receivedAtMs = input.receivedAt.getTime();
-  const eventTimeMs = Math.min(receivedAtMs, nowMs);
-  const gpsAgeMs = Math.max(0, nowMs - gpsTimeMs);
-  const nearest = findNearestGpsGeofence(input.latitude, input.longitude);
-  const isInside = nearest.distanceMeters <= nearest.radiusMeters;
-  const isParked = input.speedKmh === GPS_PARKING_SPEED_THRESHOLD_KMH;
-  const tripResolution = await resolveVehicleTrip(input, isInside);
-  const vehicleCycle = tripResolution.state;
-  const activeTrip = tripResolution.activeTrip;
-  const effectiveCodeRun = activeTrip?.codeRun || input.codeRun;
-  const platesMatch = activeTrip
-    ? normalizeLicensePlate(input.licensePlate) === normalizeLicensePlate(activeTrip.planLicensePlate)
-    : normalizeLicensePlate(input.licensePlate) === normalizeLicensePlate(input.planLicensePlate);
-  const previous = await readGpsDwellState(effectiveCodeRun);
-  const wasInsideBeforeExit = previous?.isInside === true || previous?.hasBeenInside === true;
-  const hasBeenInside = isInside || wasInsideBeforeExit;
-  const lastInsideGeofenceName = isInside ? nearest.name : previous?.lastInsideGeofenceName || previous?.geofenceName || null;
-  let parkingStartedAtMs = Number(previous?.parkingStartedAtMs || 0);
-  let movingStartedAtMs = Number(previous?.movingStartedAtMs || 0);
-  let status = 'OUTSIDE_GEOFENCE';
+  return L.divIcon({
+    className:
+      'elive-truck-marker',
 
-  if (vehicleCycle.waitingForExit) {
-    status = 'WAITING_FOR_EXIT_AFTER_ETD';
-    parkingStartedAtMs = 0;
-    movingStartedAtMs = 0;
-  } else if (!activeTrip) {
-    status = vehicleCycle.selectionReason === 'WAITING_FOR_PLAN_WINDOW'
-      ? 'WAITING_FOR_PLAN_WINDOW'
-      : 'NO_ACTIVE_TRIP';
-    parkingStartedAtMs = 0;
-    movingStartedAtMs = 0;
-  } else if (!platesMatch) {
-    status = 'GPS_PLATE_MISMATCH';
-    parkingStartedAtMs = 0;
-    movingStartedAtMs = 0;
-  } else if (gpsAgeMs > GPS_STALE_THRESHOLD_MS) {
-    status = 'GPS_STALE';
-  } else if (!isInside) {
-    status = 'OUTSIDE_GEOFENCE';
-    parkingStartedAtMs = 0;
-    movingStartedAtMs = 0;
-  } else {
-    status = 'DOCK_IN_CONFIRMED';
-    movingStartedAtMs = 0;
-    if (!parkingStartedAtMs || previous?.geofenceId !== nearest.id || previous?.codeRun !== effectiveCodeRun) {
-      parkingStartedAtMs = eventTimeMs;
-    }
-  }
+    html: `
+      <div
+        style="
+          width:52px;
+          height:52px;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          border-radius:50%;
+          background:#00a8ff;
+          border:4px solid white;
+          box-shadow:0 5px 16px rgba(2,132,199,0.5);
+          box-sizing:border-box;
+        "
+      >
+        <div
+          style="
+            width:0;
+            height:0;
+            border-left:8px solid transparent;
+            border-right:8px solid transparent;
+            border-bottom:20px solid white;
+            transform:rotate(${safeHeading}deg);
+            transform-origin:center;
+          "
+        ></div>
+      </div>
+    `,
 
-  const dwellSeconds = parkingStartedAtMs && isInside && isParked && !vehicleCycle.waitingForExit && activeTrip
-    ? Math.max(0, Math.floor((eventTimeMs - parkingStartedAtMs) / 1000))
-    : 0;
-  const state = {
-    codeRun: effectiveCodeRun,
-    requestedCodeRun: input.codeRun,
-    activeCodeRun: vehicleCycle.activeCodeRun,
-    nextCodeRun: vehicleCycle.nextCodeRun,
-    lastCompletedCodeRun: vehicleCycle.lastCompletedCodeRun,
-    waitingForExit: vehicleCycle.waitingForExit,
-    exitConfirmedAt: vehicleCycle.exitConfirmedAt,
-    tripSelectionReason: vehicleCycle.selectionReason,
-    tripCountForVehicleToday: vehicleCycle.tripCount,
-    activePlanDate: vehicleCycle.activePlanDate,
-    activePlanEta: vehicleCycle.activePlanEta,
-    activeTripSequence: vehicleCycle.activeTripSequence,
-    planEtaDifferenceMinutes: vehicleCycle.planEtaDifferenceMinutes,
-    gpsMinuteOfDay: vehicleCycle.gpsMinuteOfDay,
-    nextPlanEta: vehicleCycle.nextPlanEta,
-    tripOrdering: vehicleCycle.tripOrdering,
-    noWorkAction: activeTrip?.noWorkAction === true,
-    gpsId: input.gpsId,
-    latitude: input.latitude,
-    longitude: input.longitude,
-    licensePlate: input.licensePlate,
-    planLicensePlate: activeTrip?.planLicensePlate || input.planLicensePlate,
-    geofenceId: nearest.id,
-    geofenceName: nearest.name,
-    geofenceLatitude: nearest.latitude,
-    geofenceLongitude: nearest.longitude,
-    radiusMeters: nearest.radiusMeters,
-    distanceMeters: Number(nearest.distanceMeters.toFixed(2)),
-    isInside,
-    wasInsideBeforeExit,
-    hasBeenInside,
-    lastInsideGeofenceName,
-    isParked,
-    speedKmh: input.speedKmh,
-    gpsStatus: input.gpsStatus,
-    gpsTime: input.gpsTime.toISOString(),
-    receivedAt: input.receivedAt.toISOString(),
-    evaluatedAt: new Date(nowMs).toISOString(),
-    gpsAgeSeconds: Math.floor(gpsAgeMs / 1000),
-    status,
-    parkingStartedAtMs,
-    parkingStartedAt: parkingStartedAtMs ? new Date(parkingStartedAtMs).toISOString() : null,
-    movingStartedAtMs,
-    dwellSeconds,
-    confirmedAt: status === 'DOCK_IN_CONFIRMED'
-      ? previous?.confirmedAt || new Date(eventTimeMs).toISOString()
-      : null,
-    readyForGpsStampEta: isInside && gpsAgeMs <= GPS_STALE_THRESHOLD_MS && Boolean(activeTrip) && !activeTrip?.noWorkAction && !activeTrip?.stampEta,
-    readyForGpsStampEtd: GPS_AUTO_STAMP_ETD_ENABLED && status === 'OUTSIDE_GEOFENCE' && wasInsideBeforeExit && Boolean(activeTrip?.stampEta) && !activeTrip?.noWorkAction && !activeTrip?.stampEtd,
-    autoStampExecuted: false,
-    autoStampEtaResult: null,
-    autoStampEtdResult: null,
-  };
-  await writeGpsDwellState(effectiveCodeRun, state);
-  if (state.readyForGpsStampEta) state.autoStampEtaResult = await executeGpsAutoStampEta(state);
-  if (state.readyForGpsStampEtd) state.autoStampEtdResult = await executeGpsAutoStampEtd(state, activeTrip);
-  state.autoStampResult = state.autoStampEtdResult || state.autoStampEtaResult;
-  state.autoStampExecuted = ['STAMPED', 'ALREADY_STAMPED'].includes(state.autoStampResult?.status);
-  await writeGpsDwellState(effectiveCodeRun, state);
-  return createGpsDockResult(state);
-}
-function normalizeGpsHeader(value) {
-  return cleanText(value).toLowerCase().replace(/\s/g, '');
-}
-function findGpsHeaderIndex(headers, names) {
-  return headers.findIndex(header => names.some(name => header.includes(normalizeGpsHeader(name))));
-}
-function parseGpsNumber(value) {
-  return Number(cleanText(value).replace(/\s/g, '').replace(',', '.'));
-}
-function buildBackgroundGpsInputs(data) {
-  const planRows = Array.isArray(data?.plan) ? data.plan : [];
-  const gpsRows = Array.isArray(data?.gps) ? data.gps : [];
-  if (gpsRows.length <= 1 || planRows.length <= 1) return [];
-  const today = getBangkokDateText(new Date());
-  const seedTrips = [];
-  for (const row of planRows.slice(1)) {
-    if (!Array.isArray(row)) continue;
-    const codeRun = cleanText(row[0]).toUpperCase();
-    const planDate = parseSheetDateText(row[1]);
-    const plate = cleanText(row[4]);
-    const remark = cleanText(row[12]).toUpperCase();
-    if (!/^A\d+$/.test(codeRun) || !plate || remark === 'CANCEL' || planDate !== today) continue;
-    seedTrips.push({
-      codeRun,
-      planDate,
-      planEta: cleanText(row[10]),
-      planEtaMinutes: parsePlanMinutes(row[10]),
-      planLicensePlate: plate,
-      normalizedPlate: normalizeLicensePlate(plate),
-    });
-  }
-  seedTrips.sort(compareTripsByPlanTime);
-  const seedTripByPlate = new Map();
-  for (const trip of seedTrips) {
-    if (!seedTripByPlate.has(trip.normalizedPlate)) {
-      seedTripByPlate.set(trip.normalizedPlate, trip);
-    }
-  }
-  const headers = gpsRows[0].map(normalizeGpsHeader);
-  const gpsIdIndex = findGpsHeaderIndex(headers, ['GPS ID', 'GPSID', 'รหัส GPS']);
-  const plateIndex = findGpsHeaderIndex(headers, ['ทะเบียนรถ', 'License Plate', 'Truck Name', 'Plate']);
-  const latIndex = findGpsHeaderIndex(headers, ['ละติจูด', 'Latitude', 'Lat']);
-  const lngIndex = findGpsHeaderIndex(headers, ['ลองจิจูด', 'Longitude', 'Lng', 'Lon']);
-  const speedIndex = findGpsHeaderIndex(headers, ['ความเร็ว', 'Speed']);
-  const statusIndex = findGpsHeaderIndex(headers, ['สถานะ', 'Status']);
-  const gpsTimeIndex = findGpsHeaderIndex(headers, ['เวลา GPS', 'GPS Time', 'GPS Datetime']);
-  const receivedIndex = findGpsHeaderIndex(headers, ['เวลาที่ระบบดึงข้อมูล', 'เวลารับข้อมูล', 'Received At', 'Update Time']);
-  if (plateIndex < 0 || latIndex < 0 || lngIndex < 0 || gpsTimeIndex < 0 || receivedIndex < 0) {
-    throw new Error('GPS_WORKER_REQUIRED_COLUMNS_MISSING');
-  }
-  const latestByPlate = new Map();
-  for (const row of gpsRows.slice(1)) {
-    if (!Array.isArray(row)) continue;
-    const licensePlate = cleanText(row[plateIndex]);
-    const normalizedPlate = normalizeLicensePlate(licensePlate);
-    const seedTrip = seedTripByPlate.get(normalizedPlate);
-    if (!seedTrip) continue;
-    const latitude = parseGpsNumber(row[latIndex]);
-    const longitude = parseGpsNumber(row[lngIndex]);
-    const speed = speedIndex >= 0 ? parseGpsNumber(row[speedIndex]) : 0;
-    if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || !Number.isFinite(speed)) continue;
-    const gpsTimeText = cleanText(row[gpsTimeIndex]);
-    const receivedAtText = cleanText(row[receivedIndex]);
-    try {
-      const gpsTime = parseBangkokDateTime(gpsTimeText, 'gpsTime');
-      const receivedAt = parseBangkokDateTime(receivedAtText, 'receivedAt');
-      const candidate = {
-        codeRun: seedTrip.codeRun,
-        gpsId: gpsIdIndex >= 0 ? cleanText(row[gpsIdIndex]) || normalizedPlate : normalizedPlate,
-        licensePlate,
-        planLicensePlate: seedTrip.planLicensePlate,
-        latitude,
-        longitude,
-        speed,
-        gpsStatus: statusIndex >= 0 ? cleanText(row[statusIndex]) : '',
-        gpsTime: gpsTime.toISOString(),
-        receivedAt: receivedAt.toISOString(),
-        sortTime: Math.max(gpsTime.getTime(), receivedAt.getTime()),
-      };
-      const previous = latestByPlate.get(normalizedPlate);
-      if (!previous || candidate.sortTime > previous.sortTime) latestByPlate.set(normalizedPlate, candidate);
-    } catch {
-      continue;
-    }
-  }
-  return [...latestByPlate.values()].map(({ sortTime, ...input }) => input);
-}
-async function releaseGpsWorkerLock(client, token) {
-  await client.eval(
-    "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) else return 0 end",
-    { keys: [GPS_WORKER_LOCK_KEY], arguments: [token] }
-  );
-}
-async function writeGpsWorkerStatus(status) {
-  const client = requireRedisClient();
-  await client.set(GPS_WORKER_STATUS_KEY, JSON.stringify(status), { EX: GPS_WORKER_STATUS_TTL_SECONDS });
-}
-async function runGpsBackgroundCycle() {
-  if (!GPS_BACKGROUND_WORKER_ENABLED || gpsWorkerCycleRunning || gpsWorkerStopping) return null;
-  gpsWorkerCycleRunning = true;
-  const client = requireRedisClient();
-  const lockToken = randomUUID();
-  const lockAcquired = await client.set(GPS_WORKER_LOCK_KEY, lockToken, { NX: true, EX: GPS_WORKER_LOCK_SECONDS });
-  if (!lockAcquired) {
-    gpsWorkerCycleRunning = false;
-    return { skipped: true, reason: 'LEADER_LOCK_NOT_ACQUIRED' };
-  }
-  const startedAt = Date.now();
-  const summary = { processed: 0, confirmed: 0, etaStamped: 0, etdStamped: 0, stamped: 0, alreadyStamped: 0, failed: 0, failures: [] };
-  try {
-    if (await client.exists(APPS_SCRIPT_MUTATION_LOCK_KEY)) {
-      const status = {
-        enabled: true,
-        running: true,
-        skipped: true,
-        reason: 'APPS_SCRIPT_MUTATION_IN_PROGRESS',
-        lastCycleStartedAt: new Date(startedAt).toISOString(),
-        lastCycleCompletedAt: new Date().toISOString(),
-        durationMs: Date.now() - startedAt,
-        ...summary,
-      };
-      await writeGpsWorkerStatus(status);
-      console.log(JSON.stringify({ logType: 'ELIVE_GPS_WORKER', ...status }));
-      return status;
-    }
-    const pendingRetrySummary = await processDuePendingGpsStamps();
-    summary.pendingRetry = pendingRetrySummary;
-    const truckResult = await getTruckDataWithCache(false);
-    const inputs = buildBackgroundGpsInputs(truckResult.data);
-    for (const input of inputs) {
-      if (gpsWorkerStopping) break;
-      try {
-        const result = await evaluateGpsDock(input);
-        summary.processed += 1;
-        if (result.status === 'DOCK_IN_CONFIRMED') summary.confirmed += 1;
-        if (result.autoStampEtaResult?.status === 'STAMPED') summary.etaStamped += 1;
-        if (result.autoStampEtdResult?.status === 'STAMPED') summary.etdStamped += 1;
-        if (result.autoStampResult?.status === 'STAMPED') summary.stamped += 1;
-        if (result.autoStampResult?.status === 'ALREADY_STAMPED') summary.alreadyStamped += 1;
-      } catch (error) {
-        summary.failed += 1;
-        summary.failures.push({ gpsIdHash: hashAuditValue(input.gpsId), error: getErrorMessage(error) });
-      }
-    }
-    const status = {
-      enabled: true,
-      running: true,
-      lastCycleStartedAt: new Date(startedAt).toISOString(),
-      lastCycleCompletedAt: new Date().toISOString(),
-      durationMs: Date.now() - startedAt,
-      ...summary,
-    };
-    await writeGpsWorkerStatus(status);
-    console.log(JSON.stringify({ logType: 'ELIVE_GPS_WORKER', ...status }));
-    return status;
-  } catch (error) {
-    const status = {
-      enabled: true,
-      running: true,
-      lastCycleStartedAt: new Date(startedAt).toISOString(),
-      lastCycleCompletedAt: new Date().toISOString(),
-      durationMs: Date.now() - startedAt,
-      error: getErrorMessage(error),
-      ...summary,
-    };
-    await writeGpsWorkerStatus(status).catch(() => {});
-    console.error('GPS Background Worker cycle failed:', status);
-    return status;
-  } finally {
-    await releaseGpsWorkerLock(client, lockToken).catch(error => {
-      console.error('Unable to release GPS Worker lock:', getErrorMessage(error));
-    });
-    gpsWorkerCycleRunning = false;
-  }
-}
-function scheduleNextGpsWorkerCycle(delayMs) {
-  if (gpsWorkerStopping || !GPS_BACKGROUND_WORKER_ENABLED) return;
-  gpsWorkerTimer = setTimeout(async () => {
-    await runGpsBackgroundCycle();
-    scheduleNextGpsWorkerCycle(GPS_BACKGROUND_WORKER_INTERVAL_MS);
-  }, delayMs);
-}
-function startGpsBackgroundWorker() {
-  if (!GPS_BACKGROUND_WORKER_ENABLED) {
-    console.log('GPS Background Worker is disabled.');
-    return;
-  }
-  console.log(`GPS Background Worker enabled, interval ${GPS_BACKGROUND_WORKER_INTERVAL_MS} ms.`);
-  scheduleNextGpsWorkerCycle(2000);
-}
-async function stopGpsBackgroundWorker() {
-  gpsWorkerStopping = true;
-  if (gpsWorkerTimer) clearTimeout(gpsWorkerTimer);
-  const deadline = Date.now() + 15000;
-  while (gpsWorkerCycleRunning && Date.now() < deadline) await wait(250);
-}
-function waitForLoginFailure() { return wait(LOGIN_FAILURE_DELAY_MS + Math.floor(Math.random() * 250)); }
-function normalizeLoginUsername(value) { const username=cleanText(value).toLowerCase(); if(!username||username.length>MAX_LOGIN_USERNAME_LENGTH) throw new Error('LOGIN_PAYLOAD_INVALID'); return username; }
-function normalizeLoginPassword(value) { if(typeof value!=='string'||!value||value.length>MAX_LOGIN_PASSWORD_LENGTH) throw new Error('LOGIN_PAYLOAD_INVALID'); return value; }
-function getAuthUserOverrideKey(username) {
-  const normalizedUsername = cleanText(username).toLowerCase();
-  return `${AUTH_USER_OVERRIDE_KEY_PREFIX}${createHash('sha256').update(normalizedUsername).digest('hex')}`;
-}
-async function readAuthUserOverride(username) {
-  const raw = await requireRedisClient().get(getAuthUserOverrideKey(username));
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw);
-  } catch {
-    await requireRedisClient().del(getAuthUserOverrideKey(username));
-    return null;
-  }
-}
-async function getEffectiveAuthUser(username) {
-  const normalizedUsername = cleanText(username).toLowerCase();
-  const configuredUser = getConfiguredAuthUsers().find(item => item.username === normalizedUsername);
-  if (!configuredUser) return null;
-  const override = await readAuthUserOverride(normalizedUsername);
-  if (!override) return { ...configuredUser, credentialVersion: 0, passwordChangedAt: null };
-  return {
-    ...configuredUser,
-    passwordHash: cleanText(override.passwordHash).toLowerCase(),
-    salt: cleanText(override.salt).toLowerCase(),
-    iterations: Number(override.iterations),
-    credentialVersion: Number(override.credentialVersion || 0),
-    passwordChangedAt: override.passwordChangedAt || null,
-  };
-}
-async function writeAuthUserOverride(user, passwordHash, salt) {
-  const now = new Date().toISOString();
-  const previous = await readAuthUserOverride(user.username);
-  const record = {
-    username: user.username,
-    passwordHash,
-    salt,
-    iterations: PASSWORD_HASH_ITERATIONS,
-    credentialVersion: Number(previous?.credentialVersion || user.credentialVersion || 0) + 1,
-    passwordChangedAt: now,
-    updatedAt: now,
-  };
-  await requireRedisClient().set(getAuthUserOverrideKey(user.username), JSON.stringify(record));
-  return record;
-}
-function validateNewPassword(username, currentPassword, newPassword, confirmNewPassword) {
-  if (typeof currentPassword !== 'string' || !currentPassword) throw new Error('CURRENT_PASSWORD_REQUIRED');
-  if (typeof newPassword !== 'string' || typeof confirmNewPassword !== 'string') throw new Error('NEW_PASSWORD_REQUIRED');
-  if (newPassword !== confirmNewPassword) throw new Error('PASSWORD_CONFIRMATION_MISMATCH');
-  if (newPassword.length < PASSWORD_MIN_LENGTH || newPassword.length > PASSWORD_MAX_LENGTH) throw new Error('PASSWORD_POLICY_INVALID');
-  if (newPassword === currentPassword) throw new Error('PASSWORD_UNCHANGED');
-  if (newPassword.toLowerCase().includes(cleanText(username).toLowerCase())) throw new Error('PASSWORD_CONTAINS_USERNAME');
-  return newPassword;
-}
-async function hashNewPassword(password) {
-  const salt = randomBytes(32).toString('hex');
-  const hash = await pbkdf2Async(password, Buffer.from(salt, 'hex'), PASSWORD_HASH_ITERATIONS, PBKDF2_KEY_LENGTH, PBKDF2_DIGEST);
-  return { salt, passwordHash: hash.toString('hex') };
-}
-function getPasswordChangeRateLimitKey(req, username) {
-  return `${PASSWORD_CHANGE_RATE_LIMIT_KEY_PREFIX}${getRateLimitKey(req, username)}`;
-}
-async function enforcePasswordChangeRateLimit(req, username) {
-  const client = requireRedisClient();
-  const key = getPasswordChangeRateLimitKey(req, username);
-  const state = await getRateLimitState(client, key, PASSWORD_CHANGE_RATE_LIMIT_MAX_FAILURES);
-  if (state.blocked) {
-    const error = new Error('PASSWORD_CHANGE_RATE_LIMITED');
-    error.retryAfterSeconds = state.retryAfterSeconds;
-    throw error;
-  }
-  return key;
-}
-function getConfiguredAuthUsers() {
-  const rawUsers=cleanText(process.env.ELIVE_AUTH_USERS); if(!rawUsers) throw new Error('AUTH_CONFIG_MISSING');
-  let parsedUsers; try { parsedUsers=JSON.parse(rawUsers); } catch { throw new Error('AUTH_CONFIG_INVALID'); }
-  if(!Array.isArray(parsedUsers)||!parsedUsers.length) throw new Error('AUTH_CONFIG_INVALID');
-  const usernames=new Set(); return parsedUsers.map(user=>{ const username=cleanText(user?.username).toLowerCase(); const passwordHash=cleanText(user?.passwordHash).toLowerCase(); const salt=cleanText(user?.salt).toLowerCase(); const iterations=Number(user?.iterations); const role=cleanText(user?.role).toUpperCase(); const active=user?.active!==false; if(!username||username.length>MAX_LOGIN_USERNAME_LENGTH||!/^[a-f0-9]{64}$/.test(passwordHash)||!/^[a-f0-9]{64}$/.test(salt)||!Number.isInteger(iterations)||iterations<PBKDF2_MIN_ITERATIONS||iterations>PBKDF2_MAX_ITERATIONS||!['TV_VIEWER','OPERATOR','PLANNER','SUPERVISOR','ADMIN'].includes(role)||usernames.has(username)) throw new Error('AUTH_CONFIG_INVALID'); usernames.add(username); return {username,passwordHash,salt,iterations,role,active}; });
-}
-async function verifyLoginPassword(password,user){ const calculatedHash=await pbkdf2Async(password,Buffer.from(user.salt,'hex'),user.iterations,PBKDF2_KEY_LENGTH,PBKDF2_DIGEST); const expectedHash=Buffer.from(user.passwordHash,'hex'); return expectedHash.length===calculatedHash.length&&timingSafeEqual(expectedHash,calculatedHash); }
-function createLoginUserResponse(user){ return {username:user.username,role:user.role}; }
+    iconSize:
+      [52, 52],
 
-function hashSessionToken(token){ return createHash('sha256').update(token).digest('hex'); }
-function parseCookies(cookieHeader){ const cookies={}; for(const part of String(cookieHeader||'').split(';')){ const i=part.indexOf('='); if(i<=0) continue; const name=part.slice(0,i).trim(); const value=part.slice(i+1).trim(); if(!name) continue; try{ cookies[name]=decodeURIComponent(value); }catch{ cookies[name]=value; } } return cookies; }
-async function initializeRedis() {
-  if (!REDIS_URL) throw new Error('REDIS_URL is not configured on Render.');
-  redisClient = createClient({ url: REDIS_URL, socket: { connectTimeout: 10000, reconnectStrategy: retries => Math.min(250 * 2 ** retries, 5000) } });
-  redisClient.on('error', error => { redisReady = false; lastRedisError = getErrorMessage(error); console.error('Redis client error:', lastRedisError); });
-  redisClient.on('ready', () => { redisReady = true; lastRedisError = null; console.log('ELIVE session store is ready.'); });
-  redisClient.on('end', () => { redisReady = false; console.warn('ELIVE session store connection ended.'); });
-  await redisClient.connect();
-  redisReady = redisClient.isReady;
-}
-function requireRedisClient() { if (!redisClient || !redisReady || !redisClient.isReady) throw new Error('SESSION_STORE_UNAVAILABLE'); return redisClient; }
-function getSessionKey(tokenHash) { return `${SESSION_KEY_PREFIX}${tokenHash}`; }
-function getSessionUserIndexKey(username) {
-  return `${SESSION_USER_INDEX_PREFIX}${createHash('sha256')
-    .update(cleanText(username).toLowerCase())
-    .digest('hex')}`;
-}
-
-function getConcurrentSessionLimit(role) {
-  return SESSION_LIMITS_BY_ROLE[cleanText(role).toUpperCase()] || 1;
-}
-
-function writeConcurrentSessionRevocationAudit(user, revokedCount) {
-  if (!revokedCount) return;
-  writeAuditLog({
-    requestId: randomUUID(),
-    timestamp: new Date().toISOString(),
-    actorUsername: user.username,
-    actorRole: user.role,
-    method: 'SYSTEM',
-    path: '/api/auth/login',
-    action: 'SESSION_REVOKED',
-    targetType: 'SESSION',
-    targetIdHash: hashAuditValue(user.username),
-    reason: 'CONCURRENT_SESSION_LIMIT',
-    revokedCount,
-    result: 'SUCCESS',
-    statusCode: 200,
-    durationMs: 0,
-    ipHash: null,
-    userAgentHash: null,
+    iconAnchor:
+      [26, 26],
   });
 }
 
-async function enforceConcurrentSessionLimit(client, user) {
-  const indexKey = getSessionUserIndexKey(user.username);
-  const maximumSessions = getConcurrentSessionLimit(user.role);
-  const indexedTokenHashes = await client.zRange(indexKey, 0, -1);
-  const validSessions = [];
+function createTpcapMarkerIcon():
+  L.DivIcon {
+  return L.divIcon({
+    className:
+      'elive-tpcap-marker',
 
-  for (const tokenHash of indexedTokenHashes) {
-    const rawSession = await client.get(getSessionKey(tokenHash));
-    if (!rawSession) {
-      await client.zRem(indexKey, tokenHash);
-      continue;
-    }
+    html: `
+      <div
+        style="
+          width:70px;
+          height:80px;
+          display:flex;
+          flex-direction:column;
+          align-items:center;
+        "
+      >
+        <div
+          style="
+            position:relative;
+            width:48px;
+            height:48px;
+          "
+        >
+          <div
+            style="
+              position:absolute;
+              left:4px;
+              top:4px;
+              width:40px;
+              height:40px;
+              border-radius:50% 50% 50% 0;
+              background:#ef4444;
+              border:4px solid white;
+              box-shadow:0 5px 16px rgba(185,28,28,0.45);
+              transform:rotate(-45deg);
+              box-sizing:border-box;
+            "
+          ></div>
 
-    let session;
-    try {
-      session = JSON.parse(rawSession);
-    } catch {
-      await client.del(getSessionKey(tokenHash));
-      await client.zRem(indexKey, tokenHash);
-      continue;
-    }
+          <div
+            style="
+              position:absolute;
+              left:17px;
+              top:17px;
+              width:14px;
+              height:14px;
+              border-radius:50%;
+              background:white;
+            "
+          ></div>
+        </div>
 
-    if (Number(session.expiresAt || 0) <= Date.now()) {
-      await client.del(getSessionKey(tokenHash));
-      await client.zRem(indexKey, tokenHash);
-      continue;
-    }
+        <div
+          style="
+            margin-top:4px;
+            padding:4px 9px;
+            border-radius:6px;
+            background:white;
+            border:1px solid #fecaca;
+            color:#b91c1c;
+            font-size:11px;
+            font-weight:700;
+            white-space:nowrap;
+            box-shadow:0 2px 8px rgba(15,23,42,0.2);
+          "
+        >
+          TPCAP
+        </div>
+      </div>
+    `,
 
-    validSessions.push({
-      tokenHash,
-      createdAt: Number(session.createdAt || 0),
-    });
-  }
+    iconSize:
+      [70, 80],
 
-  validSessions.sort((first, second) => first.createdAt - second.createdAt);
-  const sessionsToRevoke = validSessions.slice(
-    0,
-    Math.max(0, validSessions.length - maximumSessions)
+    iconAnchor:
+      [35, 44],
+  });
+}
+
+export function LiveMap({
+  trucks,
+  gpsLocations,
+  initialTruckId,
+  onRefresh,
+  isRefreshing = false,
+}: LiveMapProps) {
+  const mapContainerRef =
+    useRef<HTMLDivElement | null>(
+      null
+    );
+
+  const mapRef =
+    useRef<L.Map | null>(
+      null
+    );
+
+  const markerLayerRef =
+    useRef<L.LayerGroup | null>(
+      null
+    );
+
+  const routeLayerRef =
+    useRef<L.LayerGroup | null>(
+      null
+    );
+  const geofenceLayerRef =
+    useRef<L.LayerGroup | null>(
+      null
+    );
+
+  const routeRequestIdRef =
+    useRef(0);
+  const gpsDockRequestIdRef =
+    useRef(0);
+
+  const appliedInitialTruckIdRef =
+    useRef<string | null>(
+      null
+    );
+
+  const [
+    selectedGpsId,
+    setSelectedGpsId,
+  ] = useState('');
+
+  const [
+    searchText,
+    setSearchText,
+  ] = useState('');
+
+  const [
+    routeError,
+    setRouteError,
+  ] = useState<string | null>(
+    null
   );
 
-  if (sessionsToRevoke.length) {
-    const transaction = client.multi();
-    for (const session of sessionsToRevoke) {
-      transaction.del(getSessionKey(session.tokenHash));
-      transaction.zRem(indexKey, session.tokenHash);
-    }
-    await transaction.exec();
-  }
-
-  return sessionsToRevoke.length;
-}
-
-async function createSession(user) {
-  const client = requireRedisClient();
-  const token = randomBytes(48).toString('base64url');
-  const tokenHash = hashSessionToken(token);
-  const now = Date.now();
-  const session = {
-    username: user.username,
-    role: user.role,
-    createdAt: now,
-    expiresAt: now + SESSION_DURATION_MS,
-    lastUserActivityAt: now,
-    credentialVersion: Number(user.credentialVersion || 0),
-  };
-  const indexKey = getSessionUserIndexKey(user.username);
-
-  await client
-    .multi()
-    .set(getSessionKey(tokenHash), JSON.stringify(session), {
-      EX: SESSION_TTL_SECONDS,
-    })
-    .zAdd(indexKey, [{ score: now, value: tokenHash }])
-    .expire(indexKey, SESSION_TTL_SECONDS)
-    .exec();
-
-  const revokedCount = await enforceConcurrentSessionLimit(client, user);
-  writeConcurrentSessionRevocationAudit(user, revokedCount);
-
-  return { token, session };
-}
-
-async function getIndexedUserSessions(client, username) {
-  const indexKey = getSessionUserIndexKey(username);
-  const tokenHashes = await client.zRange(indexKey, 0, -1);
-  const sessions = [];
-
-  for (const tokenHash of tokenHashes) {
-    const rawSession = await client.get(getSessionKey(tokenHash));
-    if (!rawSession) {
-      await client.zRem(indexKey, tokenHash);
-      continue;
-    }
-
-    let session;
-    try {
-      session = JSON.parse(rawSession);
-    } catch {
-      await client.del(getSessionKey(tokenHash));
-      await client.zRem(indexKey, tokenHash);
-      continue;
-    }
-
-    sessions.push({ tokenHash, session });
-  }
-
-  return { indexKey, sessions };
-}
-
-async function listActiveSessions() {
-  const client = requireRedisClient();
-  const configuredUsers = getConfiguredAuthUsers();
-  const users = [];
-  let activeSessionCount = 0;
-
-  for (const user of configuredUsers) {
-    const { sessions } = await getIndexedUserSessions(client, user.username);
-    const activeSessions = sessions
-      .map(item => ({
-        createdAt: Number(item.session?.createdAt || 0),
-        expiresAt: Number(item.session?.expiresAt || 0),
-      }))
-      .filter(item => item.expiresAt > Date.now())
-      .sort((first, second) => first.createdAt - second.createdAt);
-
-    if (!activeSessions.length) continue;
-    activeSessionCount += activeSessions.length;
-    users.push({
-      username: user.username,
-      role: user.role,
-      accountActive: user.active,
-      activeSessionCount: activeSessions.length,
-      oldestSessionCreatedAt: new Date(
-        activeSessions[0].createdAt
-      ).toISOString(),
-      newestSessionCreatedAt: new Date(
-        activeSessions[activeSessions.length - 1].createdAt
-      ).toISOString(),
-      nearestExpiryAt: new Date(
-        Math.min(...activeSessions.map(item => item.expiresAt))
-      ).toISOString(),
-    });
-  }
-
-  users.sort((first, second) => first.username.localeCompare(second.username));
-  return {
-    activeUserCount: users.length,
-    activeSessionCount,
-    users,
-  };
-}
-
-async function revokeUserSessions(username, excludedTokenHash = null) {
-  const client = requireRedisClient();
-  const normalizedUsername = normalizeLoginUsername(username);
-  const { indexKey, sessions } = await getIndexedUserSessions(
-    client,
-    normalizedUsername
-  );
-  const sessionsToRevoke = sessions.filter(
-    item => item.tokenHash !== excludedTokenHash
+  const [
+    routeResult,
+    setRouteResult,
+  ] = useState<RouteToTpcapResult | null>(
+    null
   );
 
-  if (!sessionsToRevoke.length) {
-    return { username: normalizedUsername, revokedCount: 0 };
-  }
+  const [
+    isRouteLoading,
+    setIsRouteLoading,
+  ] = useState(false);
+  const [
+    showGeofenceDebug,
+    setShowGeofenceDebug,
+  ] = useState(true);
+  const [
+    gpsDockResult,
+    setGpsDockResult,
+  ] = useState<GpsDockEvaluationResult | null>(null);
+  const [
+    gpsDockError,
+    setGpsDockError,
+  ] = useState<string | null>(null);
+  const [
+    isGpsDockLoading,
+    setIsGpsDockLoading,
+  ] = useState(false);
 
-  const transaction = client.multi();
-  for (const item of sessionsToRevoke) {
-    transaction.del(getSessionKey(item.tokenHash));
-    transaction.zRem(indexKey, item.tokenHash);
-  }
-  await transaction.exec();
+  const truckByPlate =
+    useMemo(() => {
+      const map =
+        new Map<
+          string,
+          Truck
+        >();
 
-  return {
-    username: normalizedUsername,
-    revokedCount: sessionsToRevoke.length,
-  };
-}
+      for (
+        const truck of trucks
+      ) {
+        const normalizedPlate =
+          normalizeLicensePlate(
+            truck.licensePlate
+          );
 
-async function revokeAllSessions(excludedTokenHash = null) {
-  const client = requireRedisClient();
-  let cursor = '0';
-  let revokedCount = 0;
-
-  do {
-    const result = await client.scan(cursor, {
-      MATCH: `${SESSION_USER_INDEX_PREFIX}*`,
-      COUNT: 100,
-    });
-    cursor = String(result.cursor);
-
-    for (const indexKey of result.keys) {
-      const tokenHashes = await client.zRange(indexKey, 0, -1);
-      const transaction = client.multi();
-      let operationCount = 0;
-
-      for (const tokenHash of tokenHashes) {
-        if (tokenHash === excludedTokenHash) continue;
-        transaction.del(getSessionKey(tokenHash));
-        transaction.zRem(indexKey, tokenHash);
-        revokedCount += 1;
-        operationCount += 2;
+        if (
+          normalizedPlate
+        ) {
+          map.set(
+            normalizedPlate,
+            truck
+          );
+        }
       }
 
-      if (operationCount > 0) await transaction.exec();
-    }
-  } while (cursor !== '0');
+      return map;
+    }, [
+      trucks,
+    ]);
 
-  return { revokedCount };
-}
+  const matchedGpsLocations =
+    useMemo(() => {
+      return gpsLocations.filter(
+        location => {
+          const normalizedPlate =
+            normalizeLicensePlate(
+              location.licensePlate
+            );
 
-async function getCurrentSessionUser(session) {
-  const username = cleanText(session?.username).toLowerCase();
-  const sessionRole = cleanText(session?.role).toUpperCase();
-  const user = await getEffectiveAuthUser(username);
-  if (!user || !user.active) {
-    return { valid: false, reason: 'ACCOUNT_INACTIVE_OR_REMOVED', user: null };
-  }
-  if (user.role !== sessionRole) {
-    return { valid: false, reason: 'ACCOUNT_ROLE_CHANGED', user };
-  }
-  if (Number(session?.credentialVersion || 0) !== Number(user.credentialVersion || 0)) {
-    return { valid: false, reason: 'CREDENTIAL_VERSION_CHANGED', user };
-  }
-  return { valid: true, reason: null, user };
-}
-async function getSessionFromRequest(req) {
-  const token=parseCookies(req.headers.cookie)[SESSION_COOKIE_NAME]; if(!token) return null;
-  const client=requireRedisClient(); const tokenHash=hashSessionToken(token); const raw=await client.get(getSessionKey(tokenHash)); if(!raw) return null;
-  let session; try { session=JSON.parse(raw); } catch { await client.del(getSessionKey(tokenHash)); return null; }
-  if(!session?.username||!session?.role||!Number.isFinite(Number(session.expiresAt))||Number(session.expiresAt)<=Date.now()){ await client.del(getSessionKey(tokenHash)); return null; }
-
-  const normalizedSession = {
-    ...session,
-    username: cleanText(session.username).toLowerCase(),
-    role: cleanText(session.role).toUpperCase(),
-    createdAt: Number(session.createdAt || 0),
-    expiresAt: Number(session.expiresAt),
-    lastUserActivityAt: Number(session.lastUserActivityAt || session.createdAt || 0),
-    credentialVersion: Number(session.credentialVersion || 0),
-    lastReauthenticatedAt: Number(session.lastReauthenticatedAt || 0),
-    passwordChangedAt: session.passwordChangedAt || null,
-  };
-  const idleDurationMs = Date.now() - normalizedSession.lastUserActivityAt;
-  if (idleDurationMs >= SESSION_IDLE_TIMEOUT_MS) {
-    await client
-      .multi()
-      .del(getSessionKey(tokenHash))
-      .zRem(getSessionUserIndexKey(normalizedSession.username), tokenHash)
-      .exec();
-    return {
-      tokenHash,
-      session: normalizedSession,
-      invalidReason: 'IDLE_TIMEOUT',
-    };
-  }
-
-  const accountValidation = await getCurrentSessionUser(normalizedSession);
-
-  if (!accountValidation.valid) {
-    await client
-      .multi()
-      .del(getSessionKey(tokenHash))
-      .zRem(getSessionUserIndexKey(normalizedSession.username), tokenHash)
-      .exec();
-    return {
-      tokenHash,
-      session: normalizedSession,
-      invalidReason: accountValidation.reason,
-    };
-  }
-
-  return { tokenHash, session: normalizedSession, invalidReason: null };
-}
-async function recordSessionUserActivity(tokenHash, session) {
-  const client = requireRedisClient();
-  const sessionKey = getSessionKey(tokenHash);
-  const rawCurrentSession = await client.get(sessionKey);
-  if (!rawCurrentSession) throw new Error('SESSION_NOT_FOUND');
-  let currentSession;
-  try {
-    currentSession = JSON.parse(rawCurrentSession);
-  } catch {
-    await client.del(sessionKey);
-    throw new Error('SESSION_INVALID');
-  }
-  const now = Date.now();
-  const expiresAt = Number(currentSession.expiresAt || session.expiresAt);
-  if (!Number.isFinite(expiresAt) || expiresAt <= now) {
-    await client.del(sessionKey);
-    throw new Error('SESSION_EXPIRED');
-  }
-  const updatedSession = {
-    ...currentSession,
-    ...session,
-    credentialVersion: Number(currentSession.credentialVersion ?? session.credentialVersion ?? 0),
-    lastReauthenticatedAt: Number(currentSession.lastReauthenticatedAt ?? session.lastReauthenticatedAt ?? 0),
-    passwordChangedAt: currentSession.passwordChangedAt ?? session.passwordChangedAt ?? null,
-    lastUserActivityAt: now,
-    expiresAt,
-  };
-  const remainingTtlSeconds = Math.max(1, Math.ceil((expiresAt - now) / 1000));
-  await client.set(sessionKey, JSON.stringify(updatedSession), { EX: remainingTtlSeconds });
-  return updatedSession;
-}
-
-function setSessionCookie(res,token){ res.cookie(SESSION_COOKIE_NAME,token,{httpOnly:true,secure:true,sameSite:'none',path:'/',maxAge:SESSION_DURATION_MS}); }
-function clearSessionCookie(res){ res.clearCookie(SESSION_COOKIE_NAME,{httpOnly:true,secure:true,sameSite:'none',path:'/'}); }
-function createSessionResponse(session){ return {username:session.username,role:session.role,expiresAt:new Date(session.expiresAt).toISOString()}; }
-async function deleteSession(tokenHash, session = null) {
-  const client = requireRedisClient();
-  const transaction = client.multi().del(getSessionKey(tokenHash));
-  if (session?.username) {
-    transaction.zRem(getSessionUserIndexKey(session.username), tokenHash);
-  }
-  await transaction.exec();
-}
-async function requireAuthentication(req,res,next){
-  try {
-    const record=await getSessionFromRequest(req);
-    if(!record || record.invalidReason){
-      if (record?.invalidReason) writeSessionRevocationAudit(req, record);
-      clearSessionCookie(res);
-      return res.status(401).json({
-        success:false,
-        authenticated:false,
-        error: record?.invalidReason === 'ACCOUNT_ROLE_CHANGED'
-          ? 'Account permission changed. Please sign in again.'
-          : record?.invalidReason === 'IDLE_TIMEOUT'
-            ? 'Session expired due to inactivity. Please sign in again.'
-            : 'Authentication required.'
-      });
-    }
-    req.auth={...record.session,username:record.session.username,role:record.session.role,createdAt:record.session.createdAt,expiresAt:record.session.expiresAt,lastUserActivityAt:record.session.lastUserActivityAt,credentialVersion:Number(record.session.credentialVersion || 0),lastReauthenticatedAt:Number(record.session.lastReauthenticatedAt || 0),passwordChangedAt:record.session.passwordChangedAt || null}; req.authSessionTokenHash=record.tokenHash; return next();
-  } catch(error){
-    const errorCode=getErrorMessage(error);
-    if(errorCode==='SESSION_STORE_UNAVAILABLE') return res.status(503).json({success:false,error:'Session service is temporarily unavailable.'});
-    if(errorCode==='AUTH_CONFIG_MISSING'||errorCode==='AUTH_CONFIG_INVALID') return res.status(503).json({success:false,error:'Authentication service is not configured.'});
-    return next(error);
-  }
-}
-function normalizeRoleName(value) {
-  const role = cleanText(value).toUpperCase();
-  if (!Object.prototype.hasOwnProperty.call(ROLE_LEVELS, role)) {
-    throw new Error('ROLE_INVALID');
-  }
-  return role;
-}
-
-function requireMinimumRole(requiredRole) {
-  const normalizedRequiredRole = normalizeRoleName(requiredRole);
-  return (req, res, next) => {
-    if (!req.auth) {
-      return res.status(401).json({
-        success: false,
-        authenticated: false,
-        error: 'Authentication required.',
-      });
-    }
-
-    const currentRoleLevel = ROLE_LEVELS[req.auth.role] || 0;
-    const requiredRoleLevel = ROLE_LEVELS[normalizedRequiredRole];
-    if (currentRoleLevel < requiredRoleLevel) {
-      return res.status(403).json({
-        success: false,
-        authenticated: true,
-        authorized: false,
-        error: 'Insufficient permission.',
-        requiredRole: normalizedRequiredRole,
-      });
-    }
-
-    req.authorization = {
-      requiredRole: normalizedRequiredRole,
-      currentRole: req.auth.role,
-    };
-    return next();
-  };
-}
-
-
-function validateAppsScriptUrl() {
-  if (!APPS_SCRIPT_URL) {
-    throw new Error('APPS_SCRIPT_URL is not configured on Render.');
-  }
-
-  if (!APPS_SCRIPT_URL.startsWith('https://script.google.com/macros/s/')) {
-    throw new Error(
-      'APPS_SCRIPT_URL must start with https://script.google.com/macros/s/'
-    );
-  }
-
-  if (!APPS_SCRIPT_URL.endsWith('/exec')) {
-    throw new Error('APPS_SCRIPT_URL must end with /exec');
-  }
-
-  if (APPS_SCRIPT_URL.includes('script.googleusercontent.com')) {
-    throw new Error(
-      'APPS_SCRIPT_URL must use the permanent script.google.com deployment URL.'
-    );
-  }
-}
-
-function getMaskedAppsScriptUrl() {
-  if (!APPS_SCRIPT_URL) return 'NOT_CONFIGURED';
-  if (APPS_SCRIPT_URL.length <= 45) return 'CONFIGURED';
-
-  return APPS_SCRIPT_URL.slice(0, 34) + '...' + APPS_SCRIPT_URL.slice(-12);
-}
-
-function getTruckCacheAgeMs() {
-  if (!truckDataCache || truckDataCacheTime <= 0) return null;
-  return Date.now() - truckDataCacheTime;
-}
-
-function hasFreshTruckCache() {
-  const age = getTruckCacheAgeMs();
-  return age !== null && age <= FRESH_CACHE_DURATION_MS;
-}
-
-function hasUsableStaleTruckCache() {
-  const age = getTruckCacheAgeMs();
-  return age !== null && age <= STALE_CACHE_DURATION_MS;
-}
-
-function getMasterPlanCacheAgeMs() {
-  if (!masterPlanCache || masterPlanCacheTime <= 0) return null;
-  return Date.now() - masterPlanCacheTime;
-}
-
-function hasFreshMasterPlanCache() {
-  const age = getMasterPlanCacheAgeMs();
-  return age !== null && age <= MASTER_PLAN_CACHE_DURATION_MS;
-}
-
-function hasUsableStaleMasterPlanCache() {
-  const age = getMasterPlanCacheAgeMs();
-  return age !== null && age <= STALE_CACHE_DURATION_MS;
-}
-
-function clearTruckCache() {
-  truckDataCache = null;
-  truckDataCacheTime = 0;
-}
-
-function clearMasterPlanCache() {
-  masterPlanCache = null;
-  masterPlanCacheTime = 0;
-}
-
-function getResponsePreview(responseText) {
-  return String(responseText || '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 300);
-}
-
-function parseJsonText(responseText, errorMessage) {
-  try {
-    return JSON.parse(responseText);
-  } catch {
-    throw new Error(errorMessage);
-  }
-}
-
-async function fetchWithTimeout(url, options, timeoutMilliseconds) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMilliseconds);
-
-  try {
-    return await fetch(url, {
-      ...options,
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}
-
-function validateAppsScriptResponse(data, action) {
-  if (!data || typeof data !== 'object') {
-    throw new Error(`Google Apps Script ${action} returned no data.`);
-  }
-
-  if (data.error) {
-    throw new Error(String(data.error));
-  }
-
-  if (data.success === false) {
-    throw new Error(String(data.error || `${action} was not successful.`));
-  }
-
-  if (
-    data.status &&
-    data.status !== 'success' &&
-    data.status !== 'validation_error'
-  ) {
-    throw new Error(
-      String(data.error || `${action} did not return success status.`)
-    );
-  }
-}
-
-function recordAppsScriptSuccess() {
-  lastAppsScriptSuccessTime = new Date().toISOString();
-  lastAppsScriptErrorTime = null;
-  lastAppsScriptError = null;
-}
-
-function recordAppsScriptError(error) {
-  lastAppsScriptError = getErrorMessage(error);
-  lastAppsScriptErrorTime = new Date().toISOString();
-}
-
-function isRetryableAppsScriptError(error) {
-  const message = getErrorMessage(error).toLowerCase();
-  return !NON_RETRYABLE_APPS_SCRIPT_ERROR_PATTERNS.some(pattern =>
-    message.includes(pattern)
-  );
-}
-
-function validateAppsScriptSharedSecret() {
-  if (!APPS_SCRIPT_SHARED_SECRET || APPS_SCRIPT_SHARED_SECRET.length < 32) {
-    throw new Error('APPS_SCRIPT_SHARED_SECRET must contain at least 32 characters.');
-  }
-}
-function stableStringify(value) {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
-  return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(',')}}`;
-}
-function createAppsScriptSignature(method, action, payload) {
-  validateAppsScriptSharedSecret();
-  const timestamp=String(Date.now());
-  const nonce=randomBytes(24).toString('hex');
-  const payloadHash=createHash('sha256').update(stableStringify(payload)).digest('hex');
-  const canonicalText=[String(method).toUpperCase(),timestamp,nonce,String(action),payloadHash].join('\n');
-  const signature=createHmac('sha256',APPS_SCRIPT_SHARED_SECRET).update(canonicalText).digest('hex');
-  return {timestamp,nonce,signature};
-}
-async function releaseRedisLock(client, key, token) {
-  await client.eval(
-    "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) else return 0 end",
-    { keys: [key], arguments: [token] }
-  );
-}
-async function waitForAppsScriptMutationToFinish() {
-  const client = requireRedisClient();
-  const deadline = Date.now() + APPS_SCRIPT_MUTATION_WAIT_MS;
-  while (await client.exists(APPS_SCRIPT_MUTATION_LOCK_KEY)) {
-    if (Date.now() >= deadline) throw new Error('APPS_SCRIPT_MUTATION_WAIT_TIMEOUT');
-    await wait(APPS_SCRIPT_MUTATION_POLL_MS);
-  }
-}
-async function acquireAppsScriptMutationLock(action) {
-  const client = requireRedisClient();
-  const token = randomUUID();
-  const deadline = Date.now() + APPS_SCRIPT_MUTATION_WAIT_MS;
-  while (Date.now() < deadline) {
-    const acquired = await client.set(
-      APPS_SCRIPT_MUTATION_LOCK_KEY,
-      JSON.stringify({ token, action, startedAt: new Date().toISOString() }),
-      { NX: true, EX: APPS_SCRIPT_MUTATION_LOCK_SECONDS }
-    );
-    if (acquired) return { client, token, action };
-    await wait(APPS_SCRIPT_MUTATION_POLL_MS);
-  }
-  throw new Error('APPS_SCRIPT_MUTATION_LOCK_TIMEOUT');
-}
-async function releaseAppsScriptMutationLock(lock) {
-  if (!lock) return;
-  const raw = await lock.client.get(APPS_SCRIPT_MUTATION_LOCK_KEY);
-  if (!raw) return;
-  try {
-    const parsed = JSON.parse(raw);
-    if (parsed.token !== lock.token) return;
-  } catch {
-    return;
-  }
-  await releaseRedisLock(lock.client, APPS_SCRIPT_MUTATION_LOCK_KEY, raw);
-}
-async function waitForExistingAppsScriptReads() {
-  const pendingReads = [truckDataRequestPromise, masterPlanRequestPromise].filter(Boolean);
-  if (!pendingReads.length) return;
-  await Promise.allSettled(pendingReads);
-}
-
-async function requestAppsScriptGet(action, parameters = {}) {
-  validateAppsScriptUrl();
-  await waitForAppsScriptMutationToFinish();
-
-  const signedParameters = {};
-  for (const [key, value] of Object.entries(parameters)) {
-    if (value !== undefined && value !== null) signedParameters[key] = String(value);
-  }
-  const requestTimeoutMilliseconds = action === 'getTrucks'
-    ? APPS_SCRIPT_GET_TRUCKS_TIMEOUT_MS
-    : APPS_SCRIPT_TIMEOUT_MS;
-  const maximumAttempts = action === 'getTrucks'
-    ? APPS_SCRIPT_GET_TRUCKS_MAX_ATTEMPTS
-    : APPS_SCRIPT_MAX_ATTEMPTS;
-  let finalError = null;
-
-  for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
-    try {
-      const auth = createAppsScriptSignature('GET', action, signedParameters);
-      const queryData = {
-        action,
-        ...signedParameters,
-        authTimestamp: auth.timestamp,
-        authNonce: auth.nonce,
-        authSignature: auth.signature,
-        t: String(Date.now()),
-      };
-      const requestUrl = `${APPS_SCRIPT_URL}?${new URLSearchParams(queryData).toString()}`;
-      console.log(`Calling Apps Script GET ${action}, attempt ${attempt}`);
-
-      const response = await fetchWithTimeout(
-        requestUrl,
-        {
-          method: 'GET',
-          redirect: 'follow',
-          headers: {
-            Accept: 'application/json',
-            'User-Agent': `ELIVE-API/${API_VERSION}.0`,
-          },
-          cache: 'no-store',
-        },
-        requestTimeoutMilliseconds
+          return (
+            normalizedPlate !== '' &&
+            truckByPlate.has(
+              normalizedPlate
+            )
+          );
+        }
       );
+    }, [
+      gpsLocations,
+      truckByPlate,
+    ]);
 
-      const responseText = await response.text();
+  const selectableGpsLocations =
+    useMemo(() => {
+      const normalizedSearch =
+        searchText
+          .trim()
+          .toUpperCase();
 
-      if (response.ok) {
-        const data = parseJsonText(
-          responseText,
-          `Google Apps Script ${action} returned invalid JSON.`
+      return matchedGpsLocations
+        .filter(
+          location => {
+            if (
+              !normalizedSearch
+            ) {
+              return true;
+            }
+
+            const normalizedPlate =
+              normalizeLicensePlate(
+                location.licensePlate
+              );
+
+            const truck =
+              truckByPlate.get(
+                normalizedPlate
+              );
+
+            const searchableText = [
+              location.licensePlate,
+              location.gpsId,
+              location.locationName,
+              truck?.licensePlate,
+              truck?.route,
+              truck?.supplierName,
+              truck?.driverName,
+            ]
+              .filter(
+                Boolean
+              )
+              .join(' ')
+              .toUpperCase();
+
+            return searchableText.includes(
+              normalizedSearch
+            );
+          }
+        )
+        .sort(
+          (
+            first,
+            second
+          ) => {
+            const firstLabel =
+              first.licensePlate ||
+              first.gpsId;
+
+            const secondLabel =
+              second.licensePlate ||
+              second.gpsId;
+
+            return firstLabel.localeCompare(
+              secondLabel,
+              'th'
+            );
+          }
+        );
+    }, [
+      matchedGpsLocations,
+      searchText,
+      truckByPlate,
+    ]);
+
+  const selectedGpsLocation =
+    useMemo(() => {
+      if (
+        !selectedGpsId
+      ) {
+        return null;
+      }
+
+      return (
+        gpsLocations.find(
+          location =>
+            location.gpsId ===
+            selectedGpsId
+        ) ||
+        null
+      );
+    }, [
+      gpsLocations,
+      selectedGpsId,
+    ]);
+
+  const selectedTruck =
+    useMemo(() => {
+      if (
+        !selectedGpsLocation
+      ) {
+        return undefined;
+      }
+
+      const normalizedPlate =
+        normalizeLicensePlate(
+          selectedGpsLocation
+            .licensePlate
         );
 
-        validateAppsScriptResponse(data, action);
-        recordAppsScriptSuccess();
-        return data;
+      return truckByPlate.get(
+        normalizedPlate
+      );
+    }, [
+      selectedGpsLocation,
+      truckByPlate,
+    ]);
+
+  const selectedFreshness =
+    useMemo(() => {
+      if (
+        !selectedGpsLocation
+      ) {
+        return null;
       }
 
-      finalError = new Error(
-        `Google Apps Script returned HTTP ${response.status}.`
+      return getGpsFreshness(
+        selectedGpsLocation
+      );
+    }, [
+      selectedGpsLocation,
+    ]);
+
+  const selectedGeofenceEvaluation =
+    useMemo<GeofenceEvaluation | null>(() => {
+      if (!selectedGpsLocation) return null;
+      const evaluations = GPS_GEOFENCES.map(geofence => {
+        const distanceMeters = calculateDistanceMeters(
+          selectedGpsLocation.latitude,
+          selectedGpsLocation.longitude,
+          geofence.latitude,
+          geofence.longitude
+        );
+        return {
+          ...geofence,
+          distanceMeters,
+          isInside: distanceMeters <= geofence.radiusMeters,
+        };
+      });
+      return evaluations.sort(
+        (first, second) => first.distanceMeters - second.distanceMeters
+      )[0] || null;
+    }, [selectedGpsLocation]);
+  const selectedParkingStatus =
+    useMemo(() => {
+      if (!selectedGpsLocation || !selectedGeofenceEvaluation) return null;
+      const isParked = Number(selectedGpsLocation.speed) === 0;
+      if (!selectedGeofenceEvaluation.isInside) return 'OUTSIDE_GEOFENCE';
+      if (selectedFreshness !== 'LIVE') return 'GPS_STALE';
+      return isParked ? 'DOCK_PENDING' : 'MOVING_IN_GEOFENCE';
+    }, [selectedFreshness, selectedGeofenceEvaluation, selectedGpsLocation]);
+  const freshnessStats =
+    useMemo(() => {
+      let live =
+        0;
+
+      let stale =
+        0;
+
+      let offline =
+        0;
+
+      for (
+        const location of matchedGpsLocations
+      ) {
+        const freshness =
+          getGpsFreshness(
+            location
+          );
+
+        if (
+          freshness ===
+          'LIVE'
+        ) {
+          live +=
+            1;
+        } else if (
+          freshness ===
+          'STALE'
+        ) {
+          stale +=
+            1;
+        } else {
+          offline +=
+            1;
+        }
+      }
+
+      return {
+        live,
+        stale,
+        offline,
+      };
+    }, [
+      matchedGpsLocations,
+    ]);
+
+  useEffect(() => {
+    if (
+      !mapContainerRef.current ||
+      mapRef.current
+    ) {
+      return;
+    }
+
+    const map =
+      L.map(
+        mapContainerRef.current,
+        {
+          center:
+            DEFAULT_MAP_CENTER,
+
+          zoom:
+            10,
+
+          zoomControl:
+            true,
+
+          attributionControl:
+            true,
+        }
       );
 
-      console.error(`Apps Script GET ${action} failed:`, {
-        attempt,
-        status: response.status,
-        responsePreview: getResponsePreview(responseText),
-      });
-
-      if (!RETRYABLE_STATUS_CODES.has(response.status)) break;
-    } catch (error) {
-      finalError = error;
-      console.error(`Apps Script GET ${action} connection error:`, {
-        attempt,
-        error: getErrorMessage(error),
-      });
-      if (!isRetryableAppsScriptError(error)) break;
-    }
-
-    if (attempt < maximumAttempts) {
-      await wait(attempt === 1 ? 1000 : 2500);
-    }
-  }
-
-  const error = finalError || new Error(`${action} request failed.`);
-  recordAppsScriptError(error);
-  throw error;
-}
-
-/*
- * Mutation requests are sent once only. Do not retry automatically because
- * the first request may already have changed Google Sheets successfully.
- */
-async function requestAppsScriptPost(action, payload = {}, timeoutMilliseconds = APPS_SCRIPT_TIMEOUT_MS) {
-  validateAppsScriptUrl();
-
-  try {
-    console.log(`Calling Apps Script POST ${action}, single attempt`);
-
-    const signedPayload = JSON.parse(JSON.stringify({ action, ...payload }));
-    const auth = createAppsScriptSignature('POST', action, signedPayload);
-
-    const response = await fetchWithTimeout(
-      APPS_SCRIPT_URL,
+    L.tileLayer(
+      'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
       {
-        method: 'POST',
-        redirect: 'follow',
-        headers: {
-          'Content-Type': 'text/plain;charset=utf-8',
-          Accept: 'application/json',
-          'User-Agent': `ELIVE-API/${API_VERSION}.0`,
-        },
-        body: JSON.stringify({
-          ...signedPayload,
-          _auth: auth,
-        }),
-        cache: 'no-store',
-      },
-      timeoutMilliseconds
+        maxZoom:
+          19,
+
+        attribution:
+          '© OpenStreetMap contributors',
+      }
+    ).addTo(
+      map
     );
 
-    const responseText = await response.text();
+    const markerLayer =
+      L.layerGroup()
+        .addTo(
+          map
+        );
 
-    if (!response.ok) {
-      throw new Error(
-        `Google Apps Script returned HTTP ${response.status}. Response: ${getResponsePreview(
-          responseText
-        )}`
+    const routeLayer =
+      L.layerGroup()
+        .addTo(
+          map
+        );
+    const geofenceLayer =
+      L.layerGroup()
+        .addTo(
+          map
+        );
+
+    mapRef.current =
+      map;
+
+    markerLayerRef.current =
+      markerLayer;
+
+    routeLayerRef.current =
+      routeLayer;
+    geofenceLayerRef.current =
+      geofenceLayer;
+
+    window.setTimeout(
+      () => {
+        map.invalidateSize();
+      },
+      150
+    );
+
+    return () => {
+      markerLayer
+        .clearLayers();
+
+      routeLayer
+        .clearLayers();
+
+      map.remove();
+
+      markerLayerRef.current =
+        null;
+
+      routeLayerRef.current =
+        null;
+
+      mapRef.current =
+        null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const geofenceLayer = geofenceLayerRef.current;
+    if (!map || !geofenceLayer) return;
+    geofenceLayer.clearLayers();
+    if (!showGeofenceDebug) return;
+
+    const bounds = L.latLngBounds([]);
+    for (const geofence of GPS_GEOFENCES) {
+      const position: [number, number] = [
+        geofence.latitude,
+        geofence.longitude,
+      ];
+      const circle = L.circle(position, {
+        radius: geofence.radiusMeters,
+        color: geofence.color,
+        weight: 3,
+        opacity: 0.95,
+        fillColor: geofence.color,
+        fillOpacity: 0.14,
+        dashArray: '8 6',
+      });
+      circle.bindTooltip(
+        `${geofence.name} | Radius ${geofence.radiusMeters} m`,
+        { permanent: true, direction: 'top', offset: [0, -12] }
+      );
+      circle.bindPopup(
+        `<b>${geofence.name}</b><br>Latitude: ${geofence.latitude}<br>Longitude: ${geofence.longitude}<br>Radius: ${geofence.radiusMeters} m`
+      );
+      circle.addTo(geofenceLayer);
+
+      L.marker(position, {
+        icon: createGeofenceMarkerIcon(geofence.name, geofence.color),
+        title: geofence.name,
+        zIndexOffset: 800,
+      }).addTo(geofenceLayer);
+      bounds.extend(circle.getBounds());
+    }
+
+    if (!selectedGpsLocation && bounds.isValid()) {
+      map.fitBounds(bounds, {
+        padding: [45, 45],
+        maxZoom: 17,
+        animate: true,
+      });
+    }
+  }, [showGeofenceDebug, selectedGpsLocation]);
+  useEffect(() => {
+    if (
+      initialTruckId !==
+      appliedInitialTruckIdRef.current
+    ) {
+      appliedInitialTruckIdRef.current =
+        null;
+    }
+  }, [
+    initialTruckId,
+  ]);
+
+  useEffect(() => {
+    if (
+      !initialTruckId ||
+      gpsLocations.length ===
+        0
+    ) {
+      return;
+    }
+
+    if (
+      appliedInitialTruckIdRef.current ===
+      initialTruckId
+    ) {
+      return;
+    }
+
+    const initialTruck =
+      trucks.find(
+        truck =>
+          truck.id ===
+          initialTruckId
+      );
+
+    if (
+      !initialTruck
+    ) {
+      return;
+    }
+
+    const normalizedPlate =
+      normalizeLicensePlate(
+        initialTruck.licensePlate
+      );
+
+    const initialGpsLocation =
+      gpsLocations.find(
+        location =>
+          normalizeLicensePlate(
+            location.licensePlate
+          ) ===
+          normalizedPlate
+      );
+
+    if (
+      !initialGpsLocation
+    ) {
+      return;
+    }
+
+    setSelectedGpsId(
+      initialGpsLocation.gpsId
+    );
+
+    setSearchText(
+      initialTruck.licensePlate
+    );
+
+    appliedInitialTruckIdRef.current =
+      initialTruckId;
+  }, [
+    gpsLocations,
+    initialTruckId,
+    trucks,
+  ]);
+
+  useEffect(() => {
+    if (
+      !selectedGpsId
+    ) {
+      return;
+    }
+
+    const selectedStillExists =
+      gpsLocations.some(
+        location =>
+          location.gpsId ===
+          selectedGpsId
+      );
+
+    if (
+      !selectedStillExists
+    ) {
+      setSelectedGpsId(
+        ''
+      );
+
+      setRouteResult(
+        null
+      );
+
+      setRouteError(
+        null
       );
     }
+  }, [
+    gpsLocations,
+    selectedGpsId,
+  ]);
 
-    const data = parseJsonText(
-      responseText,
-      `Google Apps Script ${action} returned invalid JSON.`
+  useEffect(() => {
+    if (!selectedGpsLocation || !selectedTruck) {
+      gpsDockRequestIdRef.current += 1;
+      setGpsDockResult(null);
+      setGpsDockError(null);
+      setIsGpsDockLoading(false);
+      return;
+    }
+
+    const requestId = gpsDockRequestIdRef.current + 1;
+    gpsDockRequestIdRef.current = requestId;
+    let cancelled = false;
+
+    const loadGpsDockStatus = async () => {
+      setIsGpsDockLoading(true);
+      setGpsDockError(null);
+
+      try {
+        const result = await fetchGpsDockStatus(selectedTruck.id);
+
+        if (cancelled || gpsDockRequestIdRef.current !== requestId) {
+          return;
+        }
+
+        setGpsDockResult(result);
+      } catch (error) {
+        if (cancelled || gpsDockRequestIdRef.current !== requestId) {
+          return;
+        }
+
+        console.error('Unable to load GPS Dock status:', error);
+        setGpsDockResult(null);
+        setGpsDockError(
+          error instanceof Error
+            ? error.message
+            : 'ไม่สามารถอ่านสถานะ GPS Geofence จากระบบหลังบ้านได้'
+        );
+      } finally {
+        if (!cancelled && gpsDockRequestIdRef.current === requestId) {
+          setIsGpsDockLoading(false);
+        }
+      }
+    };
+
+    void loadGpsDockStatus();
+
+    const intervalId = window.setInterval(() => {
+      void loadGpsDockStatus();
+    }, 30000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [selectedGpsLocation, selectedTruck]);
+
+  useEffect(() => {
+    if (
+      !selectedGpsLocation
+    ) {
+      routeRequestIdRef.current +=
+        1;
+
+      setRouteResult(
+        null
+      );
+
+      setRouteError(
+        null
+      );
+
+      setIsRouteLoading(
+        false
+      );
+
+      return;
+    }
+
+    const requestId =
+      routeRequestIdRef.current +
+      1;
+
+    routeRequestIdRef.current =
+      requestId;
+
+    const loadRoute =
+      async () => {
+        setIsRouteLoading(
+          true
+        );
+
+        setRouteError(
+          null
+        );
+
+        try {
+          const result =
+            await fetchRouteToTpcap(
+              selectedGpsLocation
+                .latitude,
+
+              selectedGpsLocation
+                .longitude
+            );
+
+          if (
+            routeRequestIdRef.current !==
+            requestId
+          ) {
+            return;
+          }
+
+          setRouteResult(
+            result
+          );
+        } catch (error) {
+          if (
+            routeRequestIdRef.current !==
+            requestId
+          ) {
+            return;
+          }
+
+          console.error(
+            'Unable to calculate route:',
+            error
+          );
+
+          const message =
+            error instanceof Error
+              ? error.message
+              : 'ไม่สามารถคำนวณเส้นทางได้';
+
+          setRouteResult(
+            null
+          );
+
+          setRouteError(
+            message
+          );
+        } finally {
+          if (
+            routeRequestIdRef.current ===
+            requestId
+          ) {
+            setIsRouteLoading(
+              false
+            );
+          }
+        }
+      };
+
+    loadRoute();
+  }, [
+    selectedGpsLocation,
+  ]);
+
+  useEffect(() => {
+    const map =
+      mapRef.current;
+
+    const markerLayer =
+      markerLayerRef.current;
+
+    const routeLayer =
+      routeLayerRef.current;
+
+    if (
+      !map ||
+      !markerLayer ||
+      !routeLayer
+    ) {
+      return;
+    }
+
+    markerLayer
+      .clearLayers();
+
+    routeLayer
+      .clearLayers();
+
+    if (
+      !selectedGpsLocation
+    ) {
+      return;
+    }
+
+    const truckPosition:
+      [number, number] = [
+        selectedGpsLocation
+          .latitude,
+
+        selectedGpsLocation
+          .longitude,
+      ];
+
+    const truckMarker =
+      L.marker(
+        truckPosition,
+        {
+          icon:
+            createTruckMarkerIcon(
+              selectedGpsLocation
+                .heading
+            ),
+
+          title:
+            selectedTruck
+              ?.licensePlate ||
+            selectedGpsLocation
+              .licensePlate ||
+            selectedGpsLocation
+              .gpsId,
+
+          zIndexOffset:
+            1000,
+        }
+      );
+
+    truckMarker.addTo(
+      markerLayer
     );
 
-    validateAppsScriptResponse(data, action);
-    recordAppsScriptSuccess();
-    return data;
-  } catch (error) {
-    console.error(`Apps Script POST ${action} failed without retry:`, {
-      error: getErrorMessage(error),
-    });
+    const tpcapMarker =
+      L.marker(
+        TPCAP_POSITION,
+        {
+          icon:
+            createTpcapMarkerIcon(),
 
-    recordAppsScriptError(error);
-    throw error;
-  }
-}
+          title:
+            'TPCAP',
 
-function validateDateText(value, fieldName) {
-  const dateText = cleanText(value);
+          zIndexOffset:
+            900,
+        }
+      );
 
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateText)) {
-    throw new Error(`${fieldName} must use yyyy-MM-dd format.`);
-  }
-
-  const [year, month, day] = dateText.split('-').map(Number);
-  const date = new Date(year, month - 1, day);
-
-  if (
-    date.getFullYear() !== year ||
-    date.getMonth() !== month - 1 ||
-    date.getDate() !== day
-  ) {
-    throw new Error(`${fieldName} is invalid.`);
-  }
-
-  return dateText;
-}
-
-function normalizeTimeText(value, fieldName) {
-  const text = cleanText(value);
-  const match = text.match(/^(\d{1,2}):(\d{2})$/);
-
-  if (!match) {
-    throw new Error(`${fieldName} must use HH:mm format.`);
-  }
-
-  const hour = Number(match[1]);
-  const minute = Number(match[2]);
-
-  if (
-    !Number.isInteger(hour) ||
-    !Number.isInteger(minute) ||
-    hour < 0 ||
-    hour > 23 ||
-    minute < 0 ||
-    minute > 59
-  ) {
-    throw new Error(`${fieldName} is invalid.`);
-  }
-
-  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
-}
-
-function normalizeWorkingDays(value) {
-  const input = Array.isArray(value) ? value : [1, 2, 3, 4, 5, 6];
-
-  return [...new Set(input.map(Number))]
-    .filter(day => Number.isInteger(day) && day >= 1 && day <= 7)
-    .sort((first, second) => first - second);
-}
-
-function normalizeTemplateRows(value) {
-  if (!Array.isArray(value)) return [];
-
-  if (value.length > MAX_UPLOAD_ROWS) {
-    throw new Error(`Uploaded Plan cannot exceed ${MAX_UPLOAD_ROWS} rows.`);
-  }
-
-  return value
-    .map(row => ({
-      route: cleanText(row?.route),
-      company: cleanText(row?.company),
-      truckName: cleanText(row?.truckName),
-      truckType: cleanText(row?.truckType),
-      driverName: cleanText(row?.driverName),
-      telDriver: cleanText(row?.telDriver),
-      project: cleanText(row?.project),
-      dropPoint: cleanText(row?.dropPoint),
-      planEta: cleanText(row?.planEta),
-      planEtd: cleanText(row?.planEtd),
-    }))
-    .filter(row => Object.values(row).some(item => item !== ''));
-}
-
-function validatePlanPeriodRequest(body) {
-  if (!body || typeof body !== 'object' || Array.isArray(body)) {
-    throw new Error('Request body is required.');
-  }
-
-  const startDate = validateDateText(body.startDate, 'startDate');
-  const endDate = validateDateText(body.endDate, 'endDate');
-
-  if (endDate < startDate) {
-    throw new Error('endDate must not be earlier than startDate.');
-  }
-
-  const workingDays = normalizeWorkingDays(body.workingDays);
-  if (!workingDays.length) {
-    throw new Error('At least one working day is required.');
-  }
-
-  const source =
-    body.source === 'uploaded-file' ? 'uploaded-file' : 'master-plan';
-
-  const templateRows =
-    source === 'uploaded-file'
-      ? normalizeTemplateRows(body.templateRows)
-      : undefined;
-
-  if (source === 'uploaded-file' && !templateRows.length) {
-    throw new Error('Uploaded file has no valid Plan rows.');
-  }
-
-  return {
-    startDate,
-    endDate,
-    workingDays,
-    source,
-    templateRows,
-    fileName: body.fileName ? cleanText(body.fileName) : undefined,
-  };
-}
-
-function normalizeEditablePlan(body) {
-  const source =
-    body?.plan && typeof body.plan === 'object' ? body.plan : body;
-
-  if (!source || typeof source !== 'object' || Array.isArray(source)) {
-    throw new Error('Plan data is required.');
-  }
-
-  const plan = {
-    date: validateDateText(source.date, 'date'),
-    route: cleanText(source.route),
-    company: cleanText(source.company),
-    truckName: cleanText(source.truckName),
-    truckType: cleanText(source.truckType),
-    driverName: cleanText(source.driverName),
-    telDriver: cleanText(source.telDriver),
-    project: cleanText(source.project),
-    dropPoint: cleanText(source.dropPoint),
-    planEta: normalizeTimeText(source.planEta, 'Plan ETA'),
-    planEtd: normalizeTimeText(source.planEtd, 'Plan ETD'),
-    remark:
-      source.remark === undefined
-        ? undefined
-        : cleanText(source.remark).toUpperCase(),
-    workDetail: cleanText(source.workDetail),
-  };
-
-  if (!plan.route) throw new Error('Route is required.');
-  if (!plan.company) throw new Error('Company is required.');
-  if (!plan.truckName) throw new Error('Truck Name is required.');
-  if (!plan.truckType) throw new Error('Truck Type is required.');
-  if (!plan.project) throw new Error('Project is required.');
-  if (!plan.dropPoint) throw new Error('Drop Point is required.');
-
-  return plan;
-}
-
-function normalizeCodeRun(value) {
-  const codeRun = cleanText(value).toUpperCase();
-
-  if (!/^A\d+$/.test(codeRun)) {
-    throw new Error('codeRun format is invalid.');
-  }
-
-  return codeRun;
-}
-
-function normalizeMasterPlanRow(body) {
-  const source =
-    body?.row && typeof body.row === 'object' ? body.row : body;
-
-  if (!source || typeof source !== 'object' || Array.isArray(source)) {
-    throw new Error('Master Plan data is required.');
-  }
-
-  const row = {
-    route: cleanText(source.route),
-    company: cleanText(source.company),
-    truckName: cleanText(source.truckName),
-    truckType: cleanText(source.truckType),
-    driverName: cleanText(source.driverName),
-    telDriver: cleanText(source.telDriver),
-    project: cleanText(source.project),
-    dropPoint: cleanText(source.dropPoint),
-    planEta: normalizeTimeText(source.planEta, 'Plan ETA'),
-    planEtd: normalizeTimeText(source.planEtd, 'Plan ETD'),
-  };
-
-  if (!row.route) throw new Error('Route is required.');
-  if (!row.company) throw new Error('Company is required.');
-  if (!row.truckName) throw new Error('Truck Name is required.');
-  if (!row.truckType) throw new Error('Truck Type is required.');
-  if (!row.project) throw new Error('Project is required.');
-  if (!row.dropPoint) throw new Error('Drop Point is required.');
-
-  return row;
-}
-
-function normalizeMasterPlanSheetRow(value) {
-  const sheetRow = Number(value);
-
-  if (!Number.isInteger(sheetRow) || sheetRow < 2) {
-    throw new Error(
-      'sheetRow must be an integer greater than or equal to 2.'
+    tpcapMarker.addTo(
+      markerLayer
     );
-  }
 
-  return sheetRow;
-}
+    if (
+      routeResult &&
+      routeResult
+        .geometry
+        .coordinates
+        .length >= 2
+    ) {
+      const routePoints:
+        [number, number][] =
+          routeResult
+            .geometry
+            .coordinates
+            .map(
+              coordinate => {
+                return [
+                  coordinate[1],
+                  coordinate[0],
+                ];
+              }
+            );
 
-async function getTruckDataWithCache(forceRefresh = false) {
-  if (!forceRefresh && hasFreshTruckCache()) {
-    return { data: truckDataCache, source: 'fresh-cache' };
-  }
+      const routeLine =
+        L.polyline(
+          routePoints,
+          {
+            color:
+              '#0284c7',
 
-  if (truckDataRequestPromise) {
-    try {
-      return {
-        data: await truckDataRequestPromise,
-        source: 'shared-request',
-      };
-    } catch (error) {
-      if (hasUsableStaleTruckCache()) {
-        return { data: truckDataCache, source: 'stale-cache' };
+            weight:
+              6,
+
+            opacity:
+              0.9,
+
+            lineCap:
+              'round',
+
+            lineJoin:
+              'round',
+          }
+        );
+
+      routeLine.addTo(
+        routeLayer
+      );
+
+      const bounds =
+        L.latLngBounds(
+          routePoints
+        );
+
+      bounds.extend(
+        truckPosition
+      );
+
+      bounds.extend(
+        TPCAP_POSITION
+      );
+
+      map.fitBounds(
+        bounds,
+        {
+          padding:
+            [50, 50],
+
+          maxZoom:
+            15,
+
+          animate:
+            true,
+        }
+      );
+    } else {
+      const bounds =
+        L.latLngBounds([
+          truckPosition,
+          TPCAP_POSITION,
+        ]);
+
+      map.fitBounds(
+        bounds,
+        {
+          padding:
+            [50, 50],
+
+          maxZoom:
+            15,
+
+          animate:
+            true,
+        }
+      );
+    }
+  }, [
+    selectedGpsLocation,
+    selectedTruck,
+    routeResult,
+  ]);
+
+  const handleRefresh =
+    async () => {
+      if (
+        !onRefresh ||
+        isRefreshing
+      ) {
+        return;
       }
-      throw error;
-    }
-  }
 
-  truckDataRequestPromise = requestAppsScriptGet('getTrucks');
+      await onRefresh();
+    };
 
-  try {
-    const data = await truckDataRequestPromise;
-    truckDataCache = data;
-    truckDataCacheTime = Date.now();
-    return { data, source: 'google-apps-script' };
-  } catch (error) {
-    if (hasUsableStaleTruckCache()) {
-      return { data: truckDataCache, source: 'stale-cache' };
-    }
-    throw error;
-  } finally {
-    truckDataRequestPromise = null;
-  }
-}
+  const clearSelection =
+    () => {
+      routeRequestIdRef.current +=
+        1;
 
-async function getMasterPlanWithCache(forceRefresh = false) {
-  if (!forceRefresh && hasFreshMasterPlanCache()) {
-    return { data: masterPlanCache, source: 'fresh-cache' };
-  }
+      appliedInitialTruckIdRef.current =
+        null;
 
-  if (masterPlanRequestPromise) {
-    try {
-      return {
-        data: await masterPlanRequestPromise,
-        source: 'shared-request',
-      };
-    } catch (error) {
-      if (hasUsableStaleMasterPlanCache()) {
-        return { data: masterPlanCache, source: 'stale-cache' };
-      }
-      throw error;
-    }
-  }
+      setSelectedGpsId(
+        ''
+      );
 
-  masterPlanRequestPromise = requestAppsScriptGet('getMasterPlan');
+      setSearchText(
+        ''
+      );
 
-  try {
-    const data = await masterPlanRequestPromise;
-    masterPlanCache = data;
-    masterPlanCacheTime = Date.now();
-    return { data, source: 'google-apps-script' };
-  } catch (error) {
-    if (hasUsableStaleMasterPlanCache()) {
-      return { data: masterPlanCache, source: 'stale-cache' };
-    }
-    throw error;
-  } finally {
-    masterPlanRequestPromise = null;
-  }
-}
+      setRouteResult(
+        null
+      );
 
-function sendRouteError(res, error, fallbackMessage, statusCode = 400) {
-  const message = getErrorMessage(error) || fallbackMessage;
-  console.error(fallbackMessage, message);
+      setRouteError(
+        null
+      );
+      gpsDockRequestIdRef.current += 1;
+      setGpsDockResult(null);
+      setGpsDockError(null);
+      setIsGpsDockLoading(false);
 
-  return res.status(statusCode).json({
-    success: false,
-    error: message,
-    timestamp: new Date().toISOString(),
-  });
-}
+      const map =
+        mapRef.current;
 
-app.post('/api/auth/login', loginRateLimit, async (req,res)=>{ try { const username=normalizeLoginUsername(req.body?.username); const password=normalizeLoginPassword(req.body?.password); const user=await getEffectiveAuthUser(username); if(!user||!user.active){ await waitForLoginFailure(); return res.status(401).json({success:false,error:'Username or password is incorrect.'}); } const passwordIsValid=await verifyLoginPassword(password,user); if(!passwordIsValid){ await waitForLoginFailure(); return res.status(401).json({success:false,error:'Username or password is incorrect.'}); } const {token,session}=await createSession(user); setSessionCookie(res,token); return res.status(200).json({success:true,user:createLoginUserResponse(user),session:createSessionResponse(session),compatibilityMode:true,timestamp:new Date().toISOString()}); } catch(error){ const errorCode=getErrorMessage(error); if(errorCode==='LOGIN_PAYLOAD_INVALID') return res.status(400).json({success:false,error:'A valid username and password are required.'}); if(errorCode==='AUTH_CONFIG_MISSING'||errorCode==='AUTH_CONFIG_INVALID'){ console.error('Authentication configuration error:',errorCode); return res.status(503).json({success:false,error:'Authentication service is not configured.'}); } console.error('Login endpoint error:',getErrorMessage(error)); return res.status(500).json({success:false,error:'Unable to process login.'}); } });
-
-app.get('/api/auth/verify', requireAuthentication, (req, res) => {
-  return res.status(200).json({
-    success: true,
-    authenticated: true,
-    user: {
-      username: req.auth.username,
-      role: req.auth.role,
-    },
-    session: {
-      expiresAt: new Date(req.auth.expiresAt).toISOString(),
-    },
-    compatibilityMode: false,
-    timestamp: new Date().toISOString(),
-  });
-});
-
-app.get(
-  '/api/auth/role-test/:requiredRole',
-  requireAuthentication,
-  (req, res, next) => {
-    let roleMiddleware;
-    try {
-      roleMiddleware = requireMinimumRole(req.params.requiredRole);
-    } catch (error) {
-      if (getErrorMessage(error) === 'ROLE_INVALID') {
-        return res.status(400).json({
-          success: false,
-          error: 'Role is invalid.',
-          allowedRoles: ROLE_NAMES,
+      if (map) {
+        const geofenceBounds = L.latLngBounds(
+          GPS_GEOFENCES.map(geofence => [
+            geofence.latitude,
+            geofence.longitude,
+          ] as [number, number])
+        );
+        map.fitBounds(geofenceBounds, {
+          padding: [60, 60],
+          maxZoom: 16,
+          animate: true,
         });
       }
-      return next(error);
-    }
-    return roleMiddleware(req, res, next);
-  },
-  (req, res) => {
-    return res.status(200).json({
-      success: true,
-      authenticated: true,
-      authorized: true,
-      user: {
-        username: req.auth.username,
-        role: req.auth.role,
-      },
-      requiredRole: req.authorization.requiredRole,
-      compatibilityMode: false,
-      timestamp: new Date().toISOString(),
-    });
-  }
-);
-
-app.get('/api/auth/session', async (req,res)=>{ try { const record=await getSessionFromRequest(req); if(!record||record.invalidReason){ if(record?.invalidReason) writeSessionRevocationAudit(req,record); clearSessionCookie(res); return res.status(401).json({success:false,authenticated:false,error:record?.invalidReason==='ACCOUNT_ROLE_CHANGED'?'Account permission changed. Please sign in again.':record?.invalidReason==='IDLE_TIMEOUT'?'Session expired due to inactivity. Please sign in again.':'Authentication required.'}); } return res.status(200).json({success:true,authenticated:true,user:{username:record.session.username,role:record.session.role},session:createSessionResponse(record.session),compatibilityMode:false,timestamp:new Date().toISOString()}); } catch(error){ const errorCode=getErrorMessage(error); if(errorCode==='SESSION_STORE_UNAVAILABLE') return res.status(503).json({success:false,error:'Session service is temporarily unavailable.'}); if(errorCode==='AUTH_CONFIG_MISSING'||errorCode==='AUTH_CONFIG_INVALID') return res.status(503).json({success:false,error:'Authentication service is not configured.'}); return sendRouteError(res,error,'Unable to read Session.',500); } });
-app.post('/api/auth/activity', requireAuthentication, async (req, res) => {
-  try {
-    const updatedSession = await recordSessionUserActivity(
-      req.authSessionTokenHash,
-      req.auth
-    );
-    return res.status(200).json({
-      success: true,
-      lastUserActivityAt: new Date(updatedSession.lastUserActivityAt).toISOString(),
-      timestamp: new Date().toISOString(),
-    });
-  } catch (error) {
-    if (getErrorMessage(error) === 'SESSION_STORE_UNAVAILABLE') {
-      return res.status(503).json({
-        success: false,
-        error: 'Session service is temporarily unavailable.',
-      });
-    }
-    return sendRouteError(res, error, 'Unable to record user activity.', 500);
-  }
-});
-
-app.post('/api/auth/logout', async (req,res)=>{ try { const record=await getSessionFromRequest(req); if(record){ req.auth={username:record.session.username,role:record.session.role,expiresAt:record.session.expiresAt}; await deleteSession(record.tokenHash, record.session); } clearSessionCookie(res); return res.status(200).json({success:true,message:'Logged out.',timestamp:new Date().toISOString()}); } catch(error){ const errorCode=getErrorMessage(error); if(errorCode==='SESSION_STORE_UNAVAILABLE') return res.status(503).json({success:false,error:'Session service is temporarily unavailable.'}); if(errorCode==='AUTH_CONFIG_MISSING'||errorCode==='AUTH_CONFIG_INVALID'){ clearSessionCookie(res); return res.status(200).json({success:true,message:'Logged out.',timestamp:new Date().toISOString()}); } return sendRouteError(res,error,'Unable to logout.',500); } });
-app.post('/api/auth/change-password', requireAuthentication, async (req, res) => {
-  const username = req.auth.username;
-  let rateLimitKey = null;
-  try {
-    rateLimitKey = await enforcePasswordChangeRateLimit(req, username);
-    const currentPassword = req.body?.currentPassword;
-    const newPassword = validateNewPassword(username, currentPassword, req.body?.newPassword, req.body?.confirmNewPassword);
-    const user = await getEffectiveAuthUser(username);
-    if (!user || !user.active) return res.status(401).json({ success: false, error: 'Authentication required.' });
-    const currentPasswordIsValid = await verifyLoginPassword(currentPassword, user);
-    if (!currentPasswordIsValid) {
-      await incrementRateLimitFailure(requireRedisClient(), rateLimitKey);
-      req.auditDetails = { reason: 'CURRENT_PASSWORD_INVALID', otherSessionsRevoked: 0, currentSessionPreserved: true };
-      return res.status(401).json({ success: false, error: 'รหัสผ่านปัจจุบันไม่ถูกต้อง' });
-    }
-    const { salt, passwordHash } = await hashNewPassword(newPassword);
-    const credentialRecord = await writeAuthUserOverride(user, passwordHash, salt);
-    const revoked = await revokeUserSessions(username, req.authSessionTokenHash);
-    const currentSession = {
-      ...req.auth,
-      credentialVersion: credentialRecord.credentialVersion,
-      lastReauthenticatedAt: Date.now(),
-      passwordChangedAt: credentialRecord.passwordChangedAt,
     };
-    const remainingTtlSeconds = Math.max(1, Math.ceil((Number(req.auth.expiresAt) - Date.now()) / 1000));
-    await requireRedisClient().set(getSessionKey(req.authSessionTokenHash), JSON.stringify(currentSession), { EX: remainingTtlSeconds });
-    await requireRedisClient().del(rateLimitKey);
-    req.auditDetails = { reason: 'SELF_SERVICE', otherSessionsRevoked: revoked.revokedCount, currentSessionPreserved: true };
-    return res.status(200).json({
-      success: true,
-      message: 'เปลี่ยนรหัสผ่านสำเร็จ',
-      currentSessionPreserved: true,
-      otherSessionsRevoked: revoked.revokedCount,
-      passwordChangedAt: credentialRecord.passwordChangedAt,
-      passwordPolicy: { minimumLength: PASSWORD_MIN_LENGTH, maximumLength: PASSWORD_MAX_LENGTH },
-    });
-  } catch (error) {
-    const code = getErrorMessage(error);
-    req.auditDetails = { reason: code, otherSessionsRevoked: 0, currentSessionPreserved: true };
-    if (code === 'PASSWORD_CHANGE_RATE_LIMITED') {
-      res.setHeader('Retry-After', String(error.retryAfterSeconds || 900));
-      return res.status(429).json({ success: false, error: 'ลองเปลี่ยนรหัสผ่านผิดหลายครั้ง กรุณารอสักครู่แล้วลองใหม่' });
-    }
-    const validationMessages = {
-      CURRENT_PASSWORD_REQUIRED: 'กรุณากรอกรหัสผ่านปัจจุบัน',
-      NEW_PASSWORD_REQUIRED: 'กรุณากรอกรหัสผ่านใหม่และยืนยันรหัสผ่านใหม่',
-      PASSWORD_CONFIRMATION_MISMATCH: 'รหัสผ่านใหม่และการยืนยันไม่ตรงกัน',
-      PASSWORD_POLICY_INVALID: `รหัสผ่านใหม่ต้องมีความยาว ${PASSWORD_MIN_LENGTH}-${PASSWORD_MAX_LENGTH} ตัวอักษร`,
-      PASSWORD_UNCHANGED: 'รหัสผ่านใหม่ต้องไม่เหมือนรหัสผ่านปัจจุบัน',
-      PASSWORD_CONTAINS_USERNAME: 'รหัสผ่านใหม่ต้องไม่มี Username เป็นส่วนประกอบ',
-    };
-    if (validationMessages[code]) return res.status(400).json({ success: false, error: validationMessages[code] });
-    return sendRouteError(res, error, 'Unable to change password.', 500);
-  }
-});
 
-app.get('/', (req, res) => {
-  return res.json({
-    status: 'success',
-    service: 'ELIVE API',
-    version: API_VERSION,
-    message: 'Backend proxy is running.',
-    appsScriptUrl: getMaskedAppsScriptUrl(),
-    timestamp: new Date().toISOString(),
-  });
-});
+  const showNoGpsMessage =
+    gpsLocations.length ===
+      0 &&
+    !selectedGpsLocation;
 
-app.get(['/health', '/api/health'], (req, res) => {
-  const truckCacheAgeMs = getTruckCacheAgeMs();
-  const masterCacheAgeMs = getMasterPlanCacheAgeMs();
+  const showNoMatchMessage =
+    gpsLocations.length >
+      0 &&
+    matchedGpsLocations.length ===
+      0 &&
+    !selectedGpsLocation;
 
-  return res.json({
-    status: 'ok',
-    version: API_VERSION,
-    routes: [
-      '/health',
-      '/api/health',
-      '/api/auth/login',
-      '/api/auth/verify',
-      '/api/auth/role-test/:requiredRole',
-      '/api/auth/session',
-      '/api/auth/logout',
-      '/api/auth/activity',
-      '/api/auth/change-password',
-      '/api/admin/sessions',
-      '/api/admin/sessions/revoke-user',
-      '/api/admin/sessions/revoke-all',
-      '/api/trucks',
-      '/api/trucks/update',
-      '/api/gps/geofences',
-      '/api/gps/dock-status/:codeRun',
-      '/api/gps/dock/evaluate',
-      '/api/gps/vehicle-cycle',
-      '/api/gps/worker-status',
-      '/api/master-plan',
-      '/api/master-plan/rows',
-      '/api/master-plan/rows/:sheetRow',
-      '/api/plans/preview',
-      '/api/plans/create',
-      '/api/plans/daily',
-      '/api/plans/extra',
-      '/api/plans/:codeRun',
-      '/api/plans/:codeRun/stamp',
-      'DELETE /api/plans/:codeRun',
-      '/api/plans/:codeRun/cancel',
-      '/api/plans/:codeRun/restore',
-      '/api/plans/:codeRun/confirm-work-detail',
-      '/api/route-to-tpcap',
-    ],
-    sessionStore: { type: 'redis', configured: Boolean(REDIS_URL), ready: Boolean(redisReady && redisClient?.isReady), lastError: lastRedisError },
-    gpsDockMonitoring: {
-      enabled: true,
-      autoStampEnabled: GPS_AUTO_STAMP_ETA_ENABLED,
-      autoStampEtaEnabled: GPS_AUTO_STAMP_ETA_ENABLED,
-      autoStampEtdEnabled: GPS_AUTO_STAMP_ETD_ENABLED,
-      backgroundWorkerEnabled: GPS_BACKGROUND_WORKER_ENABLED,
-      backgroundWorkerIntervalMs: GPS_BACKGROUND_WORKER_INTERVAL_MS,
-      workerTruckSnapshotCacheSeconds: Math.floor(FRESH_CACHE_DURATION_MS / 1000),
-      workerForcesFullTruckRefreshEveryCycle: false,
-      appsScriptGetRetryPolicy: 'RETRY_TIMEOUT_408_425_429_5XX_NO_RETRY_4XX',
-      serviceMode: SERVICE_MODE,
-      parkingSpeedThresholdKmh: GPS_PARKING_SPEED_THRESHOLD_KMH,
-      dwellThresholdSeconds: Math.floor(GPS_DWELL_THRESHOLD_MS / 1000),
-      gpsStaleThresholdSeconds: Math.floor(GPS_STALE_THRESHOLD_MS / 1000),
-      movementGraceSeconds: Math.floor(GPS_MOVEMENT_GRACE_MS / 1000),
-      multipleTripsPerVehiclePerDay: true,
-      tripSelectionPolicy: 'IN_PROGRESS_THEN_PLAN_WINDOW_THEN_LOCKED_THEN_NEAREST_PLAN_ETA',
-      activeTripLockEnabled: true,
-      futureTripGuardEnabled: true,
-      nextTripEarlyWindowMinutes: GPS_NEXT_TRIP_EARLY_WINDOW_MINUTES,
-      noWorkActionKeyword: 'ไม่มีงาน',
-      noWorkActionAutoStampBlocked: true,
-      tripTieBreaker: 'EARLIER_PLAN_ETA_THEN_CODE_RUN_NUMERIC',
-      exitRequiredBeforeNextTrip: true,
-      etaRule: 'IMMEDIATE_ON_FIRST_FRESH_GPS_INSIDE_GEOFENCE',
-      pendingStampRetryQueueEnabled: true,
-      pendingStampRetryBaseSeconds: Math.floor(GPS_PENDING_STAMP_BASE_RETRY_MS / 1000),
-      pendingStampRetryMaximumSeconds: Math.floor(GPS_PENDING_STAMP_MAX_RETRY_MS / 1000),
-      etdRule: 'IMMEDIATE_ON_FIRST_FRESH_GPS_OUTSIDE_AFTER_INSIDE',
-      vehicleCycleTtlSeconds: GPS_VEHICLE_CYCLE_TTL_SECONDS,
-      geofences: GPS_GEOFENCES,
-    },
-    rateLimitStore: { type: 'redis', persistentAcrossDeploys: true, windowSeconds: LOGIN_RATE_LIMIT_WINDOW_SECONDS },
-    sessionAccountValidation: { enabled: true, invalidatesOnInactive: true, invalidatesOnRoleChange: true, invalidatesOnCredentialChange: true },
-    selfServicePasswordChange: {
-      enabled: true,
-      requiresCurrentPassword: true,
-      currentSessionPreserved: true,
-      otherSessionsRevoked: true,
-      credentialStore: 'redis-override-with-environment-seed',
-      minimumLength: PASSWORD_MIN_LENGTH,
-      maximumLength: PASSWORD_MAX_LENGTH,
-      rateLimitFailures: PASSWORD_CHANGE_RATE_LIMIT_MAX_FAILURES,
-    },
-    sessionRevocationAudit: { enabled: true, action: 'SESSION_REVOKED' },
-    concurrentSessionControl: {
-      enabled: true,
-      policy: 'revoke-oldest',
-      limitsByRole: SESSION_LIMITS_BY_ROLE,
-    },
-    adminSessionRevocation: { enabled: true, currentAdminSessionPreserved: true },
-    adminSessionInventory: { enabled: true, exposesSecrets: false },
-    userActivitySignal: { enabled: true, endpoint: '/api/auth/activity', frontendThrottleSeconds: 60 },
-    sessionIdleTimeout: { enabled: true, timeoutSeconds: Math.floor(SESSION_IDLE_TIMEOUT_MS / 1000), enforcedServerSide: true, absoluteLifetimeSeconds: SESSION_TTL_SECONDS },
-    appsScript: {
-      configured: Boolean(APPS_SCRIPT_URL),
-      signatureConfigured: Boolean(APPS_SCRIPT_SHARED_SECRET && APPS_SCRIPT_SHARED_SECRET.length >= 32),
-      signatureMaxAgeSeconds: Math.floor(APPS_SCRIPT_SIGNATURE_MAX_AGE_MS / 1000),
-      defaultTimeoutSeconds: Math.floor(APPS_SCRIPT_TIMEOUT_MS / 1000),
-      getTrucksTimeoutSeconds: Math.floor(APPS_SCRIPT_GET_TRUCKS_TIMEOUT_MS / 1000),
-      getTrucksMaximumAttempts: APPS_SCRIPT_GET_TRUCKS_MAX_ATTEMPTS,
-      planCreateTimeoutSeconds: Math.floor(APPS_SCRIPT_PLAN_CREATE_TIMEOUT_MS / 1000),
-      mutationLockEnabled: true,
-      mutationLockTtlSeconds: APPS_SCRIPT_MUTATION_LOCK_SECONDS,
-      validFormat: Boolean(
-        APPS_SCRIPT_URL &&
-          APPS_SCRIPT_URL.startsWith('https://script.google.com/macros/s/') &&
-          APPS_SCRIPT_URL.endsWith('/exec')
-      ),
-      lastSuccess: lastAppsScriptSuccessTime,
-      lastError: lastAppsScriptErrorTime,
-      lastErrorMessage: lastAppsScriptError,
-    },
-    truckCache: {
-      available: Boolean(truckDataCache),
-      ageSeconds:
-        truckCacheAgeMs === null
-          ? null
-          : Math.max(0, Math.round(truckCacheAgeMs / 1000)),
-    },
-    masterPlanCache: {
-      available: Boolean(masterPlanCache),
-      ageSeconds:
-        masterCacheAgeMs === null
-          ? null
-          : Math.max(0, Math.round(masterCacheAgeMs / 1000)),
-    },
-    timestamp: new Date().toISOString(),
-  });
-});
+  const showSelectTruckMessage =
+    matchedGpsLocations.length >
+      0 &&
+    !selectedGpsLocation;
 
-app.get('/api/gps/worker-status', requireAuthentication, requireMinimumRole('SUPERVISOR'), async (req, res) => {
-  try {
-    const raw = await requireRedisClient().get(GPS_WORKER_STATUS_KEY);
-    res.setHeader('Cache-Control', 'no-store');
-    return res.status(200).json({
-      success: true,
-      enabled: GPS_BACKGROUND_WORKER_ENABLED,
-      result: raw ? JSON.parse(raw) : null,
-      timestamp: new Date().toISOString(),
-    });
-  } catch (error) {
-    return sendRouteError(res, error, 'Unable to retrieve GPS Worker status.', 500);
-  }
-});
-app.get('/api/gps/vehicle-cycle', requireAuthentication, requireMinimumRole('TV_VIEWER'), async (req, res) => {
-  try {
-    const licensePlate = cleanText(req.query.licensePlate);
-    if (!licensePlate) throw new Error('licensePlate is required.');
-    const result = await readVehicleCycleState(licensePlate);
-    res.setHeader('Cache-Control', 'no-store');
-    return res.status(200).json({ success: true, result, timestamp: new Date().toISOString() });
-  } catch (error) {
-    return sendRouteError(res, error, 'Unable to retrieve GPS Vehicle Cycle.');
-  }
-});
-app.get('/api/gps/geofences', requireAuthentication, requireMinimumRole('TV_VIEWER'), (req, res) => {
-  res.setHeader('Cache-Control', 'no-store');
-  return res.status(200).json({
-    success: true,
-    geofences: GPS_GEOFENCES,
-    config: {
-      parkingSpeedThresholdKmh: GPS_PARKING_SPEED_THRESHOLD_KMH,
-      dwellThresholdSeconds: Math.floor(GPS_DWELL_THRESHOLD_MS / 1000),
-      gpsStaleThresholdSeconds: Math.floor(GPS_STALE_THRESHOLD_MS / 1000),
-      movementGraceSeconds: Math.floor(GPS_MOVEMENT_GRACE_MS / 1000),
-      autoStampEnabled: GPS_AUTO_STAMP_ETA_ENABLED,
-      autoStampEtaEnabled: GPS_AUTO_STAMP_ETA_ENABLED,
-      autoStampEtdEnabled: GPS_AUTO_STAMP_ETD_ENABLED,
-    },
-    timestamp: new Date().toISOString(),
-  });
-});
-app.get('/api/gps/dock-status/:codeRun', requireAuthentication, requireMinimumRole('TV_VIEWER'), async (req, res) => {
-  try {
-    const codeRun = normalizeCodeRun(req.params.codeRun);
-    const state = await readGpsDwellState(codeRun);
-    res.setHeader('Cache-Control', 'no-store');
-    return res.status(200).json({
-      success: true,
-      codeRun,
-      result: state ? createGpsDockResult(state) : null,
-      timestamp: new Date().toISOString(),
-    });
-  } catch (error) {
-    return sendRouteError(res, error, 'Unable to retrieve GPS Dock status.');
-  }
-});
-app.post('/api/gps/dock/evaluate', requireAuthentication, requireMinimumRole('OPERATOR'), async (req, res) => {
-  try {
-    const result = await evaluateGpsDock(req.body);
-    req.auditDetails = {
-      status: result.status,
-      geofenceId: result.geofenceId,
-      distanceMeters: result.distanceMeters,
-      speedKmh: result.speedKmh,
-      dwellSeconds: result.dwellSeconds,
-      readyForGpsStampEta: result.readyForGpsStampEta,
-    };
-    res.setHeader('Cache-Control', 'no-store');
-    return res.status(200).json({
-      success: true,
-      result,
-      timestamp: new Date().toISOString(),
-    });
-  } catch (error) {
-    return sendRouteError(res, error, 'Unable to evaluate GPS Dock status.');
-  }
-});
-app.delete('/api/gps/dock-status/:codeRun', requireAuthentication, requireMinimumRole('SUPERVISOR'), async (req, res) => {
-  try {
-    const codeRun = normalizeCodeRun(req.params.codeRun);
-    const client = requireRedisClient();
-    const deletedCount = await client.del(getGpsDwellKey(codeRun));
-    req.auditDetails = { deletedCount };
-    return res.status(200).json({
-      success: true,
-      codeRun,
-      deleted: deletedCount > 0,
-      timestamp: new Date().toISOString(),
-    });
-  } catch (error) {
-    return sendRouteError(res, error, 'Unable to reset GPS Dock status.');
-  }
-});
-app.get('/api/trucks', requireAuthentication, requireMinimumRole('TV_VIEWER'), async (req, res) => {
-  try {
-    const forceRefresh =
-      cleanText(req.query.refresh).toLowerCase() === 'true';
-    const result = await getTruckDataWithCache(forceRefresh);
-    const cacheAgeMs = getTruckCacheAgeMs();
+  const hasStampedEta = Boolean(
+    selectedTruck?.stampEta ||
+    selectedTruck?.actualEta ||
+    gpsDockResult?.autoStampEtaResult
+  );
+  const hasStampedEtd = Boolean(
+    selectedTruck?.stampEtd ||
+    gpsDockResult?.autoStampEtdResult
+  );
+  return (
+    <div className="flex h-full min-h-0 flex-col bg-slate-50 p-4 md:p-6 lg:p-8">
+      <div className="shrink-0 rounded-t-xl border border-b-0 border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-center">
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="font-bold tracking-tight text-slate-800">
+                Live GPS Tracking
+              </h2>
 
-    res.setHeader('Cache-Control', 'no-store');
-    res.setHeader('X-ELIVE-Data-Source', result.source);
+              <div className="h-2 w-2 animate-pulse rounded-full bg-emerald-500" />
+            </div>
 
-    return res.status(200).json({
-      ...result.data,
-      meta: {
-        source: result.source,
-        cacheAgeSeconds:
-          cacheAgeMs === null
-            ? 0
-            : Math.max(0, Math.round(cacheAgeMs / 1000)),
-        serverTime: new Date().toISOString(),
-      },
-    });
-  } catch (error) {
-    return sendRouteError(res, error, 'Unable to retrieve truck data.', 502);
-  }
-});
+            <p className="mt-1 text-xs text-slate-500">
+              GPS data prepared from the selected plan
+            </p>
+          </div>
 
-app.get('/api/master-plan', requireAuthentication, requireMinimumRole('TV_VIEWER'), async (req, res) => {
-  try {
-    const forceRefresh =
-      cleanText(req.query.refresh).toLowerCase() === 'true';
-    const result = await getMasterPlanWithCache(forceRefresh);
-    const cacheAgeMs = getMasterPlanCacheAgeMs();
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700">
+              <Wifi className="h-3.5 w-3.5" />
+              Live {freshnessStats.live}
+            </div>
 
-    res.setHeader('Cache-Control', 'no-store');
-    res.setHeader('X-ELIVE-Data-Source', result.source);
+            <div className="flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700">
+              <Clock className="h-3.5 w-3.5" />
+              Stale {freshnessStats.stale}
+            </div>
 
-    return res.status(200).json({
-      ...result.data,
-      meta: {
-        source: result.source,
-        cacheAgeSeconds:
-          cacheAgeMs === null
-            ? 0
-            : Math.max(0, Math.round(cacheAgeMs / 1000)),
-        serverTime: new Date().toISOString(),
-      },
-    });
-  } catch (error) {
-    return sendRouteError(res, error, 'Unable to retrieve Master Plan.', 502);
-  }
-});
+            <div className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-xs font-bold text-slate-600">
+              <WifiOff className="h-3.5 w-3.5" />
+              Offline {freshnessStats.offline}
+            </div>
 
-app.post('/api/master-plan/rows', requireAuthentication, requireMinimumRole('PLANNER'), async (req, res) => {
-  try {
-    const row = normalizeMasterPlanRow(req.body);
-    const result = await requestAppsScriptPost('createMasterPlanRow', { row });
+            <button
+              type="button"
+              onClick={() => setShowGeofenceDebug(current => !current)}
+              className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-bold transition-colors ${
+                showGeofenceDebug
+                  ? 'border-purple-200 bg-purple-50 text-purple-700'
+                  : 'border-slate-200 bg-white text-slate-600'
+              }`}
+            >
+              <MapPin className="h-3.5 w-3.5" />
+              Geofence Debug {showGeofenceDebug ? 'ON' : 'OFF'}
+            </button>
+            <button
+              type="button"
+              onClick={
+                handleRefresh
+              }
+              disabled={
+                isRefreshing ||
+                !onRefresh
+              }
+              className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <RefreshCw
+                className={`h-3.5 w-3.5 ${
+                  isRefreshing
+                    ? 'animate-spin'
+                    : ''
+                }`}
+              />
 
-    clearMasterPlanCache();
+              Refresh
+            </button>
+          </div>
+        </div>
 
-    return res.status(201).json(result);
-  } catch (error) {
-    return sendRouteError(res, error, 'Unable to create Master Plan row.');
-  }
-});
+        <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-center">
+          <div className="relative flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
 
-app.put('/api/master-plan/rows/:sheetRow', requireAuthentication, requireMinimumRole('PLANNER'), async (req, res) => {
-  try {
-    const sheetRow = normalizeMasterPlanSheetRow(req.params.sheetRow);
-    const row = normalizeMasterPlanRow(req.body);
-    const result = await requestAppsScriptPost('updateMasterPlanRow', {
-      sheetRow,
-      row,
-    });
+            <input
+              type="text"
+              value={
+                searchText
+              }
+              onChange={
+                event => {
+                  setSearchText(
+                    event.target.value
+                  );
+                }
+              }
+              placeholder="ค้นหาทะเบียน Route บริษัท หรือชื่อคนขับ"
+              className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+            />
+          </div>
 
-    clearMasterPlanCache();
+          <select
+            value={
+              selectedGpsId
+            }
+            onChange={
+              event => {
+                setSelectedGpsId(
+                  event.target.value
+                );
 
-    return res.status(200).json(result);
-  } catch (error) {
-    return sendRouteError(res, error, 'Unable to update Master Plan row.');
-  }
-});
+                appliedInitialTruckIdRef.current =
+                  null;
+              }
+            }
+            className="min-w-[300px] rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+          >
+            <option value="">
+              เลือกรถที่ต้องการติดตาม
+            </option>
 
-app.delete('/api/master-plan/rows/:sheetRow', requireAuthentication, requireMinimumRole('SUPERVISOR'), async (req, res) => {
-  try {
-    const sheetRow = normalizeMasterPlanSheetRow(req.params.sheetRow);
-    const result = await requestAppsScriptPost('deleteMasterPlanRow', {
-      sheetRow,
-    });
+            {selectableGpsLocations.map(
+              location => {
+                const normalizedPlate =
+                  normalizeLicensePlate(
+                    location
+                      .licensePlate
+                  );
 
-    clearMasterPlanCache();
+                const truck =
+                  truckByPlate.get(
+                    normalizedPlate
+                  );
 
-    return res.status(200).json(result);
-  } catch (error) {
-    return sendRouteError(res, error, 'Unable to delete Master Plan row.');
-  }
-});
+                const plate =
+                  truck
+                    ?.licensePlate ||
+                  location
+                    .licensePlate ||
+                  location
+                    .gpsId;
 
-app.post('/api/plans/preview', requireAuthentication, requireMinimumRole('PLANNER'), async (req, res) => {
-  try {
-    const request = validatePlanPeriodRequest(req.body);
-    const result = await requestAppsScriptPost('previewPlanPeriod', request);
-    return res.status(200).json(result);
-  } catch (error) {
-    return sendRouteError(res, error, 'Unable to preview Plan period.');
-  }
-});
+                const route =
+                  truck?.route
+                    ? ` | ${truck.route}`
+                    : '';
 
-app.post('/api/plans/create', requireAuthentication, requireMinimumRole('PLANNER'), async (req, res) => {
-  let mutationLock = null;
-  try {
-    const request = validatePlanPeriodRequest(req.body);
-    await waitForExistingAppsScriptReads();
-    mutationLock = await acquireAppsScriptMutationLock('createPlanPeriod');
-    const result = await requestAppsScriptPost(
-      'createPlanPeriod',
-      request,
-      APPS_SCRIPT_PLAN_CREATE_TIMEOUT_MS
-    );
-    clearTruckCache();
-    clearMasterPlanCache();
-    req.auditDetails = {
-      source: request.source,
-      startDate: request.startDate,
-      endDate: request.endDate,
-      createdRowCount: Number(result?.result?.createdRowCount || 0),
-      mutationLockUsed: true,
-    };
-    return res.status(200).json(result);
-  } catch (error) {
-    const message = getErrorMessage(error);
-    const uncertainResult =
-      message.includes('This operation was aborted') ||
-      message.includes('HTTP 404') ||
-      message.includes('invalid JSON');
-    if (uncertainResult) {
-      req.auditDetails = {
-        reason: 'PLAN_CREATE_RESULT_UNKNOWN',
-        mutationLockUsed: Boolean(mutationLock),
-      };
-      return res.status(202).json({
-        success: true,
-        status: 'unknown',
-        result: {
-          success: true,
-          confirmationPending: true,
-          reason: 'PLAN_CREATE_RESULT_UNKNOWN',
-          message: 'ระบบส่งคำขอสร้างแผนแล้ว แต่ยังยืนยันผลตอบกลับไม่ได้ กรุณาตรวจสอบแผนประจำวันที่สร้างก่อนดำเนินการซ้ำ',
-        },
-        timestamp: new Date().toISOString(),
-      });
-    }
-    return sendRouteError(res, error, 'Unable to create Plan period.');
-  } finally {
-    await releaseAppsScriptMutationLock(mutationLock).catch(error => {
-      console.error('Unable to release Apps Script mutation lock:', getErrorMessage(error));
-    });
-  }
-});
+                return (
+                  <option
+                    key={
+                      location.gpsId
+                    }
+                    value={
+                      location.gpsId
+                    }
+                  >
+                    {plate}
+                    {route}
+                  </option>
+                );
+              }
+            )}
+          </select>
 
-app.get('/api/plans/daily', requireAuthentication, requireMinimumRole('TV_VIEWER'), async (req, res) => {
-  try {
-    const date = validateDateText(req.query.date, 'date');
-    const result = await requestAppsScriptGet('getDailyPlans', { date });
-    res.setHeader('Cache-Control', 'no-store');
-    return res.status(200).json(result);
-  } catch (error) {
-    return sendRouteError(res, error, 'Unable to retrieve daily Plans.');
-  }
-});
+          <button
+            type="button"
+            onClick={
+              clearSelection
+            }
+            disabled={
+              !selectedGpsId &&
+              !searchText
+            }
+            className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <X className="h-3.5 w-3.5" />
+            ล้างการเลือก
+          </button>
+        </div>
+      </div>
 
-app.post('/api/plans/extra', requireAuthentication, requireMinimumRole('PLANNER'), async (req, res) => {
-  try {
-    const plan = normalizeEditablePlan(req.body);
-    const result = await requestAppsScriptPost('createExtraPlan', { plan });
-    clearTruckCache();
-    return res.status(201).json(result);
-  } catch (error) {
-    return sendRouteError(res, error, 'Unable to create Extra Plan.');
-  }
-});
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-b-xl border border-slate-200 bg-white shadow-sm lg:flex-row">
+        <div className="relative min-h-[460px] flex-1 overflow-hidden bg-slate-100">
+          <div
+            ref={
+              mapContainerRef
+            }
+            className="h-full min-h-[460px] w-full"
+          />
 
-app.put('/api/plans/:codeRun', requireAuthentication, requireMinimumRole('PLANNER'), async (req, res) => {
-  try {
-    const codeRun = normalizeCodeRun(req.params.codeRun);
-    const plan = normalizeEditablePlan(req.body);
-    const result = await requestAppsScriptPost('updatePlan', {
-      codeRun,
-      plan,
-      remark: plan.remark,
-    });
+          {showGeofenceDebug && (
+            <div className="absolute left-3 top-3 z-[600] rounded-xl border border-slate-200 bg-white/95 p-3 text-xs shadow-lg backdrop-blur-sm">
+              <div className="font-bold text-slate-800">Geofence Debug</div>
+              <div className="mt-2 space-y-1.5">
+                {GPS_GEOFENCES.map(geofence => (
+                  <div key={geofence.id} className="flex items-center gap-2">
+                    <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: geofence.color }} />
+                    <span className="font-semibold text-slate-700">{geofence.name}</span>
+                    <span className="text-slate-400">{geofence.radiusMeters} m</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {showNoGpsMessage && (
+            <div className="pointer-events-none absolute inset-0 z-[500] flex items-center justify-center bg-white/60 backdrop-blur-sm">
+              <div className="max-w-sm rounded-xl border border-slate-200 bg-white p-6 text-center shadow-lg">
+                <MapPin className="mx-auto h-8 w-8 text-slate-400" />
 
-    clearTruckCache();
-    return res.status(200).json(result);
-  } catch (error) {
-    return sendRouteError(res, error, 'Unable to update Plan.');
-  }
-});
+                <div className="mt-3 font-bold text-slate-700">
+                  ไม่พบข้อมูล GPS ของรถในแผน
+                </div>
 
-app.post('/api/plans/delete-batch', requireAuthentication, requireMinimumRole('SUPERVISOR'), async (req, res) => {
-  try {
-    const input = Array.isArray(req.body?.codeRuns) ? req.body.codeRuns : [];
-    const codeRuns = [...new Set(input.map(normalizeCodeRun))];
-    if (!codeRuns.length) throw new Error('At least one codeRun is required.');
-    if (codeRuns.length > 500) throw new Error('เลือกได้สูงสุด 500 รายการต่อครั้ง');
-    const result = await requestAppsScriptPost('deletePlansBatch', { codeRuns });
-    clearTruckCache();
-    req.auditDetails = { requestedCount: codeRuns.length, deletedPlanCount: Number(result?.result?.deletedPlanCount || 0), deletedActualCount: Number(result?.result?.deletedActualCount || 0) };
-    return res.status(200).json(result);
-  } catch (error) { return sendRouteError(res, error, 'Unable to delete selected Plans.'); }
-});
+                <div className="mt-1 text-sm text-slate-500">
+                  ตรวจสอบทะเบียนรถใน Plan และข้อมูล API GPS
+                </div>
+              </div>
+            </div>
+          )}
 
-app.delete('/api/plans/:codeRun', requireAuthentication, requireMinimumRole('SUPERVISOR'), async (req, res) => {
-  try {
-    const codeRun = normalizeCodeRun(req.params.codeRun);
-    const result = await requestAppsScriptPost('deletePlan', { codeRun });
-    clearTruckCache();
-    return res.status(200).json(result);
-  } catch (error) {
-    return sendRouteError(res, error, 'Unable to delete Plan.');
-  }
-});
+          {showNoMatchMessage && (
+            <div className="pointer-events-none absolute inset-0 z-[500] flex items-center justify-center">
+              <div className="max-w-sm rounded-xl border border-amber-200 bg-white p-6 text-center shadow-lg">
+                <AlertTriangle className="mx-auto h-8 w-8 text-amber-500" />
 
-app.post('/api/plans/:codeRun/stamp', requireAuthentication, requireMinimumRole('OPERATOR'), async (req, res) => {
-  try {
-    const codeRun = normalizeCodeRun(req.params.codeRun);
-    const stampType = normalizeStampType(req.body?.stampType);
-    const override = req.body?.override === true;
-    if (override && ROLE_LEVELS[req.auth.role] < ROLE_LEVELS.SUPERVISOR) {
-      return res.status(403).json({ success: false, error: 'Supervisor permission is required for Stamp override.' });
-    }
-    const truckResult = await getTruckDataWithCache(true);
-    const trip = findTripByCodeRun(truckResult.data, codeRun);
-    if (stampType === 'ETA' && trip.stampEtd) throw new Error('Cannot Stamp ETA because this trip already has Stamp ETD.');
-    if (stampType === 'ETD' && !trip.stampEta) throw new Error('Stamp ETA is required before Stamp ETD.');
-    const stampSource = override ? 'SUPERVISOR_OVERRIDE' : 'MANUAL';
-    const stampTime = cleanText(req.body?.stampTime) || new Date().toISOString();
-    const result = await stampActualData({
-      codeRun,
-      stampType,
-      stampSource,
-      stampTime,
-      stampedBy: req.auth.username,
-      overrideReason: override ? cleanText(req.body?.overrideReason) : '',
-    });
-    req.auditDetails = {
-      stampType,
-      stampSource,
-      written: result?.result?.written !== false,
-      reason: result?.result?.reason || null,
-    };
-    return res.status(200).json(result);
-  } catch (error) {
-    return sendRouteError(res, error, 'Unable to Stamp Actual data.');
-  }
-});
-app.post('/api/plans/:codeRun/confirm-work-detail', requireAuthentication, requireMinimumRole('OPERATOR'), async (req, res) => {
-  try {
-    const codeRun = normalizeCodeRun(req.params.codeRun);
-    const result = await requestAppsScriptPost('confirmWorkDetail', { codeRun });
-    clearTruckCache();
-    return res.status(200).json(result);
-  } catch (error) {
-    return sendRouteError(res, error, 'Unable to confirm Work Detail.');
-  }
-});
+                <div className="mt-3 font-bold text-slate-700">
+                  ไม่พบท้ายทะเบียนที่ตรงกับ GPS
+                </div>
 
-app.post('/api/plans/:codeRun/cancel', requireAuthentication, requireMinimumRole('SUPERVISOR'), async (req, res) => {
-  try {
-    const codeRun = normalizeCodeRun(req.params.codeRun);
-    const result = await requestAppsScriptPost('cancelPlan', { codeRun });
-    clearTruckCache();
-    return res.status(200).json(result);
-  } catch (error) {
-    return sendRouteError(res, error, 'Unable to cancel Plan.');
-  }
-});
+                <div className="mt-1 text-sm text-slate-500">
+                  ตรวจสอบรูปแบบทะเบียนรถใน Plan และ API GPS
+                </div>
+              </div>
+            </div>
+          )}
 
-app.post('/api/plans/:codeRun/restore', requireAuthentication, requireMinimumRole('SUPERVISOR'), async (req, res) => {
-  try {
-    const codeRun = normalizeCodeRun(req.params.codeRun);
-    const restoreAs = cleanText(req.body?.restoreAs || 'REGULAR').toUpperCase();
+          {showSelectTruckMessage && (
+            <div className="pointer-events-none absolute inset-0 z-[500] flex items-center justify-center">
+              <div className="rounded-xl border border-slate-200 bg-white p-6 text-center shadow-lg">
+                <MapPin className="mx-auto h-8 w-8 text-blue-500" />
 
-    if (restoreAs !== 'REGULAR' && restoreAs !== 'EXTRA') {
-      throw new Error('restoreAs must be REGULAR or EXTRA.');
-    }
+                <div className="mt-3 font-bold text-slate-700">
+                  เลือกรถที่ต้องการติดตาม
+                </div>
 
-    const result = await requestAppsScriptPost('restorePlan', {
-      codeRun,
-      restoreAs,
-    });
+                <div className="mt-1 text-sm text-slate-500">
+                  เลือกทะเบียนจากรายการด้านบน
+                </div>
 
-    clearTruckCache();
-    return res.status(200).json(result);
-  } catch (error) {
-    return sendRouteError(res, error, 'Unable to restore Plan.');
-  }
-});
+                <div className="mt-2 text-xs text-slate-400">
+                  พบรถที่จับคู่ GPS ได้{' '}
+                  {
+                    matchedGpsLocations.length
+                  }{' '}
+                  คัน
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
 
-app.post('/api/trucks/update', requireAuthentication, requireMinimumRole('OPERATOR'), async (req, res) => {
-  try {
-    const truckId = cleanText(req.body?.truckId);
-    const newRow = req.body?.newRow;
+        <aside className="w-full shrink-0 overflow-y-auto border-t border-slate-200 bg-white lg:w-[360px] lg:border-l lg:border-t-0">
+          {!selectedGpsLocation && (
+            <div className="flex h-full min-h-[260px] flex-col items-center justify-center p-8 text-center">
+              <TruckIcon className="h-10 w-10 text-slate-300" />
 
-    if (!truckId) throw new Error('truckId is required.');
-    if (!Array.isArray(newRow)) throw new Error('newRow must be an array.');
+              <div className="mt-3 font-bold text-slate-700">
+                ยังไม่ได้เลือกรถ
+              </div>
 
-    const result = await requestAppsScriptPost('updateTruck', {
-      truckId,
-      newRow,
-    });
+              <div className="mt-1 text-sm text-slate-500">
+                รายละเอียดรถและเส้นทางจะแสดงบริเวณนี้
+              </div>
+            </div>
+          )}
 
-    clearTruckCache();
-    return res.status(200).json(result);
-  } catch (error) {
-    return sendRouteError(res, error, 'Unable to update truck data.');
-  }
-});
+          {selectedGpsLocation && (
+            <div className="p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                    Selected Truck
+                  </div>
 
-app.get('/api/route-to-tpcap', requireAuthentication, requireMinimumRole('TV_VIEWER'), async (req, res) => {
-  try {
-    const latitude = Number(req.query.lat);
-    const longitude = Number(req.query.lng);
+                  <div className="mt-1 text-xl font-bold text-slate-900">
+                    {selectedTruck
+                      ?.licensePlate ||
+                      selectedGpsLocation
+                        .licensePlate ||
+                      '-'}
+                  </div>
 
-    if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) {
-      throw new Error('Latitude is invalid.');
-    }
+                  <div className="mt-1 text-xs text-slate-500">
+                    GPS ID:{' '}
+                    {
+                      selectedGpsLocation
+                        .gpsId
+                    }
+                  </div>
+                </div>
 
-    if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
-      throw new Error('Longitude is invalid.');
-    }
+                {selectedFreshness && (
+                  <div
+                    className={`rounded-full border px-3 py-1 text-[10px] font-bold ${getFreshnessClasses(
+                      selectedFreshness
+                    )}`}
+                  >
+                    {selectedFreshness}
+                  </div>
+                )}
+              </div>
 
-    const coordinates =
-      `${longitude},${latitude};` + `${TPCAP_LONGITUDE},${TPCAP_LATITUDE}`;
+              <div className="mt-5 grid grid-cols-2 gap-3">
+                <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
+                  <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase text-blue-600">
+                    <Route className="h-3.5 w-3.5" />
+                    Distance
+                  </div>
 
-    const routeUrl =
-      `${OSRM_BASE_URL}/route/v1/driving/${coordinates}` +
-      '?overview=full&geometries=geojson&steps=false';
+                  <div className="mt-2 text-xl font-bold text-blue-800">
+                    {routeResult
+                      ? `${routeResult.distanceKilometers.toFixed(
+                          1
+                        )} km`
+                      : '-'}
+                  </div>
+                </div>
 
-    const routeResponse = await fetchWithTimeout(
-      routeUrl,
-      {
-        method: 'GET',
-        headers: {
-          Accept: 'application/json',
-          'User-Agent': `ELIVE-API/${API_VERSION}.0`,
-        },
-      },
-      ROUTE_TIMEOUT_MS
-    );
+                <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-3">
+                  <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase text-indigo-600">
+                    <Clock className="h-3.5 w-3.5" />
+                    Travel Time
+                  </div>
 
-    const routeData = parseJsonText(
-      await routeResponse.text(),
-      'Routing service returned invalid JSON.'
-    );
+                  <div className="mt-2 text-base font-bold text-indigo-800">
+                    {routeResult
+                      ? formatDuration(
+                          routeResult
+                            .durationMinutes
+                        )
+                      : '-'}
+                  </div>
+                </div>
+              </div>
 
-    if (!routeResponse.ok || routeData.code !== 'Ok') {
-      throw new Error(routeData.message || 'No driving route was found.');
-    }
+              <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+                <div className="flex items-center gap-2 text-xs font-bold uppercase text-emerald-700">
+                  <Navigation className="h-4 w-4" />
+                  Estimated arrival at TPCAP
+                </div>
 
-    const route = Array.isArray(routeData.routes) ? routeData.routes[0] : null;
-    if (!route) throw new Error('No driving route was found.');
+                <div className="mt-2 text-lg font-bold text-emerald-900">
+                  {routeResult
+                    ? formatEta(
+                        routeResult
+                          .estimatedArrival
+                      )
+                    : '-'}
+                </div>
 
-    const distanceMeters = Number(route.distance);
-    const durationSeconds = Number(route.duration);
-    const estimatedArrival = new Date(Date.now() + durationSeconds * 1000);
+                <div className="mt-1 text-xs text-emerald-700">
+                  คำนวณจากเส้นทางถนนไปยัง TPCAP
+                </div>
+              </div>
 
-    res.setHeader('Cache-Control', 'public, max-age=45');
+              {isRouteLoading && (
+                <div className="mt-3 flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-3 text-sm text-blue-700">
+                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                  กำลังคำนวณเส้นทาง
+                </div>
+              )}
 
-    return res.status(200).json({
-      success: true,
-      origin: { latitude, longitude },
-      destination: {
-        name: 'TPCAP',
-        latitude: TPCAP_LATITUDE,
-        longitude: TPCAP_LONGITUDE,
-      },
-      distanceMeters,
-      distanceKilometers: Number((distanceMeters / 1000).toFixed(1)),
-      durationSeconds,
-      durationMinutes: Math.max(1, Math.round(durationSeconds / 60)),
-      estimatedArrival: estimatedArrival.toISOString(),
-      estimatedArrivalBangkok: estimatedArrival.toLocaleString('en-GB', {
-        timeZone: 'Asia/Bangkok',
-        hour12: false,
-      }),
-      geometry: route.geometry,
-    });
-  } catch (error) {
-    return sendRouteError(res, error, 'Unable to calculate route.', 502);
-  }
-});
+              {routeError && (
+                <div className="mt-3 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-3 text-sm text-red-700">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
 
-app.get(
-  '/api/admin/sessions',
-  requireAuthentication,
-  requireMinimumRole('ADMIN'),
-  async (req, res) => {
-    try {
-      const result = await listActiveSessions();
-      req.auditDetails = {
-        activeUsers: result.activeUserCount,
-        activeSessions: result.activeSessionCount,
-      };
-      res.setHeader('Cache-Control', 'no-store');
-      return res.status(200).json({
-        success: true,
-        summary: {
-          activeUsers: result.activeUserCount,
-          activeSessions: result.activeSessionCount,
-        },
-        users: result.users,
-        timestamp: new Date().toISOString(),
-      });
-    } catch (error) {
-      return sendRouteError(res, error, 'Unable to list active Sessions.', 500);
-    }
-  }
-);
+                  <span>
+                    {routeError}
+                  </span>
+                </div>
+              )}
 
-app.post(
-  '/api/admin/sessions/revoke-user',
-  requireAuthentication,
-  requireMinimumRole('ADMIN'),
-  async (req, res) => {
-    try {
-      const result = await revokeUserSessions(
-        req.body?.username,
-        req.authSessionTokenHash
-      );
-      req.auditDetails = { revokedCount: result.revokedCount };
-      return res.status(200).json({
-        success: true,
-        username: result.username,
-        revokedCount: result.revokedCount,
-        timestamp: new Date().toISOString(),
-      });
-    } catch (error) {
-      if (getErrorMessage(error) === 'LOGIN_PAYLOAD_INVALID') {
-        return res.status(400).json({
-          success: false,
-          error: 'A valid username is required.',
-        });
-      }
-      return sendRouteError(res, error, 'Unable to revoke user Sessions.', 500);
-    }
-  }
-);
+              {selectedGeofenceEvaluation && (
+                <div className={`mt-5 rounded-xl border p-4 ${
+                  (gpsDockResult?.isInside ?? selectedGeofenceEvaluation.isInside)
+                    ? 'border-emerald-200 bg-emerald-50'
+                    : 'border-slate-200 bg-slate-50'
+                }`}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Nearest Geofence</div>
+                    <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${
+                      (gpsDockResult?.isInside ?? selectedGeofenceEvaluation.isInside)
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-slate-200 text-slate-700'
+                    }`}>
+                      {(gpsDockResult?.isInside ?? selectedGeofenceEvaluation.isInside) ? 'INSIDE' : 'OUTSIDE'}
+                    </span>
+                  </div>
+                  <div className="mt-2 text-lg font-bold text-slate-900">
+                    {gpsDockResult?.geofenceName || selectedGeofenceEvaluation.name}
+                  </div>
+                  <div className="mt-2 grid grid-cols-2 gap-3 text-sm">
+                    <div><div className="text-xs text-slate-400">ระยะจากจุด</div><div className="font-bold text-slate-800">{(gpsDockResult?.distanceMeters ?? selectedGeofenceEvaluation.distanceMeters).toFixed(1)} เมตร</div></div>
+                    <div><div className="text-xs text-slate-400">รัศมีที่ตั้งไว้</div><div className="font-bold text-slate-800">{gpsDockResult?.radiusMeters ?? selectedGeofenceEvaluation.radiusMeters} เมตร</div></div>
+                  </div>
+                  <div className="mt-3 rounded-lg bg-white/80 px-3 py-2 text-xs font-semibold text-slate-700">
+                    สถานะตรวจจับ: {gpsDockResult?.status || selectedParkingStatus || '-'}
+                  </div>
+                  {gpsDockResult && (
+                    <div className={`mt-3 rounded-lg border p-3 text-xs ${
+                      gpsDockResult.waitingForExit
+                        ? 'border-orange-200 bg-orange-50 text-orange-800'
+                        : 'border-blue-200 bg-blue-50 text-blue-800'
+                    }`}>
+                      <div className="font-bold">รอบงานของรถวันนี้</div>
+                      <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-2">
+                        <div><span className="text-slate-500">Active:</span> <b>{gpsDockResult.activeCodeRun || '-'}</b></div>
+                        <div><span className="text-slate-500">Plan ETA:</span> <b>{formatPlanTime(gpsDockResult.activePlanEta)}</b></div>
+                        <div><span className="text-slate-500">ลำดับเที่ยว:</span> <b>{gpsDockResult.activeTripSequence || '-'} / {gpsDockResult.tripCountForVehicleToday}</b></div>
+                        <div><span className="text-slate-500">Next:</span> <b>{gpsDockResult.nextCodeRun || '-'}</b></div>
+                        <div><span className="text-slate-500">Next ETA:</span> <b>{formatPlanTime(gpsDockResult.nextPlanEta)}</b></div>
+                        <div><span className="text-slate-500">Completed:</span> <b>{gpsDockResult.lastCompletedCodeRun || '-'}</b></div>
+                      </div>
+                      <div className="mt-2 text-[11px]">Selection: {gpsDockResult.tripSelectionReason || '-'}</div>
+                      <div className="mt-1 text-[11px]">Ordering: {gpsDockResult.tripOrdering || 'PLAN_DATE_PLAN_ETA_CODE_RUN'}</div>
+                      {gpsDockResult.waitingForExit && (
+                        <div className="mt-2 font-bold">รอรถออกนอก Geofence ก่อนเริ่มรอบถัดไป</div>
+                      )}
+                      {gpsDockResult.exitConfirmedAt && (
+                        <div className="mt-1 text-[11px]">ยืนยันออกล่าสุด: {formatGpsDateTime(gpsDockResult.exitConfirmedAt)}</div>
+                      )}
+                    </div>
+                  )}
+                  {isGpsDockLoading && (
+                    <div className="mt-2 flex items-center gap-2 text-xs text-blue-700">
+                      <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                      กำลังอ่าน Dwell State จากระบบหลังบ้าน
+                    </div>
+                  )}
+                  {gpsDockError && (
+                    <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                      {gpsDockError}
+                    </div>
+                  )}
+                  {gpsDockResult && (
+                    <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-bold">
+                      <span className="rounded-full bg-blue-100 px-2 py-1 text-blue-700">
+                        ETA: {hasStampedEta ? 'STAMPED' : gpsDockResult.readyForGpsStampEta ? 'READY' : 'WAITING'}
+                      </span>
+                      <span className="rounded-full bg-orange-100 px-2 py-1 text-orange-700">
+                        ETD: {hasStampedEtd ? 'STAMPED' : gpsDockResult.readyForGpsStampEtd ? 'READY' : 'WAITING'}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="mt-5 border-t border-slate-200 pt-5">
+                <div className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                  Truck Information
+                </div>
 
-app.post(
-  '/api/admin/sessions/revoke-all',
-  requireAuthentication,
-  requireMinimumRole('ADMIN'),
-  async (req, res) => {
-    try {
-      const result = await revokeAllSessions(req.authSessionTokenHash);
-      req.auditDetails = { revokedCount: result.revokedCount };
-      return res.status(200).json({
-        success: true,
-        revokedCount: result.revokedCount,
-        currentAdminSessionPreserved: true,
-        timestamp: new Date().toISOString(),
-      });
-    } catch (error) {
-      return sendRouteError(res, error, 'Unable to revoke all Sessions.', 500);
-    }
-  }
-);
+                <div className="mt-3 space-y-3 text-sm">
+                  <div className="flex items-start gap-3">
+                    <Route className="mt-0.5 h-4 w-4 shrink-0 text-blue-500" />
 
-app.post('/api/cache/clear', requireAuthentication, requireMinimumRole('ADMIN'), (req, res) => {
-  clearTruckCache();
-  clearMasterPlanCache();
+                    <div>
+                      <div className="text-xs text-slate-400">
+                        Route
+                      </div>
 
-  return res.json({
-    success: true,
-    message: 'ELIVE API cache cleared.',
-    timestamp: new Date().toISOString(),
-  });
-});
+                      <div className="font-medium text-slate-800">
+                        {selectedTruck
+                          ?.route ||
+                          '-'}
+                      </div>
+                    </div>
+                  </div>
 
-app.use((req, res) => {
-  return res.status(404).json({
-    success: false,
-    error: 'API route not found.',
-    path: req.path,
-  });
-});
+                  <div className="flex items-start gap-3">
+                    <Building2 className="mt-0.5 h-4 w-4 shrink-0 text-violet-500" />
 
-app.use((error, req, res, next) => {
-  console.error('Server error:', error);
+                    <div>
+                      <div className="text-xs text-slate-400">
+                        Supplier
+                      </div>
 
-  return res.status(500).json({
-    success: false,
-    error: getErrorMessage(error) || 'Internal server error.',
-  });
-});
+                      <div className="font-medium text-slate-800">
+                        {selectedTruck
+                          ?.supplierName ||
+                          '-'}
+                      </div>
+                    </div>
+                  </div>
 
-try {
-  validateAppsScriptUrl();
-  validateAppsScriptSharedSecret();
-  console.log('Apps Script URL and request signature validated:', getMaskedAppsScriptUrl());
-} catch (error) {
-  console.error('Apps Script configuration warning:', getErrorMessage(error));
+                  <div className="flex items-start gap-3">
+                    <UserRound className="mt-0.5 h-4 w-4 shrink-0 text-slate-500" />
+
+                    <div>
+                      <div className="text-xs text-slate-400">
+                        Driver
+                      </div>
+
+                      <div className="font-medium text-slate-800">
+                        {selectedTruck
+                          ?.driverName ||
+                          '-'}
+                      </div>
+
+                      <div className="mt-0.5 text-xs text-slate-500">
+                        {selectedTruck
+                          ?.phone ||
+                          '-'}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-start gap-3">
+                    <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
+
+                    <div>
+                      <div className="text-xs text-slate-400">
+                        Drop Point
+                      </div>
+
+                      <div className="font-medium text-slate-800">
+                        {selectedTruck
+                          ?.dropPoint ||
+                          '-'}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-5 border-t border-slate-200 pt-5">
+                <div className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                  GPS Information
+                </div>
+
+                <div className="mt-3 grid grid-cols-2 gap-3">
+                  <div className="rounded-lg bg-slate-50 p-3">
+                    <div className="text-[10px] font-bold uppercase text-slate-400">
+                      Speed
+                    </div>
+
+                    <div className="mt-1 text-lg font-bold text-slate-800">
+                      {
+                        selectedGpsLocation
+                          .speed
+                      }{' '}
+                      km/h
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg bg-slate-50 p-3">
+                    <div className="text-[10px] font-bold uppercase text-slate-400">
+                      Heading
+                    </div>
+
+                    <div className="mt-1 text-lg font-bold text-slate-800">
+                      {
+                        selectedGpsLocation
+                          .heading
+                      }
+                      °
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-3 space-y-3 text-sm">
+                  <div>
+                    <div className="text-xs text-slate-400">
+                      สถานที่ล่าสุด
+                    </div>
+
+                    <div className="mt-1 font-medium text-slate-800">
+                      {selectedGpsLocation
+                        .locationName ||
+                        '-'}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-xs text-slate-400">
+                      สถานะ GPS
+                    </div>
+
+                    <div className="mt-1 font-medium text-slate-800">
+                      {selectedGpsLocation
+                        .gpsStatus ||
+                        '-'}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-xs text-slate-400">
+                      เวลา GPS
+                    </div>
+
+                    <div className="mt-1 font-mono text-xs font-medium text-slate-700">
+                      {formatGpsDateTime(
+                        selectedGpsLocation
+                          .gpsTime
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-xs text-slate-400">
+                      เวลารับข้อมูล
+                    </div>
+
+                    <div className="mt-1 font-mono text-xs font-medium text-slate-700">
+                      {formatGpsDateTime(
+                        selectedGpsLocation
+                          .receivedAt
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-xs text-slate-400">
+                      พิกัดล่าสุด
+                    </div>
+
+                    <div className="mt-1 break-all font-mono text-xs font-medium text-slate-700">
+                      {selectedGpsLocation
+                        .latitude.toFixed(
+                          6
+                        )}
+                      ,{' '}
+                      {selectedGpsLocation
+                        .longitude.toFixed(
+                          6
+                        )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </aside>
+      </div>
+    </div>
+  );
 }
-
-async function shutdown(signal) {
-  console.log(`Received ${signal}. Shutting down safely.`);
-  await stopGpsBackgroundWorker();
-  if (redisClient?.isOpen) await redisClient.quit().catch(() => {});
-  process.exit(0);
-}
-process.on('SIGTERM', () => { void shutdown('SIGTERM'); });
-process.on('SIGINT', () => { void shutdown('SIGINT'); });
-async function startServer(){
-  await initializeRedis();
-  startGpsBackgroundWorker();
-  if (SERVICE_MODE === 'worker') {
-    if (!GPS_BACKGROUND_WORKER_ENABLED) throw new Error('SERVICE_MODE worker requires GPS_BACKGROUND_WORKER_ENABLED=true.');
-    console.log(`ELIVE GPS Background Worker version ${API_VERSION} is running.`);
-    return;
-  }
-  app.listen(PORT,'0.0.0.0',()=>{ console.log(`ELIVE API version ${API_VERSION} is running on port ${PORT}`); });
-}
-startServer().catch(error=>{ console.error('Unable to start ELIVE API:',getErrorMessage(error)); process.exit(1); });
