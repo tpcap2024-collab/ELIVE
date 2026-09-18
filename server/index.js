@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '19';
+const API_VERSION = '20';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -63,6 +63,8 @@ const GPS_WORKER_LOCK_KEY = 'elive:gps-worker:leader';
 const GPS_WORKER_LOCK_SECONDS = Math.max(30, Math.ceil(GPS_BACKGROUND_WORKER_INTERVAL_MS / 1000) + 30);
 const GPS_WORKER_STATUS_KEY = 'elive:gps-worker:status';
 const GPS_WORKER_STATUS_TTL_SECONDS = 5 * 60;
+const GPS_DAILY_PLAN_CACHE_PREFIX = 'elive:gps-worker:daily-plan:';
+const GPS_DAILY_PLAN_CACHE_TTL_SECONDS = 60 * 60;
 const SERVICE_MODE = cleanText(process.env.SERVICE_MODE || 'web').toLowerCase();
 const GPS_GEOFENCES = Object.freeze([
   Object.freeze({
@@ -713,6 +715,56 @@ async function writeVehicleCycleState(licensePlate, state) {
   });
   return state;
 }
+function getGpsDailyPlanCacheKey(dateText) {
+  return `${GPS_DAILY_PLAN_CACHE_PREFIX}${dateText}`;
+}
+async function getGpsWorkerDailyPlan(dateText, forceRefresh = false) {
+  const client = requireRedisClient();
+  const cacheKey = getGpsDailyPlanCacheKey(dateText);
+  if (!forceRefresh) {
+    const cachedText = await client.get(cacheKey);
+    if (cachedText) {
+      try {
+        const cachedPlan = JSON.parse(cachedText);
+        if (Array.isArray(cachedPlan)) {
+          return { plan: cachedPlan, source: 'redis-daily-plan-cache' };
+        }
+      } catch {
+        await client.del(cacheKey);
+      }
+    }
+  }
+  const response = await requestAppsScriptGet('getGpsWorkerDailyPlan', { date: dateText });
+  const plan = Array.isArray(response?.plan) ? response.plan : [];
+  await client.set(cacheKey, JSON.stringify(plan), { EX: GPS_DAILY_PLAN_CACHE_TTL_SECONDS });
+  return { plan, source: 'google-apps-script' };
+}
+async function clearGpsWorkerDailyPlanCache(dateText = null) {
+  const client = requireRedisClient();
+  if (dateText) return await client.del(getGpsDailyPlanCacheKey(dateText));
+  let cursor = '0';
+  let deletedCount = 0;
+  do {
+    const result = await client.scan(cursor, { MATCH: `${GPS_DAILY_PLAN_CACHE_PREFIX}*`, COUNT: 100 });
+    cursor = String(result.cursor);
+    if (result.keys.length) deletedCount += await client.del(result.keys);
+  } while (cursor !== '0');
+  return deletedCount;
+}
+async function getGpsWorkerCycleData(dateText) {
+  const [dailyPlanResult, realtime] = await Promise.all([
+    getGpsWorkerDailyPlan(dateText),
+    requestAppsScriptGet('getGpsWorkerRealtime'),
+  ]);
+  return {
+    data: {
+      plan: dailyPlanResult.plan,
+      actual: Array.isArray(realtime?.actual) ? realtime.actual : [],
+      gps: Array.isArray(realtime?.gps) ? realtime.gps : [],
+    },
+    planSource: dailyPlanResult.source,
+  };
+}
 function compareTripsByPlanTime(first, second) {
   const firstDate = cleanText(first.planDate);
   const secondDate = cleanText(second.planDate);
@@ -831,8 +883,8 @@ function selectTripForVehicle(trips, nowMinutes, previousCycle = null) {
       : Math.abs(activeTrip.planEtaMinutes - nowMinutes),
   };
 }
-async function resolveVehicleTrip(input, isInside) {
-  const truckResult = await getTruckDataWithCache(false);
+async function resolveVehicleTrip(input, isInside, dataOverride = null) {
+  const truckResult = dataOverride ? { data: dataOverride, source: 'gps-worker-cycle' } : await getTruckDataWithCache(false);
   const dateText = getBangkokDateText(input.gpsTime);
   const trips = buildTripsForPlate(truckResult.data, input.licensePlate, dateText);
   const previousCycle = await readVehicleCycleState(input.licensePlate);
@@ -1079,9 +1131,9 @@ async function processPendingGpsStamp(pendingId) {
     await writePendingStamp(record, null);
     console.log(JSON.stringify({ logType: 'ELIVE_GPS_STAMP', event: 'PENDING_STAMP_CLAIMED', pendingId, attemptCount }));
 
-    const latestData = await requestAppsScriptGet('getTrucks');
-    truckDataCache = latestData;
-    truckDataCacheTime = Date.now();
+    const pendingDate = getBangkokDateText(parseBangkokDateTime(record.gpsTime, 'gpsTime'));
+    const latestResult = await getGpsWorkerCycleData(pendingDate);
+    const latestData = latestResult.data;
     const trip = findTripByCodeRun(latestData, record.codeRun);
     if (trip.noWorkAction) {
       console.log(JSON.stringify({ logType: 'ELIVE_GPS_STAMP', event: 'STAMP_BLOCKED_NO_WORK', pendingId, codeRun: record.codeRun }));
@@ -1145,7 +1197,7 @@ async function executeGpsAutoStampEtd(state, activeTrip) {
   const pending = await createPendingGpsStamp('ETD', state);
   return await processPendingGpsStamp(pending.pendingId);
 }
-async function evaluateGpsDock(payload) {
+async function evaluateGpsDock(payload, dataOverride = null) {
   const input = validateGpsDockPayload(payload);
   const nowMs = Date.now();
   const gpsTimeMs = input.gpsTime.getTime();
@@ -1155,7 +1207,7 @@ async function evaluateGpsDock(payload) {
   const nearest = findNearestGpsGeofence(input.latitude, input.longitude);
   const isInside = nearest.distanceMeters <= nearest.radiusMeters;
   const isParked = input.speedKmh === GPS_PARKING_SPEED_THRESHOLD_KMH;
-  const tripResolution = await resolveVehicleTrip(input, isInside);
+  const tripResolution = await resolveVehicleTrip(input, isInside, dataOverride);
   const vehicleCycle = tripResolution.state;
   const activeTrip = tripResolution.activeTrip;
   const effectiveCodeRun = activeTrip?.codeRun || input.codeRun;
@@ -1390,12 +1442,14 @@ async function runGpsBackgroundCycle() {
     }
     const pendingRetrySummary = await processDuePendingGpsStamps();
     summary.pendingRetry = pendingRetrySummary;
-    const truckResult = await getTruckDataWithCache(false);
-    const inputs = buildBackgroundGpsInputs(truckResult.data);
+    const workerDate = getBangkokDateText(new Date());
+    const workerDataResult = await getGpsWorkerCycleData(workerDate);
+    summary.dailyPlanSource = workerDataResult.planSource;
+    const inputs = buildBackgroundGpsInputs(workerDataResult.data);
     for (const input of inputs) {
       if (gpsWorkerStopping) break;
       try {
-        const result = await evaluateGpsDock(input);
+        const result = await evaluateGpsDock(input, workerDataResult.data);
         summary.processed += 1;
         if (result.status === 'DOCK_IN_CONFIRMED') summary.confirmed += 1;
         if (result.autoStampEtaResult?.status === 'STAMPED') summary.etaStamped += 1;
@@ -2807,6 +2861,10 @@ app.get(['/health', '/api/health'], (req, res) => {
       backgroundWorkerEnabled: GPS_BACKGROUND_WORKER_ENABLED,
       backgroundWorkerIntervalMs: GPS_BACKGROUND_WORKER_INTERVAL_MS,
       workerTruckSnapshotCacheSeconds: Math.floor(FRESH_CACHE_DURATION_MS / 1000),
+      dailyPlanRedisCacheEnabled: true,
+      dailyPlanCacheTtlSeconds: GPS_DAILY_PLAN_CACHE_TTL_SECONDS,
+      dailyPlanCacheKeyPrefix: GPS_DAILY_PLAN_CACHE_PREFIX,
+      realtimeRefreshSeconds: Math.floor(GPS_BACKGROUND_WORKER_INTERVAL_MS / 1000),
       workerForcesFullTruckRefreshEveryCycle: false,
       appsScriptGetRetryPolicy: 'RETRY_TIMEOUT_408_425_429_5XX_NO_RETRY_4XX',
       serviceMode: SERVICE_MODE,
@@ -3104,6 +3162,7 @@ app.post('/api/plans/create', requireAuthentication, requireMinimumRole('PLANNER
     );
     clearTruckCache();
     clearMasterPlanCache();
+    await clearGpsWorkerDailyPlanCache();
     req.auditDetails = {
       source: request.source,
       startDate: request.startDate,
@@ -3159,6 +3218,7 @@ app.post('/api/plans/extra', requireAuthentication, requireMinimumRole('PLANNER'
     const plan = normalizeEditablePlan(req.body);
     const result = await requestAppsScriptPost('createExtraPlan', { plan });
     clearTruckCache();
+    await clearGpsWorkerDailyPlanCache();
     return res.status(201).json(result);
   } catch (error) {
     return sendRouteError(res, error, 'Unable to create Extra Plan.');
@@ -3176,6 +3236,7 @@ app.put('/api/plans/:codeRun', requireAuthentication, requireMinimumRole('PLANNE
     });
 
     clearTruckCache();
+    await clearGpsWorkerDailyPlanCache();
     return res.status(200).json(result);
   } catch (error) {
     return sendRouteError(res, error, 'Unable to update Plan.');
@@ -3190,6 +3251,7 @@ app.post('/api/plans/delete-batch', requireAuthentication, requireMinimumRole('S
     if (codeRuns.length > 500) throw new Error('เลือกได้สูงสุด 500 รายการต่อครั้ง');
     const result = await requestAppsScriptPost('deletePlansBatch', { codeRuns });
     clearTruckCache();
+    await clearGpsWorkerDailyPlanCache();
     req.auditDetails = { requestedCount: codeRuns.length, deletedPlanCount: Number(result?.result?.deletedPlanCount || 0), deletedActualCount: Number(result?.result?.deletedActualCount || 0) };
     return res.status(200).json(result);
   } catch (error) { return sendRouteError(res, error, 'Unable to delete selected Plans.'); }
@@ -3200,6 +3262,7 @@ app.delete('/api/plans/:codeRun', requireAuthentication, requireMinimumRole('SUP
     const codeRun = normalizeCodeRun(req.params.codeRun);
     const result = await requestAppsScriptPost('deletePlan', { codeRun });
     clearTruckCache();
+    await clearGpsWorkerDailyPlanCache();
     return res.status(200).json(result);
   } catch (error) {
     return sendRouteError(res, error, 'Unable to delete Plan.');
@@ -3255,6 +3318,7 @@ app.post('/api/plans/:codeRun/cancel', requireAuthentication, requireMinimumRole
     const codeRun = normalizeCodeRun(req.params.codeRun);
     const result = await requestAppsScriptPost('cancelPlan', { codeRun });
     clearTruckCache();
+    await clearGpsWorkerDailyPlanCache();
     return res.status(200).json(result);
   } catch (error) {
     return sendRouteError(res, error, 'Unable to cancel Plan.');
@@ -3276,6 +3340,7 @@ app.post('/api/plans/:codeRun/restore', requireAuthentication, requireMinimumRol
     });
 
     clearTruckCache();
+    await clearGpsWorkerDailyPlanCache();
     return res.status(200).json(result);
   } catch (error) {
     return sendRouteError(res, error, 'Unable to restore Plan.');
@@ -3452,7 +3517,7 @@ app.post(
   }
 );
 
-app.post('/api/cache/clear', requireAuthentication, requireMinimumRole('ADMIN'), (req, res) => {
+app.post('/api/cache/clear', requireAuthentication, requireMinimumRole('ADMIN'), async (req, res) => {
   clearTruckCache();
   clearMasterPlanCache();
 
