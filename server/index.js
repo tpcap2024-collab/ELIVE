@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '23';
+const API_VERSION = '24';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -30,6 +30,15 @@ const APPS_SCRIPT_MUTATION_LOCK_KEY = 'elive:apps-script:mutation-lock';
 const APPS_SCRIPT_MUTATION_LOCK_SECONDS = 180;
 const APPS_SCRIPT_MUTATION_WAIT_MS = 185000;
 const APPS_SCRIPT_MUTATION_POLL_MS = 500;
+const APPS_SCRIPT_GET_LOCK_KEY = 'elive:apps-script:get-lock';
+const APPS_SCRIPT_GET_LOCK_SECONDS = 300;
+const APPS_SCRIPT_GET_WAIT_MS = 310000;
+const APPS_SCRIPT_GET_POLL_MS = 250;
+const APPS_SCRIPT_GPS_WAITING_KEY = 'elive:apps-script:gps-waiting';
+const APPS_SCRIPT_GPS_WAITING_TTL_SECONDS = 310;
+const APPS_SCRIPT_GET_CIRCUIT_PREFIX = 'elive:apps-script:get-circuit:';
+const APPS_SCRIPT_GET_CIRCUIT_FAILURE_THRESHOLD = 5;
+const APPS_SCRIPT_GET_CIRCUIT_COOLDOWN_SECONDS = 30;
 const ROUTE_TIMEOUT_MS = 15000;
 const APPS_SCRIPT_MAX_ATTEMPTS = 3;
 const APPS_SCRIPT_SIGNATURE_MAX_AGE_MS = 5 * 60 * 1000;
@@ -2350,94 +2359,197 @@ async function waitForExistingAppsScriptReads() {
   await Promise.allSettled(pendingReads);
 }
 
+function getAppsScriptGetCircuitKey(action) {
+  return `${APPS_SCRIPT_GET_CIRCUIT_PREFIX}${cleanText(action)}`;
+}
+async function assertAppsScriptGetCircuitIsClosed(action) {
+  const client = requireRedisClient();
+  const key = getAppsScriptGetCircuitKey(action);
+  const raw = await client.get(key);
+  if (!raw) return;
+  try {
+    const state = JSON.parse(raw);
+    const failureCount = Number(state.failureCount || 0);
+    const retryAfterMs = Math.max(0, Number(state.openedUntilMs || 0) - Date.now());
+    if (failureCount >= APPS_SCRIPT_GET_CIRCUIT_FAILURE_THRESHOLD && retryAfterMs > 0) {
+      const error = new Error(`APPS_SCRIPT_GET_CIRCUIT_OPEN:${action}`);
+      error.retryAfterMs = retryAfterMs;
+      throw error;
+    }
+    if (retryAfterMs <= 0) await client.del(key);
+  } catch (error) {
+    if (getErrorMessage(error).startsWith('APPS_SCRIPT_GET_CIRCUIT_OPEN:')) throw error;
+    await client.del(key);
+  }
+}
+async function recordAppsScriptGetCircuitSuccess(action) {
+  await requireRedisClient().del(getAppsScriptGetCircuitKey(action));
+}
+async function recordAppsScriptGetCircuitFailure(action) {
+  const client = requireRedisClient();
+  const key = getAppsScriptGetCircuitKey(action);
+  const raw = await client.get(key);
+  let failureCount = 0;
+  if (raw) {
+    try {
+      failureCount = Number(JSON.parse(raw).failureCount || 0);
+    } catch {
+      failureCount = 0;
+    }
+  }
+  failureCount += 1;
+  const openedUntilMs = failureCount >= APPS_SCRIPT_GET_CIRCUIT_FAILURE_THRESHOLD
+    ? Date.now() + APPS_SCRIPT_GET_CIRCUIT_COOLDOWN_SECONDS * 1000
+    : 0;
+  await client.set(
+    key,
+    JSON.stringify({ failureCount, openedUntilMs, updatedAt: new Date().toISOString() }),
+    { EX: APPS_SCRIPT_GET_CIRCUIT_COOLDOWN_SECONDS }
+  );
+}
+async function acquireAppsScriptGetLock(action) {
+  const client = requireRedisClient();
+  const token = randomUUID();
+  const isGpsRealtime = action === 'getGpsWorkerRealtime';
+  if (isGpsRealtime) {
+    await client.set(
+      APPS_SCRIPT_GPS_WAITING_KEY,
+      JSON.stringify({ action, queuedAt: new Date().toISOString() }),
+      { EX: APPS_SCRIPT_GPS_WAITING_TTL_SECONDS }
+    );
+  }
+  const deadline = Date.now() + APPS_SCRIPT_GET_WAIT_MS;
+  try {
+    while (Date.now() < deadline) {
+      if (
+        !isGpsRealtime &&
+        action === 'getTrucks' &&
+        await client.exists(APPS_SCRIPT_GPS_WAITING_KEY)
+      ) {
+        await wait(APPS_SCRIPT_GET_POLL_MS);
+        continue;
+      }
+      const lockValue = JSON.stringify({ token, action, startedAt: new Date().toISOString() });
+      const acquired = await client.set(
+        APPS_SCRIPT_GET_LOCK_KEY,
+        lockValue,
+        { NX: true, EX: APPS_SCRIPT_GET_LOCK_SECONDS }
+      );
+      if (acquired) {
+        console.log(JSON.stringify({
+          logType: 'ELIVE_APPS_SCRIPT_GET_QUEUE',
+          event: 'LOCK_ACQUIRED',
+          action,
+        }));
+        return { client, action, lockValue, isGpsRealtime };
+      }
+      await wait(APPS_SCRIPT_GET_POLL_MS);
+    }
+    throw new Error(`APPS_SCRIPT_GET_LOCK_TIMEOUT:${action}`);
+  } catch (error) {
+    if (isGpsRealtime) await client.del(APPS_SCRIPT_GPS_WAITING_KEY).catch(() => {});
+    throw error;
+  }
+}
+async function releaseAppsScriptGetLock(lock) {
+  if (!lock) return;
+  await releaseRedisLock(
+    lock.client,
+    APPS_SCRIPT_GET_LOCK_KEY,
+    lock.lockValue
+  ).catch(() => {});
+  if (lock.isGpsRealtime) {
+    await lock.client.del(APPS_SCRIPT_GPS_WAITING_KEY).catch(() => {});
+  }
+  console.log(JSON.stringify({
+    logType: 'ELIVE_APPS_SCRIPT_GET_QUEUE',
+    event: 'LOCK_RELEASED',
+    action: lock.action,
+  }));
+}
 async function requestAppsScriptGet(action, parameters = {}) {
   validateAppsScriptUrl();
   await waitForAppsScriptMutationToFinish();
-
-  const signedParameters = {};
-  for (const [key, value] of Object.entries(parameters)) {
-    if (value !== undefined && value !== null) signedParameters[key] = String(value);
-  }
-  const requestTimeoutMilliseconds = action === 'getTrucks'
-    ? APPS_SCRIPT_GET_TRUCKS_TIMEOUT_MS
-    : APPS_SCRIPT_TIMEOUT_MS;
-  const maximumAttempts = action === 'getTrucks'
-    ? APPS_SCRIPT_GET_TRUCKS_MAX_ATTEMPTS
-    : APPS_SCRIPT_MAX_ATTEMPTS;
-  let finalError = null;
-
-  for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
-    try {
-      const auth = createAppsScriptSignature('GET', action, signedParameters);
-      const queryData = {
-        action,
-        ...signedParameters,
-        authTimestamp: auth.timestamp,
-        authNonce: auth.nonce,
-        authSignature: auth.signature,
-        t: String(Date.now()),
-      };
-      const requestUrl = `${APPS_SCRIPT_URL}?${new URLSearchParams(queryData).toString()}`;
-      console.log(`Calling Apps Script GET ${action}, attempt ${attempt}`);
-
-      const response = await fetchWithTimeout(
-        requestUrl,
-        {
-          method: 'GET',
-          redirect: 'follow',
-          headers: {
-            Accept: 'application/json',
-            'User-Agent': `ELIVE-API/${API_VERSION}.0`,
+  await assertAppsScriptGetCircuitIsClosed(action);
+  const getLock = await acquireAppsScriptGetLock(action);
+  try {
+    const signedParameters = {};
+    for (const [key, value] of Object.entries(parameters)) {
+      if (value !== undefined && value !== null) signedParameters[key] = String(value);
+    }
+    const requestTimeoutMilliseconds = action === 'getTrucks'
+      ? APPS_SCRIPT_GET_TRUCKS_TIMEOUT_MS
+      : APPS_SCRIPT_TIMEOUT_MS;
+    const maximumAttempts = action === 'getTrucks'
+      ? APPS_SCRIPT_GET_TRUCKS_MAX_ATTEMPTS
+      : APPS_SCRIPT_MAX_ATTEMPTS;
+    let finalError = null;
+    for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
+      try {
+        const auth = createAppsScriptSignature('GET', action, signedParameters);
+        const queryData = {
+          action,
+          ...signedParameters,
+          authTimestamp: auth.timestamp,
+          authNonce: auth.nonce,
+          authSignature: auth.signature,
+          t: String(Date.now()),
+        };
+        const requestUrl = `${APPS_SCRIPT_URL}?${new URLSearchParams(queryData).toString()}`;
+        console.log(`Calling Apps Script GET ${action}, attempt ${attempt}`);
+        const response = await fetchWithTimeout(
+          requestUrl,
+          {
+            method: 'GET',
+            redirect: 'follow',
+            headers: {
+              Accept: 'application/json',
+              'User-Agent': `ELIVE-API/${API_VERSION}.0`,
+            },
+            cache: 'no-store',
           },
-          cache: 'no-store',
-        },
-        requestTimeoutMilliseconds
-      );
-
-      const responseText = await response.text();
-
-      if (response.ok) {
-        const data = parseJsonText(
-          responseText,
-          `Google Apps Script ${action} returned invalid JSON.`
+          requestTimeoutMilliseconds
         );
-
-        validateAppsScriptResponse(data, action);
-        recordAppsScriptSuccess();
-        return data;
+        const responseText = await response.text();
+        if (response.ok) {
+          const data = parseJsonText(
+            responseText,
+            `Google Apps Script ${action} returned invalid JSON.`
+          );
+          validateAppsScriptResponse(data, action);
+          recordAppsScriptSuccess();
+          await recordAppsScriptGetCircuitSuccess(action);
+          return data;
+        }
+        finalError = new Error(`Google Apps Script returned HTTP ${response.status}.`);
+        console.error(`Apps Script GET ${action} failed:`, {
+          attempt,
+          status: response.status,
+          responsePreview: getResponsePreview(responseText),
+        });
+        const contentType = cleanText(response.headers.get('content-type')).toLowerCase();
+        const looksLikeHtml = contentType.includes('text/html') || /^\s*<!doctype html/i.test(responseText);
+        const retryableTransient404 = response.status === 404 && looksLikeHtml;
+        if (!RETRYABLE_STATUS_CODES.has(response.status) && !retryableTransient404) break;
+      } catch (error) {
+        finalError = error;
+        console.error(`Apps Script GET ${action} connection error:`, {
+          attempt,
+          error: getErrorMessage(error),
+        });
+        if (!isRetryableAppsScriptError(error)) break;
       }
-
-      finalError = new Error(
-        `Google Apps Script returned HTTP ${response.status}.`
-      );
-
-      console.error(`Apps Script GET ${action} failed:`, {
-        attempt,
-        status: response.status,
-        responsePreview: getResponsePreview(responseText),
-      });
-
-      const contentType = cleanText(response.headers.get('content-type')).toLowerCase();
-      const looksLikeHtml = contentType.includes('text/html') || /^\s*<!doctype html/i.test(responseText);
-      const retryableTransient404 = response.status === 404 && looksLikeHtml;
-      if (!RETRYABLE_STATUS_CODES.has(response.status) && !retryableTransient404) break;
-    } catch (error) {
-      finalError = error;
-      console.error(`Apps Script GET ${action} connection error:`, {
-        attempt,
-        error: getErrorMessage(error),
-      });
-      if (!isRetryableAppsScriptError(error)) break;
+      if (attempt < maximumAttempts) {
+        await wait(attempt === 1 ? 1000 : 2500);
+      }
     }
-
-    if (attempt < maximumAttempts) {
-      await wait(attempt === 1 ? 1000 : 2500);
-    }
+    const error = finalError || new Error(`${action} request failed.`);
+    await recordAppsScriptGetCircuitFailure(action);
+    recordAppsScriptError(error);
+    throw error;
+  } finally {
+    await releaseAppsScriptGetLock(getLock);
   }
-
-  const error = finalError || new Error(`${action} request failed.`);
-  recordAppsScriptError(error);
-  throw error;
 }
 
 /*
@@ -3053,6 +3165,13 @@ app.get(['/health', '/api/health'], (req, res) => {
       planCreateTimeoutSeconds: Math.floor(APPS_SCRIPT_PLAN_CREATE_TIMEOUT_MS / 1000),
       mutationLockEnabled: true,
       mutationLockTtlSeconds: APPS_SCRIPT_MUTATION_LOCK_SECONDS,
+      serializedGetQueueEnabled: true,
+      serializedGetLockTtlSeconds: APPS_SCRIPT_GET_LOCK_SECONDS,
+      serializedGetMaximumWaitSeconds: Math.floor(APPS_SCRIPT_GET_WAIT_MS / 1000),
+      gpsRealtimeQueuePriorityEnabled: true,
+      getCircuitBreakerEnabled: true,
+      getCircuitBreakerFailureThreshold: APPS_SCRIPT_GET_CIRCUIT_FAILURE_THRESHOLD,
+      getCircuitBreakerCooldownSeconds: APPS_SCRIPT_GET_CIRCUIT_COOLDOWN_SECONDS,
       validFormat: Boolean(
         APPS_SCRIPT_URL &&
           APPS_SCRIPT_URL.startsWith('https://script.google.com/macros/s/') &&
