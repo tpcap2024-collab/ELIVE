@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '21';
+const API_VERSION = '22';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -64,7 +64,7 @@ const GPS_WORKER_LOCK_SECONDS = Math.max(30, Math.ceil(GPS_BACKGROUND_WORKER_INT
 const GPS_WORKER_STATUS_KEY = 'elive:gps-worker:status';
 const GPS_WORKER_STATUS_TTL_SECONDS = 5 * 60;
 const GPS_DAILY_PLAN_CACHE_PREFIX = 'elive:gps-worker:daily-plan:';
-const GPS_DAILY_PLAN_CACHE_TTL_SECONDS = 60 * 60;
+const GPS_DAILY_PLAN_CACHE_TTL_SECONDS = 36 * 60 * 60;
 const SERVICE_MODE = cleanText(process.env.SERVICE_MODE || 'web').toLowerCase();
 const GPS_GEOFENCES = Object.freeze([
   Object.freeze({
@@ -738,6 +738,28 @@ async function getGpsWorkerDailyPlan(dateText, forceRefresh = false) {
   const plan = Array.isArray(response?.plan) ? response.plan : [];
   await client.set(cacheKey, JSON.stringify(plan), { EX: GPS_DAILY_PLAN_CACHE_TTL_SECONDS });
   return { plan, source: 'google-apps-script' };
+}
+async function refreshGpsWorkerDailyPlanCache(dateText) {
+  const validatedDate = validateDateText(dateText, 'date');
+  const result = await getGpsWorkerDailyPlan(validatedDate, true);
+  const rowCount = Math.max(0, result.plan.length - 1);
+  console.log(JSON.stringify({
+    logType: 'ELIVE_GPS_PLAN_CACHE',
+    event: 'DAILY_PLAN_CACHE_REFRESHED',
+    date: validatedDate,
+    rowCount,
+    source: result.source,
+    ttlSeconds: GPS_DAILY_PLAN_CACHE_TTL_SECONDS,
+  }));
+  return { date: validatedDate, rowCount, source: result.source };
+}
+async function refreshCurrentGpsPlanCacheIfAffected(startDate, endDate = startDate) {
+  const today = getBangkokDateText(new Date());
+  if (today < startDate || today > endDate) {
+    return { refreshed: false, date: today, reason: 'CURRENT_DATE_NOT_AFFECTED' };
+  }
+  const result = await refreshGpsWorkerDailyPlanCache(today);
+  return { refreshed: true, ...result };
 }
 async function clearGpsWorkerDailyPlanCache(dateText = null) {
   const client = requireRedisClient();
@@ -2934,6 +2956,9 @@ app.get(['/health', '/api/health'], (req, res) => {
       workerTruckSnapshotCacheSeconds: Math.floor(FRESH_CACHE_DURATION_MS / 1000),
       dailyPlanRedisCacheEnabled: true,
       dailyPlanCacheTtlSeconds: GPS_DAILY_PLAN_CACHE_TTL_SECONDS,
+      dailyPlanCacheRefreshPolicy: 'CACHE_MISS_OR_PLAN_MUTATION',
+      hourlyDailyPlanRefreshEnabled: false,
+      createPlanRefreshesCurrentDateImmediately: true,
       dailyPlanCacheKeyPrefix: GPS_DAILY_PLAN_CACHE_PREFIX,
       realtimeRefreshSeconds: Math.floor(GPS_BACKGROUND_WORKER_INTERVAL_MS / 1000),
       workerForcesFullTruckRefreshEveryCycle: false,
@@ -3235,13 +3260,17 @@ app.post('/api/plans/create', requireAuthentication, requireMinimumRole('PLANNER
     );
     clearTruckCache();
     clearMasterPlanCache();
-    await clearGpsWorkerDailyPlanCache();
+    const dailyPlanCacheRefresh = await refreshCurrentGpsPlanCacheIfAffected(
+      request.startDate,
+      request.endDate
+    );
     req.auditDetails = {
       source: request.source,
       startDate: request.startDate,
       endDate: request.endDate,
       createdRowCount: Number(result?.result?.createdRowCount || 0),
       mutationLockUsed: true,
+      dailyPlanCacheRefresh,
     };
     return res.status(200).json(result);
   } catch (error) {
@@ -3291,7 +3320,8 @@ app.post('/api/plans/extra', requireAuthentication, requireMinimumRole('PLANNER'
     const plan = normalizeEditablePlan(req.body);
     const result = await requestAppsScriptPost('createExtraPlan', { plan });
     clearTruckCache();
-    await clearGpsWorkerDailyPlanCache();
+    const dailyPlanCacheRefresh = await refreshGpsWorkerDailyPlanCache(plan.date);
+    req.auditDetails = { dailyPlanCacheRefresh };
     return res.status(201).json(result);
   } catch (error) {
     return sendRouteError(res, error, 'Unable to create Extra Plan.');
@@ -3309,7 +3339,8 @@ app.put('/api/plans/:codeRun', requireAuthentication, requireMinimumRole('PLANNE
     });
 
     clearTruckCache();
-    await clearGpsWorkerDailyPlanCache();
+    const dailyPlanCacheRefresh = await refreshGpsWorkerDailyPlanCache(plan.date);
+    req.auditDetails = { dailyPlanCacheRefresh };
     return res.status(200).json(result);
   } catch (error) {
     return sendRouteError(res, error, 'Unable to update Plan.');
@@ -3593,9 +3624,11 @@ app.post(
 app.post('/api/cache/clear', requireAuthentication, requireMinimumRole('ADMIN'), async (req, res) => {
   clearTruckCache();
   clearMasterPlanCache();
+  const deletedDailyPlanCacheCount = await clearGpsWorkerDailyPlanCache();
 
   return res.json({
     success: true,
+    deletedDailyPlanCacheCount,
     message: 'ELIVE API cache cleared.',
     timestamp: new Date().toISOString(),
   });
