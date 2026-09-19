@@ -89,6 +89,43 @@ const DOCK_FILTERS: DockFilter[] = ['ALL', 'M1', 'L1', 'L2', 'L3', 'R2', 'R1'];
 const ROWS_PER_PAGE = 20;
 const REFRESH_INTERVAL = 60000;
 const USER_ACTIVITY_THROTTLE_MS = 60000;
+const OPTIMISTIC_UPDATE_TIMEOUT_MS = 5 * 60 * 1000;
+type PendingTruckUpdate = {
+  updates: Partial<Truck>;
+  previousTruck: Truck;
+  submittedAt: number;
+};
+function textMatchesPendingValue(actual: unknown, expected: unknown): boolean {
+  return String(actual ?? '').trim() === String(expected ?? '').trim();
+}
+function isPendingUpdateConfirmed(truck: Truck, updates: Partial<Truck>): boolean {
+  return Object.entries(updates).every(([key, expected]) =>
+    textMatchesPendingValue(
+      (truck as unknown as Record<string, unknown>)[key],
+      expected
+    )
+  );
+}
+function applyOptimisticTruckUpdate(truck: Truck, updates: Partial<Truck>): Truck {
+  const willBeNoDrop = String(
+    updates.actionProblem !== undefined
+      ? updates.actionProblem
+      : truck.actionProblem || ''
+  ).includes('ไม่มีงาน');
+  return {
+    ...truck,
+    ...updates,
+    ...(willBeNoDrop
+      ? {
+          status: 'COMPLETED' as const,
+          performanceStatus: 'NO_DROP' as const,
+        }
+      : {}),
+    ...(updates.actionProblem !== undefined || updates.actionStatus !== undefined
+      ? { actionUpdatedAt: new Date().toISOString() }
+      : {}),
+  } as Truck;
+}
 
 const ROLE_LEVELS: Record<EliveUserRole, number> = {
   TV_VIEWER: 10,
@@ -205,6 +242,7 @@ export default function App() {
   const lastActivitySignalAtRef = useRef(0);
   const activityRequestRunningRef = useRef(false);
   const authenticationGenerationRef = useRef(0);
+  const pendingTruckUpdatesRef = useRef<Record<string, PendingTruckUpdate>>({});
 
   useEffect(() => {
     trucksRef.current = trucks;
@@ -219,6 +257,7 @@ export default function App() {
       setAuthenticatedUser(null);
       setTrucks([]);
       trucksRef.current = [];
+      pendingTruckUpdatesRef.current = {};
       setGpsLocations([]);
       setSheetError(null);
       setHasLoadedSuccessfully(false);
@@ -335,15 +374,27 @@ export default function App() {
       if (authenticationGeneration !== authenticationGenerationRef.current) return;
 
       if (data.trucks.length > 0) {
-        const normalizedTrucks = data.trucks.map(truck =>
-          hasNoWorkAction(truck)
+        const now = Date.now();
+        const normalizedTrucks = data.trucks.map(truck => {
+          const normalizedTruck = hasNoWorkAction(truck)
             ? {
                 ...truck,
                 status: 'COMPLETED' as const,
                 performanceStatus: 'NO_DROP' as const,
               }
-            : truck
-        );
+            : truck;
+          const pending = pendingTruckUpdatesRef.current[truck.id];
+          if (!pending) return normalizedTruck;
+          if (isPendingUpdateConfirmed(normalizedTruck, pending.updates)) {
+            delete pendingTruckUpdatesRef.current[truck.id];
+            return normalizedTruck;
+          }
+          if (now - pending.submittedAt > OPTIMISTIC_UPDATE_TIMEOUT_MS) {
+            delete pendingTruckUpdatesRef.current[truck.id];
+            return normalizedTruck;
+          }
+          return applyOptimisticTruckUpdate(normalizedTruck, pending.updates);
+        });
         setTrucks(normalizedTrucks);
         trucksRef.current = normalizedTrucks;
       }
@@ -424,48 +475,43 @@ export default function App() {
   ): Promise<void> => {
     const currentTruck = trucksRef.current.find(truck => truck.id === id);
     if (!currentTruck) return Promise.resolve();
-
-    const willBeNoDrop = String(
-      updates.actionProblem !== undefined
-        ? updates.actionProblem
-        : currentTruck.actionProblem || ''
-    ).includes('ไม่มีงานลง');
-    const optimisticTruck = {
-      ...currentTruck,
+    const existingPending = pendingTruckUpdatesRef.current[id];
+    const mergedUpdates = {
+      ...(existingPending?.updates || {}),
       ...updates,
-      ...(willBeNoDrop
-        ? {
-            status: 'COMPLETED' as const,
-            performanceStatus: 'NO_DROP' as const,
-          }
-        : {}),
-      ...(updates.actionProblem !== undefined || updates.actionStatus !== undefined
-        ? { actionUpdatedAt: new Date().toISOString() }
-        : {}),
-    } as Truck;
+    };
+    pendingTruckUpdatesRef.current[id] = {
+      updates: mergedUpdates,
+      previousTruck: existingPending?.previousTruck || currentTruck,
+      submittedAt: Date.now(),
+    };
+    const optimisticTruck = applyOptimisticTruckUpdate(currentTruck, mergedUpdates);
     trucksRef.current = trucksRef.current.map(truck =>
       truck.id === id ? optimisticTruck : truck
     );
     setTrucks(trucksRef.current);
-
     const queuedUpdate = updateQueueRef.current.then(async () => {
       try {
         await updateTruckInSheets(id, updates, currentTruck);
         setSheetError(null);
       } catch (error) {
+        const pending = pendingTruckUpdatesRef.current[id];
+        delete pendingTruckUpdatesRef.current[id];
+        const rollbackTruck = pending?.previousTruck || currentTruck;
+        trucksRef.current = trucksRef.current.map(truck =>
+          truck.id === id ? rollbackTruck : truck
+        );
+        setTrucks(trucksRef.current);
         console.error('Failed to update sheet:', error);
         setSheetError(
           error instanceof Error ? error.message : 'Failed to update truck data'
         );
-        await loadData();
         throw error;
       }
     });
-
     updateQueueRef.current = queuedUpdate.catch(() => undefined);
     return queuedUpdate;
   };
-
   const closeSidebarOnMobile = () => {
     if (window.innerWidth < 768) setIsSidebarOpen(false);
   };
@@ -766,6 +812,7 @@ export default function App() {
       console.error('ELIVE logout failed:', error);
     } finally {
       setAuthenticatedUser(null);
+      pendingTruckUpdatesRef.current = {};
       setAppLoginUser('');
       setAppLoginPw('');
       setLoginError('');
