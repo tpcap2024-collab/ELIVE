@@ -24,6 +24,7 @@ import {
 
 import {
   AlertTriangle,
+  Building2,
   Clock,
   LoaderCircle,
   MapPin,
@@ -32,6 +33,9 @@ import {
   Route,
   Search,
   Truck as TruckIcon,
+  UserRound,
+  Wifi,
+  WifiOff,
   X,
 } from 'lucide-react';
 
@@ -394,22 +398,6 @@ function calculateDistanceMeters(
       Math.sin(longitudeDelta / 2) ** 2;
   return 2 * earthRadiusMeters * Math.asin(Math.sqrt(haversine));
 }
-function getGpsAgeText(location: GpsLocation): string {
-  const referenceDate = parseGpsDateTime(location.gpsTime) || parseGpsDateTime(location.receivedAt);
-  if (!referenceDate) return 'ไม่พบเวลาข้อมูล';
-  const ageSeconds = Math.max(0, Math.floor((Date.now() - referenceDate.getTime()) / 1000));
-  if (ageSeconds < 60) return `${ageSeconds} วินาทีที่แล้ว`;
-  const ageMinutes = Math.floor(ageSeconds / 60);
-  if (ageMinutes < 60) return `${ageMinutes} นาทีที่แล้ว`;
-  return `${Math.floor(ageMinutes / 60)} ชั่วโมงที่แล้ว`;
-}
-function getTargetGeofenceId(dropPoint?: string): GeofenceConfig['id'] | null {
-  const value = String(dropPoint || '').trim().toUpperCase();
-  if (/^R1(?:-|\b)/.test(value)) return 'TPCAP-R1';
-  if (/^R2(?:-|\b)/.test(value)) return 'TPCAP-R2';
-  if (/^(?:L1|L2|L3|M1)(?:-|\b)/.test(value)) return 'TPCAP-LSP';
-  return null;
-}
 function createGeofenceMarkerIcon(
   name: string,
   color: string
@@ -426,54 +414,25 @@ function createGeofenceMarkerIcon(
     iconAnchor: [50, 9],
   });
 }
-function createTruckMarkerIcon(
-  heading: number
-): L.DivIcon {
-  const safeHeading =
-    Number.isFinite(
-      heading
-    )
-      ? heading
-      : 0;
-
+function createTruckMarkerIcon(heading: number, isMoving: boolean): L.DivIcon {
+  const safeHeading = Number.isFinite(heading) ? heading : 0;
+  const markerColor = isMoving ? '#16a34a' : '#dc2626';
+  const statusText = isMoving ? 'รถวิ่ง' : 'รถจอด';
   return L.divIcon({
-    className:
-      'elive-truck-marker',
-
+    className: 'elive-truck-marker',
     html: `
-      <div
-        style="
-          width:52px;
-          height:52px;
-          display:flex;
-          align-items:center;
-          justify-content:center;
-          border-radius:50%;
-          background:#00a8ff;
-          border:4px solid white;
-          box-shadow:0 5px 16px rgba(2,132,199,0.5);
-          box-sizing:border-box;
-        "
-      >
-        <div
-          style="
-            width:0;
-            height:0;
-            border-left:8px solid transparent;
-            border-right:8px solid transparent;
-            border-bottom:20px solid white;
-            transform:rotate(${safeHeading}deg);
-            transform-origin:center;
-          "
-        ></div>
-      </div>
-    `,
-
-    iconSize:
-      [52, 52],
-
-    iconAnchor:
-      [26, 26],
+      <div style="display:flex;flex-direction:column;align-items:center;">
+        <div style="width:48px;height:48px;display:flex;align-items:center;justify-content:center;border-radius:14px;background:${markerColor};border:4px solid white;box-shadow:0 5px 16px ${isMoving ? 'rgba(22,163,74,.45)' : 'rgba(220,38,38,.45)'};box-sizing:border-box;">
+          <svg width="31" height="31" viewBox="0 0 64 64" aria-hidden="true" style="transform:rotate(${safeHeading}deg);transform-origin:center;">
+            <path fill="white" d="M7 16h31v27H7zM38 24h11l8 9v10H38z"/>
+            <path fill="${markerColor}" d="M42 28h6l5 6H42z"/>
+            <circle cx="18" cy="47" r="7" fill="#0f172a" stroke="white" stroke-width="3"/>
+            <circle cx="48" cy="47" r="7" fill="#0f172a" stroke="white" stroke-width="3"/>
+          </svg>
+        </div>
+        <div style="margin-top:4px;padding:3px 7px;border-radius:999px;background:white;border:1px solid ${markerColor};color:${markerColor};font-size:10px;font-weight:800;white-space:nowrap;box-shadow:0 2px 8px rgba(15,23,42,.18);">${statusText}</div>
+      </div>`,
+    iconSize: [70, 72], iconAnchor: [35, 30], popupAnchor: [0, -36],
   });
 }
 
@@ -586,6 +545,7 @@ export function LiveMap({
     useRef<L.LayerGroup | null>(
       null
     );
+  const baseLayerControlRef = useRef<L.Control.Layers | null>(null);
 
   const routeRequestIdRef =
     useRef(0);
@@ -625,7 +585,10 @@ export function LiveMap({
     isRouteLoading,
     setIsRouteLoading,
   ] = useState(false);
-  const [showGeofenceDebug] = useState(false);
+  const [
+    showGeofenceDebug,
+    setShowGeofenceDebug,
+  ] = useState(true);
   const [
     gpsDockResult,
     setGpsDockResult,
@@ -837,14 +800,10 @@ export function LiveMap({
           isInside: distanceMeters <= geofence.radiusMeters,
         };
       });
-      const targetId = getTargetGeofenceId(selectedTruck?.dropPoint);
-      if (targetId) {
-        return evaluations.find(item => item.id === targetId) || null;
-      }
       return evaluations.sort(
         (first, second) => first.distanceMeters - second.distanceMeters
       )[0] || null;
-    }, [selectedGpsLocation, selectedTruck]);
+    }, [selectedGpsLocation]);
   const selectedParkingStatus =
     useMemo(() => {
       if (!selectedGpsLocation || !selectedGeofenceEvaluation) return null;
@@ -925,18 +884,28 @@ export function LiveMap({
         }
       );
 
-    L.tileLayer(
+    const streetLayer = L.tileLayer(
       'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-      {
-        maxZoom:
-          19,
-
-        attribution:
-          '© OpenStreetMap contributors',
-      }
-    ).addTo(
-      map
+      { maxZoom: 19, attribution: '© OpenStreetMap contributors' }
     );
+    const satelliteLayer = L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      { maxZoom: 19, attribution: 'Tiles © Esri' }
+    );
+    const terrainLayer = L.tileLayer(
+      'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+      { maxZoom: 17, attribution: 'Map data © OpenStreetMap contributors, SRTM | Map style © OpenTopoMap' }
+    );
+    streetLayer.addTo(map);
+    baseLayerControlRef.current = L.control.layers(
+      {
+        'แผนที่ถนน': streetLayer,
+        'ภาพถ่ายดาวเทียม': satelliteLayer,
+        'ภูมิประเทศ': terrainLayer,
+      },
+      undefined,
+      { position: 'topright', collapsed: true }
+    ).addTo(map);
 
     const markerLayer =
       L.layerGroup()
@@ -980,6 +949,7 @@ export function LiveMap({
       routeLayer
         .clearLayers();
 
+      baseLayerControlRef.current = null;
       map.remove();
 
       markerLayerRef.current =
@@ -998,29 +968,48 @@ export function LiveMap({
     const geofenceLayer = geofenceLayerRef.current;
     if (!map || !geofenceLayer) return;
     geofenceLayer.clearLayers();
-    const geofencesToShow = showGeofenceDebug
-      ? GPS_GEOFENCES
-      : selectedGeofenceEvaluation
-        ? [selectedGeofenceEvaluation]
-        : [];
-    for (const geofence of geofencesToShow) {
-      const position: [number, number] = [geofence.latitude, geofence.longitude];
-      L.circle(position, {
+    if (!showGeofenceDebug) return;
+
+    const bounds = L.latLngBounds([]);
+    for (const geofence of GPS_GEOFENCES) {
+      const position: [number, number] = [
+        geofence.latitude,
+        geofence.longitude,
+      ];
+      const circle = L.circle(position, {
         radius: geofence.radiusMeters,
         color: geofence.color,
         weight: 3,
         opacity: 0.95,
         fillColor: geofence.color,
-        fillOpacity: 0.12,
+        fillOpacity: 0.14,
         dashArray: '8 6',
-      }).addTo(geofenceLayer);
+      });
+      circle.bindTooltip(
+        `${geofence.name} | Radius ${geofence.radiusMeters} m`,
+        { permanent: true, direction: 'top', offset: [0, -12] }
+      );
+      circle.bindPopup(
+        `<b>${geofence.name}</b><br>Latitude: ${geofence.latitude}<br>Longitude: ${geofence.longitude}<br>Radius: ${geofence.radiusMeters} m`
+      );
+      circle.addTo(geofenceLayer);
+
       L.marker(position, {
         icon: createGeofenceMarkerIcon(geofence.name, geofence.color),
         title: geofence.name,
         zIndexOffset: 800,
       }).addTo(geofenceLayer);
+      bounds.extend(circle.getBounds());
     }
-  }, [showGeofenceDebug, selectedGeofenceEvaluation]);
+
+    if (!selectedGpsLocation && bounds.isValid()) {
+      map.fitBounds(bounds, {
+        padding: [45, 45],
+        maxZoom: 17,
+        animate: true,
+      });
+    }
+  }, [showGeofenceDebug, selectedGpsLocation]);
   useEffect(() => {
     if (
       initialTruckId !==
@@ -1334,8 +1323,8 @@ export function LiveMap({
         {
           icon:
             createTruckMarkerIcon(
-              selectedGpsLocation
-                .heading
+              selectedGpsLocation.heading,
+              Number(selectedGpsLocation.speed) > 0
             ),
 
           title:
@@ -1351,11 +1340,13 @@ export function LiveMap({
         }
       );
 
+    const isMoving = Number(selectedGpsLocation.speed) > 0;
     truckMarker.bindPopup(`
       <div style="min-width:190px;font-family:system-ui,sans-serif;">
         <div style="font-size:15px;font-weight:800;color:#0f172a;">${selectedTruck?.licensePlate || selectedGpsLocation.licensePlate || '-'}</div>
         <div style="margin-top:4px;font-size:12px;color:#334155;">${selectedGpsLocation.locationName || 'ไม่พบชื่อสถานี'}</div>
-        <div style="margin-top:5px;font-size:11px;color:#64748b;">อัปเดตล่าสุด ${getGpsAgeText(selectedGpsLocation)}</div>
+        <div style="margin-top:5px;font-size:11px;font-weight:800;color:${isMoving ? '#15803d' : '#b91c1c'};">${isMoving ? 'รถวิ่ง' : 'รถจอด'} · ${Number(selectedGpsLocation.speed).toFixed(0)} km/h</div>
+        <div style="margin-top:3px;font-size:11px;color:#64748b;">เวลา GPS ${formatGpsDateTime(selectedGpsLocation.gpsTime)}</div>
       </div>
     `);
     truckMarker.addTo(markerLayer);
@@ -1562,62 +1553,642 @@ export function LiveMap({
     selectedTruck?.stampEtd ||
     gpsDockResult?.autoStampEtdResult
   );
-  const gpsAgeText = selectedGpsLocation ? getGpsAgeText(selectedGpsLocation) : '-';
-  const stationName = selectedGpsLocation?.locationName || 'ไม่พบชื่อสถานี';
-  const insideGeofence = gpsDockResult?.isInside ?? selectedGeofenceEvaluation?.isInside ?? false;
-  const geofenceName = gpsDockResult?.geofenceName || selectedGeofenceEvaluation?.name || '-';
-  const geofenceDistance = gpsDockResult?.distanceMeters ?? selectedGeofenceEvaluation?.distanceMeters;
-  const geofenceRadius = gpsDockResult?.radiusMeters ?? selectedGeofenceEvaluation?.radiusMeters;
-  const etaStatus = hasStampedEta ? 'STAMPED' : gpsDockResult?.readyForGpsStampEta ? 'READY' : 'WAITING';
-  const etdStatus = hasStampedEtd ? 'STAMPED' : gpsDockResult?.readyForGpsStampEtd ? 'READY' : 'WAITING';
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-slate-50 p-2 md:p-3">
-      <div className="flex shrink-0 flex-col gap-3 rounded-t-xl border border-b-0 border-slate-200 bg-white p-3 shadow-sm lg:flex-row lg:items-center">
-        <div className="flex min-w-fit items-center gap-2">
-          <h2 className="font-bold tracking-tight text-slate-900">Live Map</h2>
-          <span className="h-2 w-2 rounded-full bg-emerald-500" />
-          <span className="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700">OPERATION</span>
-        </div>
-        <div className="relative min-w-0 flex-1">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <input type="text" value={searchText} onChange={event => setSearchText(event.target.value)} placeholder="ค้นหาทะเบียน / Route / ชื่อสถานี" className="w-full rounded-lg border border-slate-300 py-2 pl-9 pr-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20" />
-        </div>
-        <select value={selectedGpsId} onChange={event => { setSelectedGpsId(event.target.value); appliedInitialTruckIdRef.current = null; }} className="min-w-0 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 outline-none lg:w-[330px]">
-          <option value="">เลือกรถที่ต้องการดู</option>
-          {selectableGpsLocations.map(location => {
-            const truck = truckByPlate.get(normalizeLicensePlate(location.licensePlate));
-            return <option key={location.gpsId} value={location.gpsId}>{truck?.licensePlate || location.licensePlate || location.gpsId}{truck?.route ? ` | ${truck.route}` : ''}{truck?.dropPoint ? ` | ${truck.dropPoint}` : ''}</option>;
-          })}
-        </select>
-        <button type="button" onClick={clearSelection} disabled={!selectedGpsId && !searchText} className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50"><X className="h-3.5 w-3.5" />ล้างการเลือก</button>
-        <button type="button" onClick={handleRefresh} disabled={isRefreshing || !onRefresh} className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-50"><RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />Refresh</button>
-      </div>
+    <div className="flex h-full min-h-0 flex-col bg-slate-50 p-4 md:p-6 lg:p-8">
+      <div className="shrink-0 rounded-t-xl border border-b-0 border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-center">
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="font-bold tracking-tight text-slate-800">
+                Live GPS Tracking
+              </h2>
 
-      <div className="relative min-h-[420px] flex-1 overflow-hidden border-x border-slate-200 bg-slate-100">
-        <div ref={mapContainerRef} className="h-full min-h-[420px] w-full" />
-        {isRouteLoading && <div className="absolute right-3 top-3 z-[600] flex items-center gap-2 rounded-lg border border-blue-200 bg-white/95 px-3 py-2 text-xs font-semibold text-blue-700 shadow"><LoaderCircle className="h-4 w-4 animate-spin" />กำลังคำนวณเส้นทาง</div>}
-        {routeError && <div className="absolute right-3 top-3 z-[600] max-w-sm rounded-lg border border-red-200 bg-white/95 px-3 py-2 text-xs text-red-700 shadow"><AlertTriangle className="mr-1 inline h-4 w-4" />{routeError}</div>}
-        {showNoGpsMessage && <div className="absolute inset-0 z-[500] flex items-center justify-center bg-white/60"><div className="rounded-xl border bg-white p-6 text-center shadow-lg"><MapPin className="mx-auto h-8 w-8 text-slate-400" /><div className="mt-3 font-bold">ไม่พบข้อมูล GPS ของรถในแผน</div></div></div>}
-        {showNoMatchMessage && <div className="absolute inset-0 z-[500] flex items-center justify-center"><div className="rounded-xl border border-amber-200 bg-white p-6 text-center shadow-lg"><AlertTriangle className="mx-auto h-8 w-8 text-amber-500" /><div className="mt-3 font-bold">ไม่พบท้ายทะเบียนที่ตรงกับ GPS</div></div></div>}
-        {showSelectTruckMessage && <div className="absolute inset-0 z-[500] flex items-center justify-center"><div className="rounded-xl border bg-white p-6 text-center shadow-lg"><TruckIcon className="mx-auto h-8 w-8 text-blue-500" /><div className="mt-3 font-bold">เลือกรถที่ต้องการติดตาม</div><div className="mt-1 text-xs text-slate-500">พบรถที่จับคู่ GPS ได้ {matchedGpsLocations.length} คัน</div></div></div>}
-      </div>
+              <div className="h-2 w-2 animate-pulse rounded-full bg-emerald-500" />
+            </div>
 
-      <div className="shrink-0 overflow-x-auto rounded-b-xl border border-slate-200 bg-white shadow-sm">
-        {!selectedGpsLocation ? (
-          <div className="flex h-28 items-center justify-center text-sm text-slate-500">ข้อมูล Operation จะแสดงหลังเลือกรถ</div>
-        ) : (
-          <div className="grid min-w-[1180px] grid-cols-[1.35fr_1.45fr_.8fr_.8fr_.9fr_1.05fr_1.45fr] divide-x divide-slate-200">
-            <div className="flex items-center gap-3 p-4"><TruckIcon className="h-8 w-8 shrink-0 text-emerald-600" /><div><div className="flex items-center gap-2"><span className="text-lg font-bold text-slate-900">{selectedTruck?.licensePlate || selectedGpsLocation.licensePlate || '-'}</span>{selectedFreshness && <span className={`rounded-full border px-2 py-0.5 text-[9px] font-bold ${getFreshnessClasses(selectedFreshness)}`}>{selectedFreshness}</span>}</div><div className="mt-1 text-xs font-semibold text-slate-600">{selectedTruck?.route || '-'} | {selectedTruck?.dropPoint || '-'}</div></div></div>
-            <div className="p-4"><div className="text-[10px] font-bold uppercase text-slate-400">สถานีปัจจุบัน</div><div className="mt-1 line-clamp-2 text-sm font-bold text-slate-800" title={stationName}>{stationName}</div><div className="mt-1 text-[11px] text-slate-500">GPS {formatGpsDateTime(selectedGpsLocation.gpsTime)} · <span className="font-semibold text-emerald-700">{gpsAgeText}</span></div></div>
-            <div className="p-4"><div className="text-[10px] font-bold uppercase text-blue-500">ระยะทาง</div><div className="mt-2 text-xl font-bold text-slate-900">{routeResult ? `${routeResult.distanceKilometers.toFixed(1)} km` : '-'}</div></div>
-            <div className="p-4"><div className="text-[10px] font-bold uppercase text-indigo-500">เวลาเดินทาง</div><div className="mt-2 text-lg font-bold text-slate-900">{routeResult ? formatDuration(routeResult.durationMinutes) : '-'}</div></div>
-            <div className="p-4"><div className="text-[10px] font-bold uppercase text-emerald-600">ETA ถึง TPCAP</div><div className="mt-2 text-lg font-bold text-slate-900">{routeResult ? formatEta(routeResult.estimatedArrival).split(', ').pop() : '-'}</div></div>
-            <div className="p-4"><div className="flex items-center justify-between gap-2"><div className="text-[10px] font-bold uppercase text-slate-500">เป้าหมาย</div><span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${insideGeofence ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>{insideGeofence ? 'INSIDE' : 'OUTSIDE'}</span></div><div className="mt-1 text-base font-bold text-slate-900">{geofenceName}</div><div className="mt-1 text-[11px] text-slate-500">ระยะ {geofenceDistance !== undefined ? geofenceDistance >= 1000 ? `${(geofenceDistance / 1000).toFixed(1)} km` : `${geofenceDistance.toFixed(0)} m` : '-'} · รัศมี {geofenceRadius || '-'} m</div></div>
-            <div className="grid grid-cols-3 divide-x divide-slate-200"><div className="p-4 text-center"><div className="text-[10px] font-bold uppercase text-slate-400">Plan ETA</div><div className="mt-2 text-base font-bold text-slate-900">{formatPlanTime(selectedTruck?.planEta)}</div></div><div className="p-4 text-center"><div className="text-[10px] font-bold uppercase text-blue-500">Stamp ETA</div><div className={`mt-2 text-sm font-bold ${etaStatus === 'STAMPED' ? 'text-emerald-600' : 'text-blue-600'}`}>{etaStatus}</div></div><div className="p-4 text-center"><div className="text-[10px] font-bold uppercase text-orange-500">Stamp ETD</div><div className={`mt-2 text-sm font-bold ${etdStatus === 'STAMPED' ? 'text-emerald-600' : 'text-orange-600'}`}>{etdStatus}</div></div></div>
+            <p className="mt-1 text-xs text-slate-500">
+              GPS data prepared from the selected plan
+            </p>
           </div>
-        )}
+
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700">
+              <Wifi className="h-3.5 w-3.5" />
+              Live {freshnessStats.live}
+            </div>
+
+            <div className="flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700">
+              <Clock className="h-3.5 w-3.5" />
+              Stale {freshnessStats.stale}
+            </div>
+
+            <div className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-xs font-bold text-slate-600">
+              <WifiOff className="h-3.5 w-3.5" />
+              Offline {freshnessStats.offline}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowGeofenceDebug(current => !current)}
+              className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-bold transition-colors ${
+                showGeofenceDebug
+                  ? 'border-purple-200 bg-purple-50 text-purple-700'
+                  : 'border-slate-200 bg-white text-slate-600'
+              }`}
+            >
+              <MapPin className="h-3.5 w-3.5" />
+              Geofence Debug {showGeofenceDebug ? 'ON' : 'OFF'}
+            </button>
+            <button
+              type="button"
+              onClick={
+                handleRefresh
+              }
+              disabled={
+                isRefreshing ||
+                !onRefresh
+              }
+              className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <RefreshCw
+                className={`h-3.5 w-3.5 ${
+                  isRefreshing
+                    ? 'animate-spin'
+                    : ''
+                }`}
+              />
+
+              Refresh
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-center">
+          <div className="relative flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+
+            <input
+              type="text"
+              value={
+                searchText
+              }
+              onChange={
+                event => {
+                  setSearchText(
+                    event.target.value
+                  );
+                }
+              }
+              placeholder="ค้นหาทะเบียน Route บริษัท หรือชื่อคนขับ"
+              className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+            />
+          </div>
+
+          <select
+            value={
+              selectedGpsId
+            }
+            onChange={
+              event => {
+                setSelectedGpsId(
+                  event.target.value
+                );
+
+                appliedInitialTruckIdRef.current =
+                  null;
+              }
+            }
+            className="min-w-[300px] rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+          >
+            <option value="">
+              เลือกรถที่ต้องการติดตาม
+            </option>
+
+            {selectableGpsLocations.map(
+              location => {
+                const normalizedPlate =
+                  normalizeLicensePlate(
+                    location
+                      .licensePlate
+                  );
+
+                const truck =
+                  truckByPlate.get(
+                    normalizedPlate
+                  );
+
+                const plate =
+                  truck
+                    ?.licensePlate ||
+                  location
+                    .licensePlate ||
+                  location
+                    .gpsId;
+
+                const route =
+                  truck?.route
+                    ? ` | ${truck.route}`
+                    : '';
+
+                return (
+                  <option
+                    key={
+                      location.gpsId
+                    }
+                    value={
+                      location.gpsId
+                    }
+                  >
+                    {plate}
+                    {route}
+                  </option>
+                );
+              }
+            )}
+          </select>
+
+          <button
+            type="button"
+            onClick={
+              clearSelection
+            }
+            disabled={
+              !selectedGpsId &&
+              !searchText
+            }
+            className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <X className="h-3.5 w-3.5" />
+            ล้างการเลือก
+          </button>
+        </div>
       </div>
-      {(gpsDockError || isGpsDockLoading) && selectedGpsLocation && <div className="pointer-events-none absolute bottom-32 left-1/2 z-[700] -translate-x-1/2 rounded-lg border bg-white px-3 py-2 text-xs shadow-lg">{isGpsDockLoading ? 'กำลังอ่านสถานะ Geofence...' : gpsDockError}</div>}
+
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-b-xl border border-slate-200 bg-white shadow-sm lg:flex-row">
+        <div className="relative min-h-[460px] flex-1 overflow-hidden bg-slate-100">
+          <div
+            ref={
+              mapContainerRef
+            }
+            className="h-full min-h-[460px] w-full"
+          />
+
+          {showGeofenceDebug && (
+            <div className="absolute left-3 top-3 z-[600] rounded-xl border border-slate-200 bg-white/95 p-3 text-xs shadow-lg backdrop-blur-sm">
+              <div className="font-bold text-slate-800">Geofence Debug</div>
+              <div className="mt-2 space-y-1.5">
+                {GPS_GEOFENCES.map(geofence => (
+                  <div key={geofence.id} className="flex items-center gap-2">
+                    <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: geofence.color }} />
+                    <span className="font-semibold text-slate-700">{geofence.name}</span>
+                    <span className="text-slate-400">{geofence.radiusMeters} m</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {showNoGpsMessage && (
+            <div className="pointer-events-none absolute inset-0 z-[500] flex items-center justify-center bg-white/60 backdrop-blur-sm">
+              <div className="max-w-sm rounded-xl border border-slate-200 bg-white p-6 text-center shadow-lg">
+                <MapPin className="mx-auto h-8 w-8 text-slate-400" />
+
+                <div className="mt-3 font-bold text-slate-700">
+                  ไม่พบข้อมูล GPS ของรถในแผน
+                </div>
+
+                <div className="mt-1 text-sm text-slate-500">
+                  ตรวจสอบทะเบียนรถใน Plan และข้อมูล API GPS
+                </div>
+              </div>
+            </div>
+          )}
+
+          {showNoMatchMessage && (
+            <div className="pointer-events-none absolute inset-0 z-[500] flex items-center justify-center">
+              <div className="max-w-sm rounded-xl border border-amber-200 bg-white p-6 text-center shadow-lg">
+                <AlertTriangle className="mx-auto h-8 w-8 text-amber-500" />
+
+                <div className="mt-3 font-bold text-slate-700">
+                  ไม่พบท้ายทะเบียนที่ตรงกับ GPS
+                </div>
+
+                <div className="mt-1 text-sm text-slate-500">
+                  ตรวจสอบรูปแบบทะเบียนรถใน Plan และ API GPS
+                </div>
+              </div>
+            </div>
+          )}
+
+          {showSelectTruckMessage && (
+            <div className="pointer-events-none absolute inset-0 z-[500] flex items-center justify-center">
+              <div className="rounded-xl border border-slate-200 bg-white p-6 text-center shadow-lg">
+                <MapPin className="mx-auto h-8 w-8 text-blue-500" />
+
+                <div className="mt-3 font-bold text-slate-700">
+                  เลือกรถที่ต้องการติดตาม
+                </div>
+
+                <div className="mt-1 text-sm text-slate-500">
+                  เลือกทะเบียนจากรายการด้านบน
+                </div>
+
+                <div className="mt-2 text-xs text-slate-400">
+                  พบรถที่จับคู่ GPS ได้{' '}
+                  {
+                    matchedGpsLocations.length
+                  }{' '}
+                  คัน
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <aside className="w-full shrink-0 overflow-y-auto border-t border-slate-200 bg-white lg:w-[360px] lg:border-l lg:border-t-0">
+          {!selectedGpsLocation && (
+            <div className="flex h-full min-h-[260px] flex-col items-center justify-center p-8 text-center">
+              <TruckIcon className="h-10 w-10 text-slate-300" />
+
+              <div className="mt-3 font-bold text-slate-700">
+                ยังไม่ได้เลือกรถ
+              </div>
+
+              <div className="mt-1 text-sm text-slate-500">
+                รายละเอียดรถและเส้นทางจะแสดงบริเวณนี้
+              </div>
+            </div>
+          )}
+
+          {selectedGpsLocation && (
+            <div className="p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                    Selected Truck
+                  </div>
+
+                  <div className="mt-1 text-xl font-bold text-slate-900">
+                    {selectedTruck
+                      ?.licensePlate ||
+                      selectedGpsLocation
+                        .licensePlate ||
+                      '-'}
+                  </div>
+
+                  <div className="mt-1 text-xs text-slate-500">
+                    GPS ID:{' '}
+                    {
+                      selectedGpsLocation
+                        .gpsId
+                    }
+                  </div>
+                  <div className={`mt-2 text-xs font-bold ${Number(selectedGpsLocation.speed) > 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                    {Number(selectedGpsLocation.speed) > 0 ? 'รถวิ่ง' : 'รถจอด'} · {Number(selectedGpsLocation.speed).toFixed(0)} km/h
+                  </div>
+                </div>
+
+                {selectedFreshness && (
+                  <div
+                    className={`rounded-full border px-3 py-1 text-[10px] font-bold ${getFreshnessClasses(
+                      selectedFreshness
+                    )}`}
+                  >
+                    {selectedFreshness}
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-5 grid grid-cols-2 gap-3">
+                <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
+                  <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase text-blue-600">
+                    <Route className="h-3.5 w-3.5" />
+                    Distance
+                  </div>
+
+                  <div className="mt-2 text-xl font-bold text-blue-800">
+                    {routeResult
+                      ? `${routeResult.distanceKilometers.toFixed(
+                          1
+                        )} km`
+                      : '-'}
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-3">
+                  <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase text-indigo-600">
+                    <Clock className="h-3.5 w-3.5" />
+                    Travel Time
+                  </div>
+
+                  <div className="mt-2 text-base font-bold text-indigo-800">
+                    {routeResult
+                      ? formatDuration(
+                          routeResult
+                            .durationMinutes
+                        )
+                      : '-'}
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+                <div className="flex items-center gap-2 text-xs font-bold uppercase text-emerald-700">
+                  <Navigation className="h-4 w-4" />
+                  Estimated arrival at TPCAP
+                </div>
+
+                <div className="mt-2 text-lg font-bold text-emerald-900">
+                  {routeResult
+                    ? formatEta(
+                        routeResult
+                          .estimatedArrival
+                      )
+                    : '-'}
+                </div>
+
+                <div className="mt-1 text-xs text-emerald-700">
+                  คำนวณจากเส้นทางถนนไปยัง TPCAP
+                </div>
+              </div>
+
+              {isRouteLoading && (
+                <div className="mt-3 flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-3 text-sm text-blue-700">
+                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                  กำลังคำนวณเส้นทาง
+                </div>
+              )}
+
+              {routeError && (
+                <div className="mt-3 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-3 text-sm text-red-700">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+
+                  <span>
+                    {routeError}
+                  </span>
+                </div>
+              )}
+
+              {selectedGeofenceEvaluation && (
+                <div className={`mt-5 rounded-xl border p-4 ${
+                  (gpsDockResult?.isInside ?? selectedGeofenceEvaluation.isInside)
+                    ? 'border-emerald-200 bg-emerald-50'
+                    : 'border-slate-200 bg-slate-50'
+                }`}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Nearest Geofence</div>
+                    <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${
+                      (gpsDockResult?.isInside ?? selectedGeofenceEvaluation.isInside)
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-slate-200 text-slate-700'
+                    }`}>
+                      {(gpsDockResult?.isInside ?? selectedGeofenceEvaluation.isInside) ? 'INSIDE' : 'OUTSIDE'}
+                    </span>
+                  </div>
+                  <div className="mt-2 text-lg font-bold text-slate-900">
+                    {gpsDockResult?.geofenceName || selectedGeofenceEvaluation.name}
+                  </div>
+                  <div className="mt-2 grid grid-cols-2 gap-3 text-sm">
+                    <div><div className="text-xs text-slate-400">ระยะจากจุด</div><div className="font-bold text-slate-800">{(gpsDockResult?.distanceMeters ?? selectedGeofenceEvaluation.distanceMeters).toFixed(1)} เมตร</div></div>
+                    <div><div className="text-xs text-slate-400">รัศมีที่ตั้งไว้</div><div className="font-bold text-slate-800">{gpsDockResult?.radiusMeters ?? selectedGeofenceEvaluation.radiusMeters} เมตร</div></div>
+                  </div>
+                  <div className="mt-3 rounded-lg bg-white/80 px-3 py-2 text-xs font-semibold text-slate-700">
+                    สถานะตรวจจับ: {gpsDockResult?.status || selectedParkingStatus || '-'}
+                  </div>
+                  {gpsDockResult && (
+                    <div className={`mt-3 rounded-lg border p-3 text-xs ${
+                      gpsDockResult.waitingForExit
+                        ? 'border-orange-200 bg-orange-50 text-orange-800'
+                        : 'border-blue-200 bg-blue-50 text-blue-800'
+                    }`}>
+                      <div className="font-bold">รอบงานของรถวันนี้</div>
+                      <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-2">
+                        <div><span className="text-slate-500">Active:</span> <b>{gpsDockResult.activeCodeRun || '-'}</b></div>
+                        <div><span className="text-slate-500">Plan ETA:</span> <b>{formatPlanTime(gpsDockResult.activePlanEta)}</b></div>
+                        <div><span className="text-slate-500">ลำดับเที่ยว:</span> <b>{gpsDockResult.activeTripSequence || '-'} / {gpsDockResult.tripCountForVehicleToday}</b></div>
+                        <div><span className="text-slate-500">Next:</span> <b>{gpsDockResult.nextCodeRun || '-'}</b></div>
+                        <div><span className="text-slate-500">Next ETA:</span> <b>{formatPlanTime(gpsDockResult.nextPlanEta)}</b></div>
+                        <div><span className="text-slate-500">Completed:</span> <b>{gpsDockResult.lastCompletedCodeRun || '-'}</b></div>
+                      </div>
+                      <div className="mt-2 text-[11px]">Selection: {gpsDockResult.tripSelectionReason || '-'}</div>
+                      <div className="mt-1 text-[11px]">Ordering: {gpsDockResult.tripOrdering || 'PLAN_DATE_PLAN_ETA_CODE_RUN'}</div>
+                      {gpsDockResult.waitingForExit && (
+                        <div className="mt-2 font-bold">รอรถออกนอก Geofence ก่อนเริ่มรอบถัดไป</div>
+                      )}
+                      {gpsDockResult.exitConfirmedAt && (
+                        <div className="mt-1 text-[11px]">ยืนยันออกล่าสุด: {formatGpsDateTime(gpsDockResult.exitConfirmedAt)}</div>
+                      )}
+                    </div>
+                  )}
+                  {isGpsDockLoading && (
+                    <div className="mt-2 flex items-center gap-2 text-xs text-blue-700">
+                      <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                      กำลังอ่าน Dwell State จากระบบหลังบ้าน
+                    </div>
+                  )}
+                  {gpsDockError && (
+                    <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                      {gpsDockError}
+                    </div>
+                  )}
+                  {gpsDockResult && (
+                    <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-bold">
+                      <span className="rounded-full bg-blue-100 px-2 py-1 text-blue-700">
+                        ETA: {hasStampedEta ? 'STAMPED' : gpsDockResult.readyForGpsStampEta ? 'READY' : 'WAITING'}
+                      </span>
+                      <span className="rounded-full bg-orange-100 px-2 py-1 text-orange-700">
+                        ETD: {hasStampedEtd ? 'STAMPED' : gpsDockResult.readyForGpsStampEtd ? 'READY' : 'WAITING'}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="mt-5 border-t border-slate-200 pt-5">
+                <div className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                  Truck Information
+                </div>
+
+                <div className="mt-3 space-y-3 text-sm">
+                  <div className="flex items-start gap-3">
+                    <Route className="mt-0.5 h-4 w-4 shrink-0 text-blue-500" />
+
+                    <div>
+                      <div className="text-xs text-slate-400">
+                        Route
+                      </div>
+
+                      <div className="font-medium text-slate-800">
+                        {selectedTruck
+                          ?.route ||
+                          '-'}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-start gap-3">
+                    <Building2 className="mt-0.5 h-4 w-4 shrink-0 text-violet-500" />
+
+                    <div>
+                      <div className="text-xs text-slate-400">
+                        Supplier
+                      </div>
+
+                      <div className="font-medium text-slate-800">
+                        {selectedTruck
+                          ?.supplierName ||
+                          '-'}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-start gap-3">
+                    <UserRound className="mt-0.5 h-4 w-4 shrink-0 text-slate-500" />
+
+                    <div>
+                      <div className="text-xs text-slate-400">
+                        Driver
+                      </div>
+
+                      <div className="font-medium text-slate-800">
+                        {selectedTruck
+                          ?.driverName ||
+                          '-'}
+                      </div>
+
+                      <div className="mt-0.5 text-xs text-slate-500">
+                        {selectedTruck
+                          ?.phone ||
+                          '-'}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-start gap-3">
+                    <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
+
+                    <div>
+                      <div className="text-xs text-slate-400">
+                        Drop Point
+                      </div>
+
+                      <div className="font-medium text-slate-800">
+                        {selectedTruck
+                          ?.dropPoint ||
+                          '-'}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-5 border-t border-slate-200 pt-5">
+                <div className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                  GPS Information
+                </div>
+
+                <div className="mt-3 grid grid-cols-2 gap-3">
+                  <div className="rounded-lg bg-slate-50 p-3">
+                    <div className="text-[10px] font-bold uppercase text-slate-400">
+                      Speed
+                    </div>
+
+                    <div className="mt-1 text-lg font-bold text-slate-800">
+                      {
+                        selectedGpsLocation
+                          .speed
+                      }{' '}
+                      km/h
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg bg-slate-50 p-3">
+                    <div className="text-[10px] font-bold uppercase text-slate-400">
+                      Heading
+                    </div>
+
+                    <div className="mt-1 text-lg font-bold text-slate-800">
+                      {
+                        selectedGpsLocation
+                          .heading
+                      }
+                      °
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-3 space-y-3 text-sm">
+                  <div>
+                    <div className="text-xs text-slate-400">
+                      สถานที่ล่าสุด
+                    </div>
+
+                    <div className="mt-1 font-medium text-slate-800">
+                      {selectedGpsLocation
+                        .locationName ||
+                        '-'}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-xs text-slate-400">
+                      สถานะ GPS
+                    </div>
+
+                    <div className="mt-1 font-medium text-slate-800">
+                      {selectedGpsLocation
+                        .gpsStatus ||
+                        '-'}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-xs text-slate-400">
+                      เวลา GPS
+                    </div>
+
+                    <div className="mt-1 font-mono text-xs font-medium text-slate-700">
+                      {formatGpsDateTime(
+                        selectedGpsLocation
+                          .gpsTime
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-xs text-slate-400">
+                      เวลารับข้อมูล
+                    </div>
+
+                    <div className="mt-1 font-mono text-xs font-medium text-slate-700">
+                      {formatGpsDateTime(
+                        selectedGpsLocation
+                          .receivedAt
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-xs text-slate-400">
+                      พิกัดล่าสุด
+                    </div>
+
+                    <div className="mt-1 break-all font-mono text-xs font-medium text-slate-700">
+                      {selectedGpsLocation
+                        .latitude.toFixed(
+                          6
+                        )}
+                      ,{' '}
+                      {selectedGpsLocation
+                        .longitude.toFixed(
+                          6
+                        )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </aside>
+      </div>
     </div>
   );
 }
