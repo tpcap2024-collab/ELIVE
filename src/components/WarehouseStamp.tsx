@@ -43,7 +43,8 @@ function isInboundProject(truck: Truck): boolean {
   return String(truck.project || '').trim().toUpperCase() === 'INBOUND';
 }
 function hasNoWorkAction(truck: Truck): boolean {
-  return String(truck.actionProblem || '').includes('ไม่มีงาน');
+  const text = String(truck.actionProblem || '');
+  return text.includes('ไม่มีงาน') || text.includes('GPS มีปัญหา');
 }
 
 function getPlanEtaSortValue(value?: string): number {
