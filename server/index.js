@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '25';
+const API_VERSION = '26';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -49,6 +49,7 @@ const GPS_DWELL_THRESHOLD_MS = 3 * 60 * 1000;
 const GPS_STALE_THRESHOLD_MS = 5 * 60 * 1000;
 const GPS_MOVEMENT_GRACE_MS = 30 * 1000;
 const GPS_NEXT_TRIP_EARLY_WINDOW_MINUTES = 120;
+const GPS_LSP_ARRIVAL_GROUP_WINDOW_MINUTES = 30;
 const GPS_DWELL_STATE_TTL_SECONDS = 4 * 60 * 60;
 const GPS_DWELL_KEY_PREFIX = 'elive:gps-dwell:';
 const GPS_VEHICLE_CYCLE_KEY_PREFIX = 'elive:gps-vehicle-cycle:';
@@ -687,10 +688,30 @@ function parsePlanMinutes(value) {
   }
   const text = cleanText(value);
   const match = text.match(/^(\d{1,2}):(\d{2})/);
-  if (!match) return null;
-  const hour = Number(match[1]);
-  const minute = Number(match[2]);
-  return hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59 ? hour * 60 + minute : null;
+  if (match) {
+    const hour = Number(match[1]);
+    const minute = Number(match[2]);
+    return hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59
+      ? hour * 60 + minute
+      : null;
+  }
+  if (text.includes('T')) {
+    const date = new Date(text);
+    if (!Number.isNaN(date.getTime())) {
+      const sheetsTimeValue = date.getUTCFullYear() === 1899 || date.getUTCFullYear() === 1900;
+      if (sheetsTimeValue) return date.getUTCHours() * 60 + date.getUTCMinutes();
+      const parts = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Asia/Bangkok',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      }).formatToParts(date);
+      const hour = Number(parts.find(part => part.type === 'hour')?.value || 0) % 24;
+      const minute = Number(parts.find(part => part.type === 'minute')?.value || 0);
+      return hour * 60 + minute;
+    }
+  }
+  return null;
 }
 function getBangkokMinuteOfDay(date = new Date()) {
   const parts = new Intl.DateTimeFormat('en-GB', {
@@ -889,6 +910,28 @@ function selectGpsEtaStampTrips(trips, nowMinutes, geofenceId) {
     )
     .sort(compareTripsByPlanTime);
 }
+function selectGpsEtaArrivalGroup(trips, activeTrip, geofenceId) {
+  if (!activeTrip) return [];
+  const activeGeofenceId = getGeofenceIdForDropPoint(activeTrip.dropPoint);
+  if (!activeGeofenceId || activeGeofenceId !== geofenceId) return [];
+  const isPendingEtaTrip = trip =>
+    !trip.stampEta &&
+    !trip.stampEtd &&
+    !trip.noWorkAction &&
+    getGeofenceIdForDropPoint(trip.dropPoint) === geofenceId;
+  if (geofenceId !== 'TPCAP-LSP' || activeTrip.planEtaMinutes === null) {
+    return isPendingEtaTrip(activeTrip) ? [activeTrip] : [];
+  }
+  return trips
+    .filter(trip =>
+      isPendingEtaTrip(trip) &&
+      trip.planEtaMinutes !== null &&
+      Math.abs(trip.planEtaMinutes - activeTrip.planEtaMinutes) <=
+        GPS_LSP_ARRIVAL_GROUP_WINDOW_MINUTES
+    )
+    .sort(compareTripsByPlanTime);
+}
+
 function selectTripForVehicle(trips, nowMinutes, previousCycle = null) {
   const inProgressTrips = trips
     .filter(trip => trip.stampEta && !trip.stampEtd && !trip.noWorkAction)
@@ -1012,7 +1055,7 @@ async function resolveVehicleTrip(input, isInside, dataOverride = null) {
       ? 'WAITING_FOR_EXIT_AFTER_ETD'
       : selected.selectionReason,
     tripCount: trips.length,
-    tripOrdering: 'NEAREST_PLAN_ETA_THEN_EARLIER_PLAN_ETA_THEN_CODE_RUN',
+    tripOrdering: 'ACTIVE_TRIP_THEN_LSP_ARRIVAL_GROUP_WITHIN_30_MINUTES',
     updatedAt: new Date().toISOString(),
   };
   await writeVehicleCycleState(input.licensePlate, state);
@@ -1241,8 +1284,16 @@ async function processPendingGpsStamp(pendingId) {
       const pendingGeofenceId = GPS_GEOFENCES.find(
         geofence => geofence.name === record.geofence || geofence.id === record.geofence
       )?.id || null;
+      const currentArrivalGroup = selectGpsEtaArrivalGroup(
+        currentTrips,
+        currentSelection.activeTrip,
+        pendingGeofenceId
+      );
+      const pendingIsInCurrentArrivalGroup = currentArrivalGroup.some(
+        arrivalTrip => arrivalTrip.codeRun === record.codeRun
+      );
       if (
-        selectedCodeRun !== record.codeRun ||
+        !pendingIsInCurrentArrivalGroup ||
         !selectedGeofenceId ||
         selectedGeofenceId !== pendingGeofenceId
       ) {
@@ -1254,6 +1305,7 @@ async function processPendingGpsStamp(pendingId) {
           selectedCodeRun,
           pendingGeofenceId,
           selectedGeofenceId,
+          currentArrivalGroupCodeRuns: currentArrivalGroup.map(arrivalTrip => arrivalTrip.codeRun),
         }));
         return await closePendingStamp(record, 'SUPERSEDED', {
           lastError: 'PENDING_ETA_IS_NOT_CURRENT_ACTIVE_TRIP',
@@ -1351,16 +1403,15 @@ async function evaluateGpsDock(payload, dataOverride = null) {
   const tripResolution = await resolveVehicleTrip(input, isInside, dataOverride);
   const vehicleCycle = tripResolution.state;
   const activeTrip = tripResolution.activeTrip;
-  const eligibleEtaTrips = activeTrip &&
-    !activeTrip.stampEta &&
-    !activeTrip.stampEtd &&
-    !activeTrip.noWorkAction &&
-    (activeTrip.planEtaMinutes === null ||
-      tripResolution.nowMinutes >=
-        activeTrip.planEtaMinutes - GPS_NEXT_TRIP_EARLY_WINDOW_MINUTES) &&
-    getGeofenceIdForDropPoint(activeTrip.dropPoint) === nearest.id
-      ? [activeTrip]
-      : [];
+  const eligibleEtaTrips = selectGpsEtaArrivalGroup(
+    tripResolution.trips,
+    activeTrip,
+    nearest.id
+  ).filter(trip =>
+    trip.planEtaMinutes === null ||
+    tripResolution.nowMinutes >=
+      trip.planEtaMinutes - GPS_NEXT_TRIP_EARLY_WINDOW_MINUTES
+  );
   const effectiveCodeRun = activeTrip?.codeRun || input.codeRun;
   const platesMatch = activeTrip
     ? normalizeLicensePlate(input.licensePlate) === normalizeLicensePlate(activeTrip.planLicensePlate)
@@ -3167,8 +3218,9 @@ app.get(['/health', '/api/health'], (req, res) => {
       noWorkActionAutoStampBlocked: true,
       tripTieBreaker: 'EARLIER_PLAN_ETA_THEN_CODE_RUN_NUMERIC',
       exitRequiredBeforeNextTrip: true,
-      etaRule: 'STAMP_ACTIVE_TRIP_ONLY_IN_MATCHING_GEOFENCE',
-      multiDropSameGeofenceEtaEnabled: false,
+      etaRule: 'STAMP_ACTIVE_ARRIVAL_GROUP_IN_MATCHING_GEOFENCE',
+      multiDropSameGeofenceEtaEnabled: true,
+      lspArrivalGroupWindowMinutes: GPS_LSP_ARRIVAL_GROUP_WINDOW_MINUTES,
       dropPointGeofenceMapping: { L1: 'TPCAP-LSP', L2: 'TPCAP-LSP', L3: 'TPCAP-LSP', M1: 'TPCAP-LSP', R1: 'TPCAP-R1', R2: 'TPCAP-R2' },
       pendingStampRetryQueueEnabled: true,
       pendingStampRetryBaseSeconds: Math.floor(GPS_PENDING_STAMP_BASE_RETRY_MS / 1000),
