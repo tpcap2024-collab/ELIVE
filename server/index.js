@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '24';
+const API_VERSION = '25';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -1199,7 +1199,7 @@ async function processPendingGpsStamp(pendingId) {
   try {
     let record = await readPendingStamp(pendingId);
     if (!record) return { status: 'MISSING', pendingId };
-    if (['STAMPED', 'ALREADY_STAMPED', 'BLOCKED_NO_WORK'].includes(record.status)) return record;
+    if (['STAMPED', 'ALREADY_STAMPED', 'BLOCKED_NO_WORK', 'SUPERSEDED'].includes(record.status)) return record;
     const attemptCount = Number(record.attemptCount || 0) + 1;
     const lastAttemptAt = new Date().toISOString();
     record = { ...record, status: 'PROCESSING', attemptCount, lastAttemptAt, lastError: null, updatedAt: lastAttemptAt };
@@ -1221,6 +1221,45 @@ async function processPendingGpsStamp(pendingId) {
     }
     if (record.stampType === 'ETD' && !trip.stampEta) {
       throw new Error('STAMP_ETA_REQUIRED_BEFORE_ETD');
+    }
+    if (record.stampType === 'ETA') {
+      const currentTrips = buildTripsForPlate(
+        latestData,
+        record.licensePlate,
+        pendingDate
+      );
+      const currentCycle = await readVehicleCycleState(record.licensePlate);
+      const currentSelection = selectTripForVehicle(
+        currentTrips,
+        getBangkokMinuteOfDay(new Date()),
+        currentCycle
+      );
+      const selectedCodeRun = currentSelection.activeTrip?.codeRun || null;
+      const selectedGeofenceId = currentSelection.activeTrip
+        ? getGeofenceIdForDropPoint(currentSelection.activeTrip.dropPoint)
+        : null;
+      const pendingGeofenceId = GPS_GEOFENCES.find(
+        geofence => geofence.name === record.geofence || geofence.id === record.geofence
+      )?.id || null;
+      if (
+        selectedCodeRun !== record.codeRun ||
+        !selectedGeofenceId ||
+        selectedGeofenceId !== pendingGeofenceId
+      ) {
+        console.warn(JSON.stringify({
+          logType: 'ELIVE_GPS_STAMP',
+          event: 'PENDING_ETA_SUPERSEDED',
+          pendingId,
+          pendingCodeRun: record.codeRun,
+          selectedCodeRun,
+          pendingGeofenceId,
+          selectedGeofenceId,
+        }));
+        return await closePendingStamp(record, 'SUPERSEDED', {
+          lastError: 'PENDING_ETA_IS_NOT_CURRENT_ACTIVE_TRIP',
+          selectedCodeRun,
+        });
+      }
     }
     console.log(JSON.stringify({ logType: 'ELIVE_GPS_STAMP', event: 'STAMP_REQUEST_SENT', pendingId, codeRun: record.codeRun, stampType: record.stampType, attemptCount }));
     const response = await stampActualData(record.payload);
@@ -1312,12 +1351,17 @@ async function evaluateGpsDock(payload, dataOverride = null) {
   const tripResolution = await resolveVehicleTrip(input, isInside, dataOverride);
   const vehicleCycle = tripResolution.state;
   const activeTrip = tripResolution.activeTrip;
-  const eligibleEtaTrips = selectGpsEtaStampTrips(
-    tripResolution.trips,
-    tripResolution.nowMinutes,
-    nearest.id
-  );
-  const effectiveCodeRun = activeTrip?.codeRun || eligibleEtaTrips[0]?.codeRun || input.codeRun;
+  const eligibleEtaTrips = activeTrip &&
+    !activeTrip.stampEta &&
+    !activeTrip.stampEtd &&
+    !activeTrip.noWorkAction &&
+    (activeTrip.planEtaMinutes === null ||
+      tripResolution.nowMinutes >=
+        activeTrip.planEtaMinutes - GPS_NEXT_TRIP_EARLY_WINDOW_MINUTES) &&
+    getGeofenceIdForDropPoint(activeTrip.dropPoint) === nearest.id
+      ? [activeTrip]
+      : [];
+  const effectiveCodeRun = activeTrip?.codeRun || input.codeRun;
   const platesMatch = activeTrip
     ? normalizeLicensePlate(input.licensePlate) === normalizeLicensePlate(activeTrip.planLicensePlate)
     : normalizeLicensePlate(input.licensePlate) === normalizeLicensePlate(input.planLicensePlate);
@@ -3123,8 +3167,8 @@ app.get(['/health', '/api/health'], (req, res) => {
       noWorkActionAutoStampBlocked: true,
       tripTieBreaker: 'EARLIER_PLAN_ETA_THEN_CODE_RUN_NUMERIC',
       exitRequiredBeforeNextTrip: true,
-      etaRule: 'STAMP_ALL_ELIGIBLE_TRIPS_IN_MATCHING_GEOFENCE',
-      multiDropSameGeofenceEtaEnabled: true,
+      etaRule: 'STAMP_ACTIVE_TRIP_ONLY_IN_MATCHING_GEOFENCE',
+      multiDropSameGeofenceEtaEnabled: false,
       dropPointGeofenceMapping: { L1: 'TPCAP-LSP', L2: 'TPCAP-LSP', L3: 'TPCAP-LSP', M1: 'TPCAP-LSP', R1: 'TPCAP-R1', R2: 'TPCAP-R2' },
       pendingStampRetryQueueEnabled: true,
       pendingStampRetryBaseSeconds: Math.floor(GPS_PENDING_STAMP_BASE_RETRY_MS / 1000),
