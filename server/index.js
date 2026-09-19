@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '26';
+const API_VERSION = '27';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -78,6 +78,10 @@ const GPS_DAILY_PLAN_CACHE_TTL_SECONDS = 36 * 60 * 60;
 const GPS_REALTIME_CACHE_KEY = 'elive:gps-worker:realtime-snapshot';
 const GPS_REALTIME_CACHE_TTL_SECONDS = 10 * 60;
 const GPS_REALTIME_FALLBACK_MAX_AGE_MS = 5 * 60 * 1000;
+const GPS_REALTIME_SYNCHRONIZER_LOCK_KEY = 'elive:gps-worker:realtime-synchronizer-lock';
+const GPS_REALTIME_SYNCHRONIZER_LOCK_SECONDS = 90;
+const GPS_REALTIME_SYNCHRONIZER_WAIT_MS = 95000;
+const GPS_REALTIME_SYNCHRONIZER_POLL_MS = 250;
 const SERVICE_MODE = cleanText(process.env.SERVICE_MODE || 'web').toLowerCase();
 const GPS_GEOFENCES = Object.freeze([
   Object.freeze({
@@ -806,41 +810,139 @@ async function clearGpsWorkerDailyPlanCache(dateText = null) {
   return deletedCount;
 }
 async function writeGpsWorkerRealtimeSnapshot(realtime) {
-  const snapshot = { actual: Array.isArray(realtime?.actual) ? realtime.actual : [], gps: Array.isArray(realtime?.gps) ? realtime.gps : [], cachedAtMs: Date.now(), cachedAt: new Date().toISOString() };
-  await requireRedisClient().set(GPS_REALTIME_CACHE_KEY, JSON.stringify(snapshot), { EX: GPS_REALTIME_CACHE_TTL_SECONDS });
+  const snapshot = {
+    actual: Array.isArray(realtime?.actual) ? realtime.actual : [],
+    gps: Array.isArray(realtime?.gps) ? realtime.gps : [],
+    cachedAtMs: Date.now(),
+    cachedAt: new Date().toISOString(),
+  };
+  await requireRedisClient().set(
+    GPS_REALTIME_CACHE_KEY,
+    JSON.stringify(snapshot),
+    { EX: GPS_REALTIME_CACHE_TTL_SECONDS }
+  );
   return snapshot;
 }
-async function readGpsWorkerRealtimeFallback() {
-  const raw = await requireRedisClient().get(GPS_REALTIME_CACHE_KEY);
+async function readGpsWorkerRealtimeSnapshot(maximumAgeMs = GPS_REALTIME_FALLBACK_MAX_AGE_MS) {
+  const client = requireRedisClient();
+  const raw = await client.get(GPS_REALTIME_CACHE_KEY);
   if (!raw) return null;
   try {
     const snapshot = JSON.parse(raw);
     const ageMs = Date.now() - Number(snapshot.cachedAtMs || 0);
-    if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > GPS_REALTIME_FALLBACK_MAX_AGE_MS) return null;
+    if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > maximumAgeMs) return null;
     if (!Array.isArray(snapshot.actual) || !Array.isArray(snapshot.gps)) return null;
     return { ...snapshot, ageMs };
   } catch {
-    await requireRedisClient().del(GPS_REALTIME_CACHE_KEY);
+    await client.del(GPS_REALTIME_CACHE_KEY);
     return null;
   }
 }
-async function getGpsWorkerRealtimeWithFallback() {
-  try {
-    const realtime = await requestAppsScriptGet('getGpsWorkerRealtime');
-    await writeGpsWorkerRealtimeSnapshot(realtime);
-    return { realtime, source: 'google-apps-script', fallbackUsed: false, fallbackAgeMs: 0 };
-  } catch (error) {
-    const fallback = await readGpsWorkerRealtimeFallback();
-    if (!fallback) throw error;
-    console.warn(JSON.stringify({ logType: 'ELIVE_GPS_WORKER', event: 'REALTIME_FALLBACK_USED', reason: getErrorMessage(error), fallbackAgeMs: fallback.ageMs, cachedAt: fallback.cachedAt }));
-    return { realtime: fallback, source: 'redis-realtime-fallback', fallbackUsed: true, fallbackAgeMs: fallback.ageMs };
+async function synchronizeGpsWorkerRealtime() {
+  const client = requireRedisClient();
+  const deadline = Date.now() + GPS_REALTIME_SYNCHRONIZER_WAIT_MS;
+  while (Date.now() < deadline) {
+    const lockValue = JSON.stringify({
+      token: randomUUID(),
+      action: 'getGpsWorkerRealtime',
+      startedAt: new Date().toISOString(),
+    });
+    const acquired = await client.set(
+      GPS_REALTIME_SYNCHRONIZER_LOCK_KEY,
+      lockValue,
+      { NX: true, EX: GPS_REALTIME_SYNCHRONIZER_LOCK_SECONDS }
+    );
+    if (!acquired) {
+      const sharedSnapshot = await readGpsWorkerRealtimeSnapshot();
+      if (sharedSnapshot) {
+        return {
+          realtime: sharedSnapshot,
+          source: 'redis-realtime-shared',
+          fallbackUsed: false,
+          fallbackAgeMs: sharedSnapshot.ageMs,
+          synchronized: false,
+        };
+      }
+      await wait(GPS_REALTIME_SYNCHRONIZER_POLL_MS);
+      continue;
+    }
+    try {
+      console.log(JSON.stringify({
+        logType: 'ELIVE_GPS_REALTIME_SYNCHRONIZER',
+        event: 'SYNC_STARTED',
+      }));
+      const realtime = await requestAppsScriptGet('getGpsWorkerRealtime');
+      const snapshot = await writeGpsWorkerRealtimeSnapshot(realtime);
+      console.log(JSON.stringify({
+        logType: 'ELIVE_GPS_REALTIME_SYNCHRONIZER',
+        event: 'SYNC_COMPLETED',
+        cachedAt: snapshot.cachedAt,
+        actualRows: Math.max(0, snapshot.actual.length - 1),
+        gpsRows: Math.max(0, snapshot.gps.length - 1),
+      }));
+      return {
+        realtime: snapshot,
+        source: 'google-apps-script-synchronizer',
+        fallbackUsed: false,
+        fallbackAgeMs: 0,
+        synchronized: true,
+      };
+    } catch (error) {
+      const fallback = await readGpsWorkerRealtimeSnapshot();
+      if (!fallback) throw error;
+      console.warn(JSON.stringify({
+        logType: 'ELIVE_GPS_REALTIME_SYNCHRONIZER',
+        event: 'SYNC_FALLBACK_USED',
+        reason: getErrorMessage(error),
+        fallbackAgeMs: fallback.ageMs,
+        cachedAt: fallback.cachedAt,
+      }));
+      return {
+        realtime: fallback,
+        source: 'redis-realtime-fallback',
+        fallbackUsed: true,
+        fallbackAgeMs: fallback.ageMs,
+        synchronized: false,
+      };
+    } finally {
+      await releaseRedisLock(
+        client,
+        GPS_REALTIME_SYNCHRONIZER_LOCK_KEY,
+        lockValue
+      ).catch(() => {});
+    }
   }
+  throw new Error('GPS_REALTIME_SYNCHRONIZER_WAIT_TIMEOUT');
+}
+async function getSharedGpsWorkerRealtime(maximumAgeMs = GPS_REALTIME_FALLBACK_MAX_AGE_MS) {
+  const snapshot = await readGpsWorkerRealtimeSnapshot(maximumAgeMs);
+  if (!snapshot) throw new Error('GPS_REALTIME_SNAPSHOT_UNAVAILABLE');
+  return {
+    realtime: snapshot,
+    source: 'redis-realtime-shared',
+    fallbackUsed: false,
+    fallbackAgeMs: snapshot.ageMs,
+    synchronized: false,
+  };
 }
 async function getGpsWorkerCycleData(dateText) {
-  const [dailyPlanResult, realtimeResult] = await Promise.all([getGpsWorkerDailyPlan(dateText), getGpsWorkerRealtimeWithFallback()]);
+  const dailyPlanResult = await getGpsWorkerDailyPlan(dateText);
+  const realtimeResult = await getSharedGpsWorkerRealtime();
   const realtime = realtimeResult.realtime;
-  return { data: { plan: dailyPlanResult.plan, actual: Array.isArray(realtime?.actual) ? realtime.actual : [], gps: Array.isArray(realtime?.gps) ? realtime.gps : [] }, planSource: dailyPlanResult.source, realtimeSource: realtimeResult.source, realtimeFallbackUsed: realtimeResult.fallbackUsed, realtimeFallbackAgeMs: realtimeResult.fallbackAgeMs };
+  return {
+    data: {
+      plan: dailyPlanResult.plan,
+      actual: Array.isArray(realtime?.actual) ? realtime.actual : [],
+      gps: Array.isArray(realtime?.gps) ? realtime.gps : [],
+    },
+    planSource: dailyPlanResult.source,
+    realtimeSource: realtimeResult.source,
+    realtimeFallbackUsed: realtimeResult.fallbackUsed,
+    realtimeFallbackAgeMs: realtimeResult.fallbackAgeMs,
+    realtimeSynchronized: realtimeResult.synchronized,
+  };
 }
+
 function compareTripsByPlanTime(first, second) {
   const firstDate = cleanText(first.planDate);
   const secondDate = cleanText(second.planDate);
@@ -1656,14 +1758,20 @@ async function runGpsBackgroundCycle() {
       console.log(JSON.stringify({ logType: 'ELIVE_GPS_WORKER', ...status }));
       return status;
     }
+    const realtimeSynchronization = await synchronizeGpsWorkerRealtime();
     const pendingRetrySummary = await processDuePendingGpsStamps();
     summary.pendingRetry = pendingRetrySummary;
     const workerDate = getBangkokDateText(new Date());
     const workerDataResult = await getGpsWorkerCycleData(workerDate);
+    workerDataResult.realtimeSource = realtimeSynchronization.source;
+    workerDataResult.realtimeFallbackUsed = realtimeSynchronization.fallbackUsed;
+    workerDataResult.realtimeFallbackAgeMs = realtimeSynchronization.fallbackAgeMs;
+    workerDataResult.realtimeSynchronized = realtimeSynchronization.synchronized;
     summary.dailyPlanSource = workerDataResult.planSource;
     summary.realtimeSource = workerDataResult.realtimeSource;
     summary.realtimeFallbackUsed = workerDataResult.realtimeFallbackUsed;
     summary.realtimeFallbackAgeMs = workerDataResult.realtimeFallbackAgeMs;
+    summary.realtimeSynchronized = workerDataResult.realtimeSynchronized;
     const inputs = buildBackgroundGpsInputs(workerDataResult.data);
     for (const input of inputs) {
       if (gpsWorkerStopping) break;
@@ -3201,6 +3309,13 @@ app.get(['/health', '/api/health'], (req, res) => {
       workerForcesFullTruckRefreshEveryCycle: false,
       appsScriptGetRetryPolicy: 'RETRY_TIMEOUT_408_425_429_5XX_AND_TRANSIENT_HTML_404',
       realtimeRedisFallbackEnabled: true,
+      realtimeSynchronizerEnabled: true,
+      realtimeSynchronizerPolicy: 'ONE_FETCH_WRITES_REDIS_WORKER_AND_ELIVE_SHARE',
+      realtimeSynchronizerIntervalSeconds: Math.floor(GPS_BACKGROUND_WORKER_INTERVAL_MS / 1000),
+      realtimeSynchronizerLockSeconds: GPS_REALTIME_SYNCHRONIZER_LOCK_SECONDS,
+      eliveReadsSharedRealtimeSnapshot: true,
+      gpsWorkerReadsSharedRealtimeSnapshot: true,
+      directGetTrucksForDashboardEnabled: false,
       realtimeCacheTtlSeconds: GPS_REALTIME_CACHE_TTL_SECONDS,
       realtimeFallbackMaximumAgeSeconds: Math.floor(GPS_REALTIME_FALLBACK_MAX_AGE_MS / 1000),
       realtimeFallbackStillEnforcesGpsStaleGuard: true,
@@ -3391,22 +3506,34 @@ app.delete('/api/gps/dock-status/:codeRun', requireAuthentication, requireMinimu
 });
 app.get('/api/trucks', requireAuthentication, requireMinimumRole('TV_VIEWER'), async (req, res) => {
   try {
-    const forceRefresh =
-      cleanText(req.query.refresh).toLowerCase() === 'true';
-    const result = await getTruckDataWithCache(forceRefresh);
-    const cacheAgeMs = getTruckCacheAgeMs();
-
+    const forceRefresh = cleanText(req.query.refresh).toLowerCase() === 'true';
+    if (forceRefresh) await synchronizeGpsWorkerRealtime();
+    let realtimeResult;
+    try {
+      realtimeResult = await getSharedGpsWorkerRealtime();
+    } catch {
+      realtimeResult = await synchronizeGpsWorkerRealtime();
+    }
+    const dateText = getBangkokDateText(new Date());
+    const dailyPlanResult = await getGpsWorkerDailyPlan(dateText);
+    const snapshot = realtimeResult.realtime;
+    const responseData = {
+      status: 'success',
+      plan: dailyPlanResult.plan,
+      actual: Array.isArray(snapshot?.actual) ? snapshot.actual : [],
+      gps: Array.isArray(snapshot?.gps) ? snapshot.gps : [],
+    };
     res.setHeader('Cache-Control', 'no-store');
-    res.setHeader('X-ELIVE-Data-Source', result.source);
-
+    res.setHeader('X-ELIVE-Data-Source', realtimeResult.source);
     return res.status(200).json({
-      ...result.data,
+      ...responseData,
       meta: {
-        source: result.source,
-        cacheAgeSeconds:
-          cacheAgeMs === null
-            ? 0
-            : Math.max(0, Math.round(cacheAgeMs / 1000)),
+        source: realtimeResult.source,
+        planSource: dailyPlanResult.source,
+        cacheAgeSeconds: Math.max(0, Math.round(realtimeResult.fallbackAgeMs / 1000)),
+        realtimeFallbackUsed: realtimeResult.fallbackUsed,
+        sharedRealtimeSnapshot: true,
+        directGetTrucksUsed: false,
         serverTime: new Date().toISOString(),
       },
     });
@@ -3630,8 +3757,18 @@ app.post('/api/plans/:codeRun/stamp', requireAuthentication, requireMinimumRole(
     if (override && ROLE_LEVELS[req.auth.role] < ROLE_LEVELS.SUPERVISOR) {
       return res.status(403).json({ success: false, error: 'Supervisor permission is required for Stamp override.' });
     }
-    const truckResult = await getTruckDataWithCache(true);
-    const trip = findTripByCodeRun(truckResult.data, codeRun);
+    let realtimeResult;
+    try {
+      realtimeResult = await getSharedGpsWorkerRealtime();
+    } catch {
+      realtimeResult = await synchronizeGpsWorkerRealtime();
+    }
+    const dailyPlanResult = await getGpsWorkerDailyPlan(getBangkokDateText(new Date()));
+    const trip = findTripByCodeRun({
+      plan: dailyPlanResult.plan,
+      actual: realtimeResult.realtime.actual,
+      gps: realtimeResult.realtime.gps,
+    }, codeRun);
     if (stampType === 'ETA' && trip.stampEtd) throw new Error('Cannot Stamp ETA because this trip already has Stamp ETD.');
     if (stampType === 'ETD' && !trip.stampEta) throw new Error('Stamp ETA is required before Stamp ETD.');
     const stampSource = override ? 'SUPERVISOR_OVERRIDE' : 'MANUAL';
