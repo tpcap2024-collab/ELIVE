@@ -49,7 +49,7 @@ const GPS_PARKING_SPEED_THRESHOLD_KMH = 0;
 const GPS_DWELL_THRESHOLD_MS = 3 * 60 * 1000;
 const GPS_STALE_THRESHOLD_MS = 5 * 60 * 1000;
 const GPS_MOVEMENT_GRACE_MS = 30 * 1000;
-const GPS_NEXT_TRIP_EARLY_WINDOW_MINUTES = 120;
+const GPS_NEXT_TRIP_EARLY_WINDOW_MINUTES = 90;
 const GPS_LSP_ARRIVAL_GROUP_WINDOW_MINUTES = 30;
 const GPS_DWELL_STATE_TTL_SECONDS = 4 * 60 * 60;
 const GPS_DWELL_KEY_PREFIX = 'elive:gps-dwell:';
@@ -65,7 +65,7 @@ const GPS_PENDING_STAMP_TTL_SECONDS = 7 * 24 * 60 * 60;
 const GPS_PENDING_STAMP_LOCK_SECONDS = 90;
 const GPS_PENDING_STAMP_BASE_RETRY_MS = 30 * 1000;
 const GPS_PENDING_STAMP_MAX_RETRY_MS = 15 * 60 * 1000;
-const GPS_PENDING_STAMP_BATCH_SIZE = 3;
+const GPS_PENDING_STAMP_BATCH_SIZE = 1;
 const GPS_PENDING_STAMP_SPACING_MS = 2000;
 const GPS_PENDING_STAMP_LOCK_BUSY_BASE_RETRY_MS = 60 * 1000;
 const GPS_PENDING_STAMP_LOCK_BUSY_MAX_RETRY_MS = 15 * 60 * 1000;
@@ -1250,13 +1250,49 @@ function findTripByCodeRun(data, codeRun) {
   const actionProblem = cleanText(actualRow[6]);
   return {
     codeRun: normalizedCodeRun,
+    planDate: parseSheetDateText(planRow[1]),
     planLicensePlate: cleanText(planRow[4]),
+    planEta: cleanText(planRow[10]),
+    planEtaMinutes: parsePlanMinutes(planRow[10]),
     stampEta: cleanText(actualRow[4]),
     stampEtd: cleanText(actualRow[5]),
     actionProblem,
     noWorkAction: actionProblem.includes('ไม่มีงานลง') || actionProblem.includes('ไม่มีงาน'),
   };
 }
+function getEtaWindowDecision(planDate, planEta, eventTime) {
+  const planEtaMinutes = parsePlanMinutes(planEta);
+  if (!planDate || planEtaMinutes === null) {
+    return { allowed: false, reason: 'PLAN_ETA_UNAVAILABLE' };
+  }
+  const eventDate = parseBangkokDateTime(eventTime, 'stampTime');
+  const eventDateText = getBangkokDateText(eventDate);
+  const eventMinutes = getBangkokMinuteOfDay(eventDate);
+  if (eventDateText !== planDate) {
+    return { allowed: false, reason: 'STAMP_DATE_DOES_NOT_MATCH_PLAN_DATE' };
+  }
+  const earliestAllowedMinutes = planEtaMinutes - GPS_NEXT_TRIP_EARLY_WINDOW_MINUTES;
+  return {
+    allowed: eventMinutes >= earliestAllowedMinutes,
+    reason: eventMinutes >= earliestAllowedMinutes ? null : 'ETA_BEFORE_PLAN_WINDOW',
+    planDate,
+    planEta,
+    eventMinutes,
+    earliestAllowedMinutes,
+    earlyWindowMinutes: GPS_NEXT_TRIP_EARLY_WINDOW_MINUTES,
+  };
+}
+
+function comparePendingStampRecords(first, second) {
+  const firstGpsTime = Date.parse(first?.gpsTime || '') || Number.MAX_SAFE_INTEGER;
+  const secondGpsTime = Date.parse(second?.gpsTime || '') || Number.MAX_SAFE_INTEGER;
+  if (firstGpsTime !== secondGpsTime) return firstGpsTime - secondGpsTime;
+  const firstCreatedAt = Date.parse(first?.createdAt || '') || Number.MAX_SAFE_INTEGER;
+  const secondCreatedAt = Date.parse(second?.createdAt || '') || Number.MAX_SAFE_INTEGER;
+  if (firstCreatedAt !== secondCreatedAt) return firstCreatedAt - secondCreatedAt;
+  return cleanText(first?.codeRun).localeCompare(cleanText(second?.codeRun), undefined, { numeric: true });
+}
+
 async function stampActualData(payload) {
   const result = await requestAppsScriptPost('stampActualData', payload);
   clearTruckCache();
@@ -1382,6 +1418,20 @@ async function processPendingGpsStamp(pendingId) {
       throw new Error('STAMP_ETA_REQUIRED_BEFORE_ETD');
     }
     if (record.stampType === 'ETA') {
+      const etaWindow = getEtaWindowDecision(trip.planDate, trip.planEta, record.gpsTime);
+      if (!etaWindow.allowed) {
+        console.warn(JSON.stringify({
+          logType: 'ELIVE_GPS_STAMP',
+          event: 'PENDING_ETA_SUPERSEDED_BEFORE_WINDOW',
+          pendingId,
+          codeRun: record.codeRun,
+          ...etaWindow,
+        }));
+        return await closePendingStamp(record, 'SUPERSEDED', {
+          lastError: etaWindow.reason,
+          etaWindow,
+        });
+      }
       const currentTrips = buildTripsForPlate(
         latestData,
         record.licensePlate,
@@ -1455,10 +1505,28 @@ async function processPendingGpsStamp(pendingId) {
 async function processDuePendingGpsStamps() {
   const client = requireRedisClient();
   if (await client.exists(GPS_PENDING_STAMP_LOCK_COOLDOWN_KEY)) {
-    return { due: 0, processed: 0, stamped: 0, alreadyStamped: 0, blockedNoWork: 0, retryWait: 0, skipped: true, reason: 'APPS_SCRIPT_LOCK_COOLDOWN' };
+    return { due: 0, processed: 0, stamped: 0, alreadyStamped: 0, blockedNoWork: 0, superseded: 0, retryWait: 0, skipped: true, reason: 'APPS_SCRIPT_LOCK_COOLDOWN' };
   }
-  const pendingIds = await client.zRangeByScore(GPS_PENDING_STAMP_SCHEDULE_KEY, 0, Date.now(), { LIMIT: { offset: 0, count: GPS_PENDING_STAMP_BATCH_SIZE } });
-  const summary = { due: pendingIds.length, processed: 0, stamped: 0, alreadyStamped: 0, blockedNoWork: 0, retryWait: 0, stoppedOnLockBusy: false };
+  const candidateLimit = Math.max(GPS_PENDING_STAMP_BATCH_SIZE * 20, 20);
+  const candidateIds = await client.zRangeByScore(
+    GPS_PENDING_STAMP_SCHEDULE_KEY,
+    0,
+    Date.now(),
+    { LIMIT: { offset: 0, count: candidateLimit } }
+  );
+  const records = (await Promise.all(candidateIds.map(readPendingStamp)))
+    .filter(Boolean)
+    .sort(comparePendingStampRecords);
+  const selectedRecords = records.slice(0, GPS_PENDING_STAMP_BATCH_SIZE);
+  const pendingIds = selectedRecords.map(record => record.pendingId);
+  console.log(JSON.stringify({
+    logType: 'ELIVE_GPS_STAMP',
+    event: 'PENDING_QUEUE_SORTED',
+    candidateCount: records.length,
+    selectedPendingIds: pendingIds,
+    order: 'GPS_TIME_THEN_CREATED_AT_THEN_CODE_RUN',
+  }));
+  const summary = { due: records.length, selected: pendingIds.length, processed: 0, stamped: 0, alreadyStamped: 0, blockedNoWork: 0, superseded: 0, retryWait: 0, stoppedOnLockBusy: false };
   for (let index = 0; index < pendingIds.length; index += 1) {
     if (gpsWorkerStopping) break;
     const result = await processPendingGpsStamp(pendingIds[index]);
@@ -1466,12 +1534,14 @@ async function processDuePendingGpsStamps() {
     if (result?.status === 'STAMPED') summary.stamped += 1;
     if (result?.status === 'ALREADY_STAMPED') summary.alreadyStamped += 1;
     if (result?.status === 'BLOCKED_NO_WORK') summary.blockedNoWork += 1;
+    if (result?.status === 'SUPERSEDED') summary.superseded += 1;
     if (result?.status === 'RETRY_WAIT') summary.retryWait += 1;
     if (result?.retryReason === 'APPS_SCRIPT_LOCK_BUSY') { summary.stoppedOnLockBusy = true; break; }
     if (index < pendingIds.length - 1) await wait(GPS_PENDING_STAMP_SPACING_MS);
   }
   return summary;
 }
+
 async function executeGpsAutoStampEta(state) {
   if (state?.noWorkAction) return { status: 'BLOCKED_NO_WORK', reason: 'NO_WORK_ACTION' };
   if (!GPS_AUTO_STAMP_ETA_ENABLED || !state?.readyForGpsStampEta || !state?.isInside) return null;
@@ -3372,6 +3442,9 @@ app.get(['/health', '/api/health'], (req, res) => {
       lspArrivalGroupWindowMinutes: GPS_LSP_ARRIVAL_GROUP_WINDOW_MINUTES,
       dropPointGeofenceMapping: { L1: 'TPCAP-LSP', L2: 'TPCAP-LSP', L3: 'TPCAP-LSP', M1: 'TPCAP-LSP', R1: 'TPCAP-R1', R2: 'TPCAP-R2' },
       pendingStampRetryQueueEnabled: true,
+      pendingStampBatchSize: GPS_PENDING_STAMP_BATCH_SIZE,
+      pendingStampOrder: 'GPS_TIME_THEN_CREATED_AT_THEN_CODE_RUN',
+      etaEarlyWindowGuardLayers: ['TRIP_SELECTION', 'PENDING_CREATION', 'PENDING_PROCESSING', 'MANUAL_ROUTE'],
       pendingStampRetryBaseSeconds: Math.floor(GPS_PENDING_STAMP_BASE_RETRY_MS / 1000),
       pendingStampRetryMaximumSeconds: Math.floor(GPS_PENDING_STAMP_MAX_RETRY_MS / 1000),
       etdRule: 'IMMEDIATE_ON_FIRST_FRESH_GPS_OUTSIDE_AFTER_INSIDE',
@@ -3801,6 +3874,18 @@ app.post('/api/plans/:codeRun/stamp', requireAuthentication, requireMinimumRole(
     if (stampType === 'ETD' && !trip.stampEta) throw new Error('Stamp ETA is required before Stamp ETD.');
     const stampSource = override ? 'SUPERVISOR_OVERRIDE' : 'MANUAL';
     const stampTime = cleanText(req.body?.stampTime) || new Date().toISOString();
+    if (stampType === 'ETA' && !override) {
+      const etaWindow = getEtaWindowDecision(trip.planDate, trip.planEta, stampTime);
+      if (!etaWindow.allowed) {
+        req.auditDetails = { stampType, stampSource, reason: etaWindow.reason, etaWindow };
+        return res.status(409).json({
+          success: false,
+          error: 'ยังไม่สามารถ Stamp ETA ได้ สามารถบันทึกได้ล่วงหน้าสูงสุด 90 นาทีจาก Plan ETA',
+          reason: etaWindow.reason,
+          etaWindow,
+        });
+      }
+    }
     const result = await stampActualData({
       codeRun,
       stampType,
