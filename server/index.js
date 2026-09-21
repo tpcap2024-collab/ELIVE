@@ -17,6 +17,8 @@ const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
 
 const TPCAP_LATITUDE = 13.623729606202758;
 const TPCAP_LONGITUDE = 101.01501162061923;
+const TPCAP_GREEN_ENTRY_LATITUDE = 13.622237112897071;
+const TPCAP_GREEN_ENTRY_LONGITUDE = 101.02136640328747;
 const OSRM_BASE_URL = 'https://router.project-osrm.org';
 
 const FRESH_CACHE_DURATION_MS = 60000;
@@ -4015,7 +4017,9 @@ app.get('/api/route-to-tpcap', requireAuthentication, requireMinimumRole('TV_VIE
     }
 
     const coordinates =
-      `${longitude},${latitude};` + `${TPCAP_LONGITUDE},${TPCAP_LATITUDE}`;
+      `${longitude},${latitude};` +
+      `${TPCAP_GREEN_ENTRY_LONGITUDE},${TPCAP_GREEN_ENTRY_LATITUDE};` +
+      `${TPCAP_LONGITUDE},${TPCAP_LATITUDE}`;
 
     const routeUrl =
       `${OSRM_BASE_URL}/route/v1/driving/${coordinates}` +
@@ -4054,6 +4058,11 @@ app.get('/api/route-to-tpcap', requireAuthentication, requireMinimumRole('TV_VIE
     return res.status(200).json({
       success: true,
       origin: { latitude, longitude },
+      waypoint: {
+        name: 'TPCAP Green Entry',
+        latitude: TPCAP_GREEN_ENTRY_LATITUDE,
+        longitude: TPCAP_GREEN_ENTRY_LONGITUDE,
+      },
       destination: {
         name: 'TPCAP',
         latitude: TPCAP_LATITUDE,
