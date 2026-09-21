@@ -64,7 +64,12 @@ const GPS_PENDING_STAMP_TTL_SECONDS = 7 * 24 * 60 * 60;
 const GPS_PENDING_STAMP_LOCK_SECONDS = 90;
 const GPS_PENDING_STAMP_BASE_RETRY_MS = 30 * 1000;
 const GPS_PENDING_STAMP_MAX_RETRY_MS = 15 * 60 * 1000;
-const GPS_PENDING_STAMP_BATCH_SIZE = 100;
+const GPS_PENDING_STAMP_BATCH_SIZE = 3;
+const GPS_PENDING_STAMP_SPACING_MS = 2000;
+const GPS_PENDING_STAMP_LOCK_BUSY_BASE_RETRY_MS = 60 * 1000;
+const GPS_PENDING_STAMP_LOCK_BUSY_MAX_RETRY_MS = 15 * 60 * 1000;
+const GPS_PENDING_STAMP_LOCK_COOLDOWN_KEY = 'elive:gps-pending-stamp:apps-script-lock-cooldown';
+const GPS_PENDING_STAMP_LOCK_COOLDOWN_SECONDS = 60;
 const GPS_AUTO_STAMP_ETA_ENABLED = cleanText(process.env.GPS_AUTO_STAMP_ETA_ENABLED || 'true').toLowerCase() === 'true';
 const GPS_AUTO_STAMP_ETD_ENABLED = cleanText(process.env.GPS_AUTO_STAMP_ETD_ENABLED || 'false').toLowerCase() === 'true';
 const GPS_BACKGROUND_WORKER_ENABLED = cleanText(process.env.GPS_BACKGROUND_WORKER_ENABLED || 'false').toLowerCase() === 'true';
@@ -1269,6 +1274,14 @@ function calculatePendingStampRetryDelayMs(attemptCount) {
   const exponent = Math.max(0, Math.min(10, Number(attemptCount || 1) - 1));
   return Math.min(GPS_PENDING_STAMP_MAX_RETRY_MS, GPS_PENDING_STAMP_BASE_RETRY_MS * (2 ** exponent));
 }
+function isAppsScriptLockBusyError(error) {
+  const message = getErrorMessage(error).toLowerCase();
+  return message.includes('stamp_write_lock_busy') || message.includes('lock timeout') || message.includes('holding the lock for too long');
+}
+function calculateLockBusyRetryDelayMs(attemptCount) {
+  const exponent = Math.max(0, Math.min(4, Number(attemptCount || 1) - 1));
+  return Math.min(GPS_PENDING_STAMP_LOCK_BUSY_MAX_RETRY_MS, GPS_PENDING_STAMP_LOCK_BUSY_BASE_RETRY_MS * (2 ** exponent));
+}
 async function readPendingStamp(pendingId) {
   const raw = await requireRedisClient().get(getPendingStampKey(pendingId));
   if (!raw) return null;
@@ -1424,11 +1437,15 @@ async function processPendingGpsStamp(pendingId) {
   } catch (error) {
     const existing = await readPendingStamp(pendingId);
     if (!existing) throw error;
-    const delayMs = calculatePendingStampRetryDelayMs(existing.attemptCount);
+    const lockBusy = isAppsScriptLockBusyError(error);
+    const delayMs = lockBusy ? calculateLockBusyRetryDelayMs(existing.attemptCount) : calculatePendingStampRetryDelayMs(existing.attemptCount);
     const nextRetryMs = Date.now() + delayMs;
-    const retryRecord = { ...existing, status: 'RETRY_WAIT', lastError: getErrorMessage(error), nextRetryAt: new Date(nextRetryMs).toISOString(), updatedAt: new Date().toISOString() };
+    const retryRecord = { ...existing, status: 'RETRY_WAIT', lastError: getErrorMessage(error), retryReason: lockBusy ? 'APPS_SCRIPT_LOCK_BUSY' : 'TRANSIENT_ERROR', nextRetryAt: new Date(nextRetryMs).toISOString(), updatedAt: new Date().toISOString() };
     await writePendingStamp(retryRecord, nextRetryMs);
-    console.error(JSON.stringify({ logType: 'ELIVE_GPS_STAMP', event: 'STAMP_RETRY_SCHEDULED', pendingId, attemptCount: retryRecord.attemptCount, lastError: retryRecord.lastError, nextRetryAt: retryRecord.nextRetryAt }));
+    if (lockBusy) {
+      await requireRedisClient().set(GPS_PENDING_STAMP_LOCK_COOLDOWN_KEY, JSON.stringify({ pendingId, startedAt: new Date().toISOString() }), { EX: GPS_PENDING_STAMP_LOCK_COOLDOWN_SECONDS });
+    }
+    console.error(JSON.stringify({ logType: 'ELIVE_GPS_STAMP', event: lockBusy ? 'STAMP_LOCK_BUSY_COOLDOWN' : 'STAMP_RETRY_SCHEDULED', pendingId, attemptCount: retryRecord.attemptCount, lastError: retryRecord.lastError, nextRetryAt: retryRecord.nextRetryAt }));
     return retryRecord;
   } finally {
     await client.eval("if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) else return 0 end", { keys: [lockKey], arguments: [lockToken] }).catch(() => {});
@@ -1436,16 +1453,21 @@ async function processPendingGpsStamp(pendingId) {
 }
 async function processDuePendingGpsStamps() {
   const client = requireRedisClient();
+  if (await client.exists(GPS_PENDING_STAMP_LOCK_COOLDOWN_KEY)) {
+    return { due: 0, processed: 0, stamped: 0, alreadyStamped: 0, blockedNoWork: 0, retryWait: 0, skipped: true, reason: 'APPS_SCRIPT_LOCK_COOLDOWN' };
+  }
   const pendingIds = await client.zRangeByScore(GPS_PENDING_STAMP_SCHEDULE_KEY, 0, Date.now(), { LIMIT: { offset: 0, count: GPS_PENDING_STAMP_BATCH_SIZE } });
-  const summary = { due: pendingIds.length, processed: 0, stamped: 0, alreadyStamped: 0, blockedNoWork: 0, retryWait: 0 };
-  for (const pendingId of pendingIds) {
+  const summary = { due: pendingIds.length, processed: 0, stamped: 0, alreadyStamped: 0, blockedNoWork: 0, retryWait: 0, stoppedOnLockBusy: false };
+  for (let index = 0; index < pendingIds.length; index += 1) {
     if (gpsWorkerStopping) break;
-    const result = await processPendingGpsStamp(pendingId);
+    const result = await processPendingGpsStamp(pendingIds[index]);
     summary.processed += 1;
     if (result?.status === 'STAMPED') summary.stamped += 1;
     if (result?.status === 'ALREADY_STAMPED') summary.alreadyStamped += 1;
     if (result?.status === 'BLOCKED_NO_WORK') summary.blockedNoWork += 1;
     if (result?.status === 'RETRY_WAIT') summary.retryWait += 1;
+    if (result?.retryReason === 'APPS_SCRIPT_LOCK_BUSY') { summary.stoppedOnLockBusy = true; break; }
+    if (index < pendingIds.length - 1) await wait(GPS_PENDING_STAMP_SPACING_MS);
   }
   return summary;
 }
@@ -1454,7 +1476,7 @@ async function executeGpsAutoStampEta(state) {
   if (!GPS_AUTO_STAMP_ETA_ENABLED || !state?.readyForGpsStampEta || !state?.isInside) return null;
   if (state.waitingForExit || !state.activeCodeRun || state.activeCodeRun !== state.codeRun) return null;
   const pending = await createPendingGpsStamp('ETA', state);
-  return await processPendingGpsStamp(pending.pendingId);
+  return { ...pending, queued: true };
 }
 async function executeGpsAutoStampEtaBatch(state, trips) {
   if (!GPS_AUTO_STAMP_ETA_ENABLED || !state?.isInside || state.waitingForExit) {
@@ -1490,7 +1512,7 @@ async function executeGpsAutoStampEtd(state, activeTrip) {
   if (!state.wasInsideBeforeExit || state.isInside || state.status !== 'OUTSIDE_GEOFENCE') return null;
   if (!state.activeCodeRun || state.activeCodeRun !== state.codeRun) return null;
   const pending = await createPendingGpsStamp('ETD', state);
-  return await processPendingGpsStamp(pending.pendingId);
+  return { ...pending, queued: true };
 }
 async function evaluateGpsDock(payload, dataOverride = null) {
   const input = validateGpsDockPayload(payload);
