@@ -1315,6 +1315,17 @@ function isAppsScriptLockBusyError(error) {
   const message = getErrorMessage(error).toLowerCase();
   return message.includes('stamp_write_lock_busy') || message.includes('lock timeout') || message.includes('holding the lock for too long');
 }
+function getTerminalPendingStampErrorReason(error) {
+  const message = getErrorMessage(error).toUpperCase();
+  const terminalReasons = [
+    'ETA_BEFORE_PLAN_WINDOW',
+    'STAMP_DATE_DOES_NOT_MATCH_PLAN_DATE',
+    'PLAN_ETA_UNAVAILABLE',
+    'IS CANCELLED',
+    'CANNOT STAMP ETA BECAUSE THIS TRIP ALREADY HAS STAMP ETD',
+  ];
+  return terminalReasons.find(reason => message.includes(reason)) || null;
+}
 function calculateLockBusyRetryDelayMs(attemptCount) {
   const exponent = Math.max(0, Math.min(4, Number(attemptCount || 1) - 1));
   return Math.min(GPS_PENDING_STAMP_LOCK_BUSY_MAX_RETRY_MS, GPS_PENDING_STAMP_LOCK_BUSY_BASE_RETRY_MS * (2 ** exponent));
@@ -1488,6 +1499,24 @@ async function processPendingGpsStamp(pendingId) {
   } catch (error) {
     const existing = await readPendingStamp(pendingId);
     if (!existing) throw error;
+    const terminalReason = getTerminalPendingStampErrorReason(error);
+    if (terminalReason) {
+      const lastError = getErrorMessage(error);
+      console.warn(JSON.stringify({
+        logType: 'ELIVE_GPS_STAMP',
+        event: 'PENDING_STAMP_SUPERSEDED_TERMINAL_ERROR',
+        pendingId,
+        codeRun: existing.codeRun,
+        stampType: existing.stampType,
+        terminalReason,
+        lastError,
+      }));
+      return await closePendingStamp(existing, 'SUPERSEDED', {
+        lastError,
+        retryReason: 'TERMINAL_VALIDATION_ERROR',
+        terminalReason,
+      });
+    }
     const lockBusy = isAppsScriptLockBusyError(error);
     const delayMs = lockBusy ? calculateLockBusyRetryDelayMs(existing.attemptCount) : calculatePendingStampRetryDelayMs(existing.attemptCount);
     const nextRetryMs = Date.now() + delayMs;
@@ -3442,6 +3471,8 @@ app.get(['/health', '/api/health'], (req, res) => {
       lspArrivalGroupWindowMinutes: GPS_LSP_ARRIVAL_GROUP_WINDOW_MINUTES,
       dropPointGeofenceMapping: { L1: 'TPCAP-LSP', L2: 'TPCAP-LSP', L3: 'TPCAP-LSP', M1: 'TPCAP-LSP', R1: 'TPCAP-R1', R2: 'TPCAP-R2' },
       pendingStampRetryQueueEnabled: true,
+      pendingStampTerminalValidationErrorsBecomeSuperseded: true,
+      pendingStampTerminalValidationReasons: ['ETA_BEFORE_PLAN_WINDOW', 'STAMP_DATE_DOES_NOT_MATCH_PLAN_DATE', 'PLAN_ETA_UNAVAILABLE'],
       pendingStampBatchSize: GPS_PENDING_STAMP_BATCH_SIZE,
       pendingStampOrder: 'GPS_TIME_THEN_CREATED_AT_THEN_CODE_RUN',
       etaEarlyWindowGuardLayers: ['TRIP_SELECTION', 'PENDING_CREATION', 'PENDING_PROCESSING', 'MANUAL_ROUTE'],
