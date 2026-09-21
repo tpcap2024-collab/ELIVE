@@ -576,8 +576,8 @@ export function LiveMap({
     );
 
   const [
-    selectedGpsId,
-    setSelectedGpsId,
+    selectedTruckId,
+    setSelectedTruckId,
   ] = useState('');
 
   const [
@@ -617,173 +617,50 @@ export function LiveMap({
     setIsGpsDockLoading,
   ] = useState(false);
 
-  const truckByPlate =
-    useMemo(() => {
-      const map =
-        new Map<
-          string,
-          Truck
-        >();
+  const gpsByPlate = useMemo(() => {
+    const map = new Map<string, GpsLocation>();
+    for (const location of gpsLocations) {
+      const plate = normalizeLicensePlate(location.licensePlate);
+      if (!plate) continue;
+      const existing = map.get(plate);
+      const existingTime = parseGpsDateTime(existing?.gpsTime)?.getTime() ?? 0;
+      const candidateTime = parseGpsDateTime(location.gpsTime)?.getTime() ?? 0;
+      if (!existing || candidateTime >= existingTime) map.set(plate, location);
+    }
+    return map;
+  }, [gpsLocations]);
 
-      for (
-        const truck of trucks
-      ) {
-        const normalizedPlate =
-          normalizeLicensePlate(
-            truck.licensePlate
-          );
+  const matchedTrucks = useMemo(() => trucks.filter(truck => {
+    const plate = normalizeLicensePlate(truck.licensePlate);
+    return plate !== '' && gpsByPlate.has(plate);
+  }), [trucks, gpsByPlate]);
 
-        if (
-          normalizedPlate
-        ) {
-          map.set(
-            normalizedPlate,
-            truck
-          );
-        }
-      }
+  const selectableTrucks = useMemo(() => {
+    const query = searchText.trim().toUpperCase();
+    return matchedTrucks.filter(truck => {
+      if (!query) return true;
+      const location = gpsByPlate.get(normalizeLicensePlate(truck.licensePlate));
+      return [truck.id, truck.licensePlate, truck.route, truck.dropPoint, truck.planEta,
+        truck.supplierName, truck.driverName, location?.gpsId, location?.locationName]
+        .filter(Boolean).join(' ').toUpperCase().includes(query);
+    }).sort((first, second) => {
+      const plateCompare = String(first.licensePlate || '').localeCompare(String(second.licensePlate || ''), 'th');
+      if (plateCompare !== 0) return plateCompare;
+      const etaCompare = formatPlanTime(first.planEta).localeCompare(formatPlanTime(second.planEta));
+      if (etaCompare !== 0) return etaCompare;
+      return String(first.id).localeCompare(String(second.id), undefined, { numeric: true });
+    });
+  }, [matchedTrucks, searchText, gpsByPlate]);
 
-      return map;
-    }, [
-      trucks,
-    ]);
+  const selectedTruck = useMemo(() => {
+    if (!selectedTruckId) return undefined;
+    return trucks.find(truck => truck.id === selectedTruckId);
+  }, [trucks, selectedTruckId]);
 
-  const matchedGpsLocations =
-    useMemo(() => {
-      return gpsLocations.filter(
-        location => {
-          const normalizedPlate =
-            normalizeLicensePlate(
-              location.licensePlate
-            );
-
-          return (
-            normalizedPlate !== '' &&
-            truckByPlate.has(
-              normalizedPlate
-            )
-          );
-        }
-      );
-    }, [
-      gpsLocations,
-      truckByPlate,
-    ]);
-
-  const selectableGpsLocations =
-    useMemo(() => {
-      const normalizedSearch =
-        searchText
-          .trim()
-          .toUpperCase();
-
-      return matchedGpsLocations
-        .filter(
-          location => {
-            if (
-              !normalizedSearch
-            ) {
-              return true;
-            }
-
-            const normalizedPlate =
-              normalizeLicensePlate(
-                location.licensePlate
-              );
-
-            const truck =
-              truckByPlate.get(
-                normalizedPlate
-              );
-
-            const searchableText = [
-              location.licensePlate,
-              location.gpsId,
-              location.locationName,
-              truck?.licensePlate,
-              truck?.route,
-              truck?.supplierName,
-              truck?.driverName,
-            ]
-              .filter(
-                Boolean
-              )
-              .join(' ')
-              .toUpperCase();
-
-            return searchableText.includes(
-              normalizedSearch
-            );
-          }
-        )
-        .sort(
-          (
-            first,
-            second
-          ) => {
-            const firstLabel =
-              first.licensePlate ||
-              first.gpsId;
-
-            const secondLabel =
-              second.licensePlate ||
-              second.gpsId;
-
-            return firstLabel.localeCompare(
-              secondLabel,
-              'th'
-            );
-          }
-        );
-    }, [
-      matchedGpsLocations,
-      searchText,
-      truckByPlate,
-    ]);
-
-  const selectedGpsLocation =
-    useMemo(() => {
-      if (
-        !selectedGpsId
-      ) {
-        return null;
-      }
-
-      return (
-        gpsLocations.find(
-          location =>
-            location.gpsId ===
-            selectedGpsId
-        ) ||
-        null
-      );
-    }, [
-      gpsLocations,
-      selectedGpsId,
-    ]);
-
-  const selectedTruck =
-    useMemo(() => {
-      if (
-        !selectedGpsLocation
-      ) {
-        return undefined;
-      }
-
-      const normalizedPlate =
-        normalizeLicensePlate(
-          selectedGpsLocation
-            .licensePlate
-        );
-
-      return truckByPlate.get(
-        normalizedPlate
-      );
-    }, [
-      selectedGpsLocation,
-      truckByPlate,
-    ]);
-
+  const selectedGpsLocation = useMemo(() => {
+    if (!selectedTruck) return null;
+    return gpsByPlate.get(normalizeLicensePlate(selectedTruck.licensePlate)) || null;
+  }, [selectedTruck, gpsByPlate]);
   const selectedFreshness =
     useMemo(() => {
       if (
@@ -823,6 +700,9 @@ export function LiveMap({
         (first, second) => first.distanceMeters - second.distanceMeters
       )[0] || null;
     }, [selectedGpsLocation, selectedTruck]);
+  const selectedTargetPosition: [number, number] = selectedGeofenceEvaluation
+    ? [selectedGeofenceEvaluation.latitude, selectedGeofenceEvaluation.longitude]
+    : TPCAP_POSITION;
   const selectedParkingStatus =
     useMemo(() => {
       if (!selectedGpsLocation || !selectedGeofenceEvaluation) return null;
@@ -843,7 +723,7 @@ export function LiveMap({
         0;
 
       for (
-        const location of matchedGpsLocations
+        const location of matchedTrucks
       ) {
         const freshness =
           getGpsFreshness(
@@ -874,7 +754,7 @@ export function LiveMap({
         offline,
       };
     }, [
-      matchedGpsLocations,
+      matchedTrucks,
     ]);
 
   useEffect(() => {
@@ -1083,8 +963,8 @@ export function LiveMap({
       return;
     }
 
-    setSelectedGpsId(
-      initialGpsLocation.gpsId
+    setSelectedTruckId(
+      initialTruck.id
     );
 
     setSearchText(
@@ -1100,38 +980,14 @@ export function LiveMap({
   ]);
 
   useEffect(() => {
-    if (
-      !selectedGpsId
-    ) {
-      return;
+    if (!selectedTruckId) return;
+    const selectedStillExists = trucks.some(truck => truck.id === selectedTruckId);
+    if (!selectedStillExists) {
+      setSelectedTruckId('');
+      setRouteResult(null);
+      setRouteError(null);
     }
-
-    const selectedStillExists =
-      gpsLocations.some(
-        location =>
-          location.gpsId ===
-          selectedGpsId
-      );
-
-    if (
-      !selectedStillExists
-    ) {
-      setSelectedGpsId(
-        ''
-      );
-
-      setRouteResult(
-        null
-      );
-
-      setRouteError(
-        null
-      );
-    }
-  }, [
-    gpsLocations,
-    selectedGpsId,
-  ]);
+  }, [trucks, selectedTruckId]);
 
   useEffect(() => {
     if (!selectedGpsLocation || !selectedTruck) {
@@ -1364,7 +1220,7 @@ export function LiveMap({
 
     const tpcapMarker =
       L.marker(
-        TPCAP_POSITION,
+        selectedTargetPosition,
         {
           icon:
             createTpcapMarkerIcon(),
@@ -1437,7 +1293,7 @@ export function LiveMap({
       );
 
       bounds.extend(
-        TPCAP_POSITION
+        selectedTargetPosition
       );
 
       map.fitBounds(
@@ -1457,7 +1313,7 @@ export function LiveMap({
       const bounds =
         L.latLngBounds([
           truckPosition,
-          TPCAP_POSITION,
+          selectedTargetPosition,
         ]);
 
       map.fitBounds(
@@ -1478,6 +1334,7 @@ export function LiveMap({
     selectedGpsLocation,
     selectedTruck,
     routeResult,
+    selectedTargetPosition,
   ]);
 
   const handleRefresh =
@@ -1500,7 +1357,7 @@ export function LiveMap({
       appliedInitialTruckIdRef.current =
         null;
 
-      setSelectedGpsId(
+      setSelectedTruckId(
         ''
       );
 
@@ -1546,12 +1403,12 @@ export function LiveMap({
   const showNoMatchMessage =
     gpsLocations.length >
       0 &&
-    matchedGpsLocations.length ===
+    matchedTrucks.length ===
       0 &&
     !selectedGpsLocation;
 
   const showSelectTruckMessage =
-    matchedGpsLocations.length >
+    matchedTrucks.length >
       0 &&
     !selectedGpsLocation;
 
@@ -1584,14 +1441,15 @@ export function LiveMap({
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input type="text" value={searchText} onChange={event => setSearchText(event.target.value)} placeholder="ค้นหาทะเบียน / Route / ชื่อสถานี" className="w-full rounded-lg border border-slate-300 py-2 pl-9 pr-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20" />
         </div>
-        <select value={selectedGpsId} onChange={event => { setSelectedGpsId(event.target.value); appliedInitialTruckIdRef.current = null; }} className="min-w-0 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 outline-none lg:w-[330px]">
-          <option value="">เลือกรถที่ต้องการดู</option>
-          {selectableGpsLocations.map(location => {
-            const truck = truckByPlate.get(normalizeLicensePlate(location.licensePlate));
-            return <option key={location.gpsId} value={location.gpsId}>{truck?.licensePlate || location.licensePlate || location.gpsId}{truck?.route ? ` | ${truck.route}` : ''}{truck?.dropPoint ? ` | ${truck.dropPoint}` : ''}</option>;
-          })}
+        <select value={selectedTruckId} onChange={event => { setSelectedTruckId(event.target.value); appliedInitialTruckIdRef.current = null; }} className="min-w-0 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 outline-none lg:w-[390px]">
+          <option value="">เลือกเที่ยวรถที่ต้องการดู</option>
+          {selectableTrucks.map(truck => (
+            <option key={truck.id} value={truck.id}>
+              {truck.licensePlate || truck.id}{truck.route ? ` | ${truck.route}` : ''}{truck.dropPoint ? ` | ${truck.dropPoint}` : ''}{truck.planEta ? ` | ${formatPlanTime(truck.planEta)}` : ''}
+            </option>
+          ))}
         </select>
-        <button type="button" onClick={clearSelection} disabled={!selectedGpsId && !searchText} className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50"><X className="h-3.5 w-3.5" />ล้างการเลือก</button>
+        <button type="button" onClick={clearSelection} disabled={!selectedTruckId && !searchText} className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50"><X className="h-3.5 w-3.5" />ล้างการเลือก</button>
         <button type="button" onClick={handleRefresh} disabled={isRefreshing || !onRefresh} className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-50"><RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />Refresh</button>
       </div>
 
@@ -1601,7 +1459,7 @@ export function LiveMap({
         {routeError && <div className="absolute right-3 top-3 z-[600] max-w-sm rounded-lg border border-red-200 bg-white/95 px-3 py-2 text-xs text-red-700 shadow"><AlertTriangle className="mr-1 inline h-4 w-4" />{routeError}</div>}
         {showNoGpsMessage && <div className="absolute inset-0 z-[500] flex items-center justify-center bg-white/60"><div className="rounded-xl border bg-white p-6 text-center shadow-lg"><MapPin className="mx-auto h-8 w-8 text-slate-400" /><div className="mt-3 font-bold">ไม่พบข้อมูล GPS ของรถในแผน</div></div></div>}
         {showNoMatchMessage && <div className="absolute inset-0 z-[500] flex items-center justify-center"><div className="rounded-xl border border-amber-200 bg-white p-6 text-center shadow-lg"><AlertTriangle className="mx-auto h-8 w-8 text-amber-500" /><div className="mt-3 font-bold">ไม่พบท้ายทะเบียนที่ตรงกับ GPS</div></div></div>}
-        {showSelectTruckMessage && <div className="absolute inset-0 z-[500] flex items-center justify-center"><div className="rounded-xl border bg-white p-6 text-center shadow-lg"><TruckIcon className="mx-auto h-8 w-8 text-blue-500" /><div className="mt-3 font-bold">เลือกรถที่ต้องการติดตาม</div><div className="mt-1 text-xs text-slate-500">พบรถที่จับคู่ GPS ได้ {matchedGpsLocations.length} คัน</div></div></div>}
+        {showSelectTruckMessage && <div className="absolute inset-0 z-[500] flex items-center justify-center"><div className="rounded-xl border bg-white p-6 text-center shadow-lg"><TruckIcon className="mx-auto h-8 w-8 text-blue-500" /><div className="mt-3 font-bold">เลือกรถที่ต้องการติดตาม</div><div className="mt-1 text-xs text-slate-500">พบรถที่จับคู่ GPS ได้ {matchedTrucks.length} คัน</div></div></div>}
       </div>
 
       <div className="shrink-0 overflow-x-auto rounded-b-xl border border-slate-200 bg-white shadow-sm">
