@@ -30,6 +30,7 @@ const APPS_SCRIPT_MUTATION_LOCK_KEY = 'elive:apps-script:mutation-lock';
 const APPS_SCRIPT_MUTATION_LOCK_SECONDS = 180;
 const APPS_SCRIPT_MUTATION_WAIT_MS = 185000;
 const APPS_SCRIPT_MUTATION_POLL_MS = 500;
+const APPS_SCRIPT_POST_SETTLE_MS = 3000;
 const APPS_SCRIPT_GET_LOCK_KEY = 'elive:apps-script:get-lock';
 const APPS_SCRIPT_GET_LOCK_SECONDS = 300;
 const APPS_SCRIPT_GET_WAIT_MS = 310000;
@@ -2578,6 +2579,16 @@ async function releaseAppsScriptMutationLock(lock) {
   }
   await releaseRedisLock(lock.client, APPS_SCRIPT_MUTATION_LOCK_KEY, raw);
 }
+async function waitForAppsScriptGetQueueToDrain() {
+  const client = requireRedisClient();
+  const deadline = Date.now() + APPS_SCRIPT_GET_WAIT_MS;
+  while (await client.exists(APPS_SCRIPT_GET_LOCK_KEY)) {
+    if (Date.now() >= deadline) {
+      throw new Error('APPS_SCRIPT_GET_DRAIN_TIMEOUT');
+    }
+    await wait(APPS_SCRIPT_GET_POLL_MS);
+  }
+}
 async function waitForExistingAppsScriptReads() {
   const pendingReads = [truckDataRequestPromise, masterPlanRequestPromise].filter(Boolean);
   if (!pendingReads.length) return;
@@ -2783,13 +2794,19 @@ async function requestAppsScriptGet(action, parameters = {}) {
  */
 async function requestAppsScriptPost(action, payload = {}, timeoutMilliseconds = APPS_SCRIPT_TIMEOUT_MS) {
   validateAppsScriptUrl();
-
+  let mutationLock = null;
   try {
+    mutationLock = await acquireAppsScriptMutationLock(action);
+    await waitForAppsScriptGetQueueToDrain();
+    await wait(APPS_SCRIPT_POST_SETTLE_MS);
+    console.log(JSON.stringify({
+      logType: 'ELIVE_APPS_SCRIPT_POST_QUEUE',
+      event: 'POST_LOCK_ACQUIRED',
+      action,
+    }));
     console.log(`Calling Apps Script POST ${action}, single attempt`);
-
     const signedPayload = JSON.parse(JSON.stringify({ action, ...payload }));
     const auth = createAppsScriptSignature('POST', action, signedPayload);
-
     const response = await fetchWithTimeout(
       APPS_SCRIPT_URL,
       {
@@ -2800,40 +2817,35 @@ async function requestAppsScriptPost(action, payload = {}, timeoutMilliseconds =
           Accept: 'application/json',
           'User-Agent': `ELIVE-API/${API_VERSION}.0`,
         },
-        body: JSON.stringify({
-          ...signedPayload,
-          _auth: auth,
-        }),
+        body: JSON.stringify({ ...signedPayload, _auth: auth }),
         cache: 'no-store',
       },
       timeoutMilliseconds
     );
-
     const responseText = await response.text();
-
     if (!response.ok) {
-      throw new Error(
-        `Google Apps Script returned HTTP ${response.status}. Response: ${getResponsePreview(
-          responseText
-        )}`
-      );
+      throw new Error(`Google Apps Script returned HTTP ${response.status}. Response: ${getResponsePreview(responseText)}`);
     }
-
-    const data = parseJsonText(
-      responseText,
-      `Google Apps Script ${action} returned invalid JSON.`
-    );
-
+    const data = parseJsonText(responseText, `Google Apps Script ${action} returned invalid JSON.`);
     validateAppsScriptResponse(data, action);
     recordAppsScriptSuccess();
     return data;
   } catch (error) {
-    console.error(`Apps Script POST ${action} failed without retry:`, {
-      error: getErrorMessage(error),
-    });
-
+    console.error(`Apps Script POST ${action} failed without retry:`, { error: getErrorMessage(error) });
     recordAppsScriptError(error);
     throw error;
+  } finally {
+    if (mutationLock) {
+      await wait(APPS_SCRIPT_POST_SETTLE_MS).catch(() => {});
+      await releaseAppsScriptMutationLock(mutationLock).catch(error => {
+        console.error('Unable to release Apps Script POST lock:', getErrorMessage(error));
+      });
+      console.log(JSON.stringify({
+        logType: 'ELIVE_APPS_SCRIPT_POST_QUEUE',
+        event: 'POST_LOCK_RELEASED',
+        action,
+      }));
+    }
   }
 }
 
@@ -3646,11 +3658,9 @@ app.post('/api/plans/preview', requireAuthentication, requireMinimumRole('PLANNE
 });
 
 app.post('/api/plans/create', requireAuthentication, requireMinimumRole('PLANNER'), async (req, res) => {
-  let mutationLock = null;
   try {
     const request = validatePlanPeriodRequest(req.body);
     await waitForExistingAppsScriptReads();
-    mutationLock = await acquireAppsScriptMutationLock('createPlanPeriod');
     const result = await requestAppsScriptPost(
       'createPlanPeriod',
       request,
@@ -3680,7 +3690,7 @@ app.post('/api/plans/create', requireAuthentication, requireMinimumRole('PLANNER
     if (uncertainResult) {
       req.auditDetails = {
         reason: 'PLAN_CREATE_RESULT_UNKNOWN',
-        mutationLockUsed: Boolean(mutationLock),
+        mutationLockUsed: true,
       };
       return res.status(202).json({
         success: true,
@@ -3695,10 +3705,6 @@ app.post('/api/plans/create', requireAuthentication, requireMinimumRole('PLANNER
       });
     }
     return sendRouteError(res, error, 'Unable to create Plan period.');
-  } finally {
-    await releaseAppsScriptMutationLock(mutationLock).catch(error => {
-      console.error('Unable to release Apps Script mutation lock:', getErrorMessage(error));
-    });
   }
 });
 
