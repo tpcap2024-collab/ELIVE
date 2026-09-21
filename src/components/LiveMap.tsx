@@ -574,6 +574,8 @@ export function LiveMap({
     useRef<string | null>(
       null
     );
+  const lastViewportFitKeyRef =
+    useRef('');
 
   const [
     selectedTruckId,
@@ -700,9 +702,13 @@ export function LiveMap({
         (first, second) => first.distanceMeters - second.distanceMeters
       )[0] || null;
     }, [selectedGpsLocation, selectedTruck]);
-  const selectedTargetPosition: [number, number] = selectedGeofenceEvaluation
-    ? [selectedGeofenceEvaluation.latitude, selectedGeofenceEvaluation.longitude]
-    : TPCAP_POSITION;
+  const selectedTargetPosition =
+    useMemo<[number, number]>(() => {
+      if (selectedGeofenceEvaluation) {
+        return [selectedGeofenceEvaluation.latitude, selectedGeofenceEvaluation.longitude];
+      }
+      return TPCAP_POSITION;
+    }, [selectedGeofenceEvaluation]);
   const selectedParkingStatus =
     useMemo(() => {
       if (!selectedGpsLocation || !selectedGeofenceEvaluation) return null;
@@ -1244,71 +1250,44 @@ export function LiveMap({
         .coordinates
         .length >= 2
     ) {
-      const routePoints:
-        [number, number][] =
-          routeResult
-            .geometry
-            .coordinates
-            .map(
-              coordinate => {
-                return [
-                  coordinate[1],
-                  coordinate[0],
-                ];
-              }
-            );
-
-      const routeLine =
-        L.polyline(
-          routePoints,
-          {
-            color:
-              '#0284c7',
-
-            weight:
-              6,
-
-            opacity:
-              0.9,
-
-            lineCap:
-              'round',
-
-            lineJoin:
-              'round',
-          }
+      const routePoints: [number, number][] = routeResult.geometry.coordinates
+        .map(coordinate => [Number(coordinate[1]), Number(coordinate[0])] as [number, number])
+        .filter(([latitude, longitude]) =>
+          Number.isFinite(latitude) && Number.isFinite(longitude) &&
+          latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180
         );
-
-      routeLine.addTo(
-        routeLayer
-      );
-
-      const bounds =
-        L.latLngBounds(
-          routePoints
+      if (routePoints.length >= 2) {
+        L.polyline(routePoints, {
+          color: '#0284c7', weight: 6, opacity: 0.9,
+          lineCap: 'round', lineJoin: 'round',
+        }).addTo(routeLayer);
+        const bounds = L.latLngBounds(routePoints);
+        bounds.extend(truckPosition);
+        bounds.extend(selectedTargetPosition);
+        const routeDistanceMeters = Number(routeResult.distanceMeters || 0);
+        const boundsDiagonalMeters = bounds.getSouthWest().distanceTo(bounds.getNorthEast());
+        const maximumBoundsDiagonalMeters = Math.max(
+          50000,
+          routeDistanceMeters > 0 ? routeDistanceMeters * 3 : 0
         );
-
-      bounds.extend(
-        truckPosition
-      );
-
-      bounds.extend(
-        selectedTargetPosition
-      );
-
-      map.fitBounds(
-        bounds,
-        {
-          padding:
-            [50, 50],
-
-          maxZoom:
-            15,
-
-          animate:
-            true,
+        const viewportFitKey = [
+          selectedTruck?.id || '',
+          truckPosition[0].toFixed(6), truckPosition[1].toFixed(6),
+          selectedTargetPosition[0].toFixed(6), selectedTargetPosition[1].toFixed(6),
+          routePoints.length,
+          routePoints[0][0].toFixed(6), routePoints[0][1].toFixed(6),
+          routePoints[routePoints.length - 1][0].toFixed(6),
+          routePoints[routePoints.length - 1][1].toFixed(6),
+        ].join('|');
+        if (
+          bounds.isValid() &&
+          boundsDiagonalMeters <= maximumBoundsDiagonalMeters &&
+          lastViewportFitKeyRef.current !== viewportFitKey
+        ) {
+          lastViewportFitKeyRef.current = viewportFitKey;
+          map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15, animate: true });
         }
-      );
+      }
     } else {
       const bounds =
         L.latLngBounds([
@@ -1316,19 +1295,16 @@ export function LiveMap({
           selectedTargetPosition,
         ]);
 
-      map.fitBounds(
-        bounds,
-        {
-          padding:
-            [50, 50],
-
-          maxZoom:
-            15,
-
-          animate:
-            true,
-        }
-      );
+      const viewportFitKey = [
+        selectedTruck?.id || '',
+        truckPosition[0].toFixed(6), truckPosition[1].toFixed(6),
+        selectedTargetPosition[0].toFixed(6), selectedTargetPosition[1].toFixed(6),
+        'fallback',
+      ].join('|');
+      if (bounds.isValid() && lastViewportFitKeyRef.current !== viewportFitKey) {
+        lastViewportFitKeyRef.current = viewportFitKey;
+        map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15, animate: true });
+      }
     }
   }, [
     selectedGpsLocation,
@@ -1372,6 +1348,7 @@ export function LiveMap({
       setRouteError(
         null
       );
+      lastViewportFitKeyRef.current = '';
       gpsDockRequestIdRef.current += 1;
       setGpsDockResult(null);
       setGpsDockError(null);
