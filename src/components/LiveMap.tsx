@@ -803,9 +803,10 @@ export function LiveMap({
     const satelliteLayer = L.tileLayer(
       'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
       {
-        maxNativeZoom: 19,
+        maxNativeZoom: 17,
         maxZoom: 22,
         updateWhenZooming: false,
+        updateWhenIdle: true,
         keepBuffer: 4,
         attribution: 'Tiles © Esri',
       }
