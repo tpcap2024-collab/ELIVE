@@ -549,8 +549,12 @@ async function fetchApiRequest(
   return data;
 }
 
-async function fetchEliveApiData(): Promise<any> {
+async function fetchEliveApiData(date?: string): Promise<any> {
   const query = new URLSearchParams({ t: String(Date.now()) });
+  const requestedDate = String(date || '').trim();
+  if (requestedDate) {
+    query.set('date', validateDateText(requestedDate, 'Date'));
+  }
   const data = await fetchApiRequest(`/api/trucks?${query.toString()}`, {
     method: 'GET',
   });
@@ -1957,8 +1961,10 @@ export function isEliveForbiddenError(error: unknown): boolean {
   return error instanceof EliveApiError && error.status === 403;
 }
 
-export async function fetchEliveDashboardData(): Promise<EliveDashboardData> {
-  const sourceData = await fetchEliveApiData();
+export async function fetchEliveDashboardData(
+  date?: string
+): Promise<EliveDashboardData> {
+  const sourceData = await fetchEliveApiData(date);
   const trucks = await fetchTrucksFromSheets(sourceData);
   const gpsLocations = await fetchGpsLocations(sourceData);
 
