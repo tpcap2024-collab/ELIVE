@@ -160,7 +160,7 @@ function getPlanEtaSortValue(value?: string): number {
 }
 
 export default function App() {
-  const [trucks, setTrucks] = useState<Truck[]>([]);
+  const [trucks, setTrucks] = useState<Truck[]>(mockTrucks);
   const [gpsLocations, setGpsLocations] = useState<GpsLocation[]>([]);
   const [currentView, setCurrentView] = useState<CurrentView>('dashboard');
   const [selectedGpsTruckId, setSelectedGpsTruckId] = useState<string | null>(null);
@@ -198,6 +198,7 @@ export default function App() {
   const [currentPage, setCurrentPage] = useState(1);
   const [sheetError, setSheetError] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isClearingPlanCache, setIsClearingPlanCache] = useState(false);
   const [hasLoadedSuccessfully, setHasLoadedSuccessfully] = useState(false);
   const [appLoginUser, setAppLoginUser] = useState('');
   const [appLoginPw, setAppLoginPw] = useState('');
@@ -344,11 +345,8 @@ export default function App() {
       const data = await fetchEliveDashboardData(selectedDate);
       if (authenticationGeneration !== authenticationGenerationRef.current) return;
 
-      const normalizedTrucks = data.trucks
-        .filter(truck =>
-          String(truck.planDate || '').trim().slice(0, 10) === selectedDate
-        )
-        .map(truck =>
+      if (data.trucks.length > 0) {
+        const normalizedTrucks = data.trucks.map(truck =>
           hasNoWorkAction(truck)
             ? {
                 ...truck,
@@ -357,8 +355,9 @@ export default function App() {
               }
             : truck
         );
-      setTrucks(normalizedTrucks);
-      trucksRef.current = normalizedTrucks;
+        setTrucks(normalizedTrucks);
+        trucksRef.current = normalizedTrucks;
+      }
 
       setGpsLocations(data.gpsLocations);
       setLastUpdate(
@@ -744,6 +743,43 @@ export default function App() {
     if (currentPage > totalPages) setCurrentPage(1);
   }, [currentPage, totalPages]);
 
+  const handleClearSelectedDateCache = async () => {
+    if (!selectedDate || isClearingPlanCache || authenticatedUser?.role !== 'ADMIN') return;
+    const accepted = window.confirm(
+      `ยืนยันล้างแคชแผนวันที่ ${selectedDate}? ระบบจะล้างเฉพาะแคชแผนของวันที่เลือก แล้วโหลดข้อมูลสดจาก Google Sheets ใหม่ทันที`
+    );
+    if (!accepted) return;
+
+    setIsClearingPlanCache(true);
+    setSheetError(null);
+    try {
+      const response = await fetch(`${getAppsScriptUrl()}/api/cache/daily-plan/clear`, {
+        method: 'POST',
+        credentials: 'include',
+        cache: 'no-store',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ date: selectedDate }),
+      });
+      const result = await response.json();
+      if (!response.ok || result?.success !== true) {
+        throw new Error(result?.error || 'ไม่สามารถล้างแคชแผนได้');
+      }
+
+      setTrucks([]);
+      trucksRef.current = [];
+      setGpsLocations([]);
+      await loadData();
+    } catch (error) {
+      console.error('Unable to clear selected Daily Plan cache:', error);
+      setSheetError(error instanceof Error ? error.message : 'ไม่สามารถล้างแคชแผนได้');
+    } finally {
+      setIsClearingPlanCache(false);
+    }
+  };
+
   const handleAppLogin = async (event: React.FormEvent) => {
     event.preventDefault();
     if (isSubmittingLogin) return;
@@ -1072,9 +1108,21 @@ export default function App() {
                 <p className="text-xs text-slate-400">Last Update</p>
                 <p className="font-mono text-sm text-slate-600">{lastUpdate}</p>
               </div>
-              <button type="button" onClick={() => void loadData()} disabled={isRefreshing} className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-slate-600 hover:bg-slate-200 disabled:opacity-50">
+              <button type="button" onClick={() => void loadData()} disabled={isRefreshing || isClearingPlanCache} className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-slate-600 hover:bg-slate-200 disabled:opacity-50" title="โหลดข้อมูลใหม่">
                 <RefreshCw className={`h-5 w-5 ${isRefreshing ? 'animate-spin' : ''}`} />
               </button>
+              {authenticatedUser.role === 'ADMIN' && currentView !== 'plan-management' && (
+                <button
+                  type="button"
+                  onClick={() => void handleClearSelectedDateCache()}
+                  disabled={!selectedDate || isRefreshing || isClearingPlanCache}
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 text-xs font-bold text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  title={`ล้างเฉพาะแคชแผนวันที่ ${selectedDate || '-'}`}
+                >
+                  <RefreshCw className={`h-4 w-4 ${isClearingPlanCache ? 'animate-spin' : ''}`} />
+                  {isClearingPlanCache ? 'กำลังล้าง...' : 'ล้างแคชแผน'}
+                </button>
+              )}
               <button type="button" className="relative flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-slate-600">
                 <Bell className="h-5 w-5" />
                 <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-red-500 ring-2 ring-white" />
