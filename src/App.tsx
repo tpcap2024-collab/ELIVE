@@ -344,19 +344,17 @@ export default function App() {
       const data = await fetchEliveDashboardData(selectedDate);
       if (authenticationGeneration !== authenticationGenerationRef.current) return;
 
-      if (data.trucks.length > 0) {
-        const normalizedTrucks = data.trucks.map(truck =>
-          hasNoWorkAction(truck)
-            ? {
-                ...truck,
-                status: 'COMPLETED' as const,
-                performanceStatus: 'NO_DROP' as const,
-              }
-            : truck
-        );
-        setTrucks(normalizedTrucks);
-        trucksRef.current = normalizedTrucks;
-      }
+      const normalizedTrucks = data.trucks.map(truck =>
+        hasNoWorkAction(truck)
+          ? {
+              ...truck,
+              status: 'COMPLETED' as const,
+              performanceStatus: 'NO_DROP' as const,
+            }
+          : truck
+      );
+      setTrucks(normalizedTrucks);
+      trucksRef.current = normalizedTrucks;
 
       setGpsLocations(data.gpsLocations);
       setLastUpdate(
