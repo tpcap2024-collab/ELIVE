@@ -139,6 +139,15 @@ function shouldKeepNoWorkVisible(truck: Truck): boolean {
   return Date.now() - updatedAt.getTime() <= NO_WORK_DISPLAY_DURATION_MS;
 }
 
+function getBangkokTodayText(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Bangkok',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
+
 function getPlanEtaSortValue(value?: string): number {
   const match = String(value || '').trim().match(/^(\d{1,2}):(\d{2})/);
   if (!match) return Number.MAX_SAFE_INTEGER;
@@ -155,7 +164,7 @@ export default function App() {
   const [gpsLocations, setGpsLocations] = useState<GpsLocation[]>([]);
   const [currentView, setCurrentView] = useState<CurrentView>('dashboard');
   const [selectedGpsTruckId, setSelectedGpsTruckId] = useState<string | null>(null);
-  const [selectedDate, setSelectedDate] = useState('');
+  const [selectedDate, setSelectedDate] = useState(getBangkokTodayText);
   const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth >= 768);
   const [lastUpdate, setLastUpdate] = useState('-');
   const [actionDialog, setActionDialog] = useState<ActionDialogState>({
@@ -332,7 +341,7 @@ export default function App() {
     setIsRefreshing(true);
 
     try {
-      const data = await fetchEliveDashboardData();
+      const data = await fetchEliveDashboardData(selectedDate);
       if (authenticationGeneration !== authenticationGenerationRef.current) return;
 
       if (data.trucks.length > 0) {
@@ -373,8 +382,7 @@ export default function App() {
         setIsRefreshing(false);
       }
     }
-  }, []);
-
+  }, [selectedDate]);
   useEffect(() => {
     if (!isAppLoggedIn) return;
 
