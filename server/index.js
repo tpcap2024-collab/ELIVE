@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '27';
+const API_VERSION = '28';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -53,8 +53,11 @@ const GPS_STALE_THRESHOLD_MS = 5 * 60 * 1000;
 const GPS_MOVEMENT_GRACE_MS = 30 * 1000;
 const GPS_NEXT_TRIP_EARLY_WINDOW_MINUTES = 90;
 const GPS_LSP_ARRIVAL_GROUP_WINDOW_MINUTES = 30;
-const GPS_DWELL_STATE_TTL_SECONDS = 4 * 60 * 60;
+const GPS_DWELL_STATE_TTL_SECONDS = 36 * 60 * 60;
 const GPS_DWELL_KEY_PREFIX = 'elive:gps-dwell:';
+const GPS_LAST_PROCESSED_KEY_PREFIX = 'elive:gps-last-processed:';
+const GPS_LAST_PROCESSED_TTL_SECONDS = 36 * 60 * 60;
+const GPS_AUTO_STAMP_FRESH_THRESHOLD_MS = Math.max(30000, Number(process.env.GPS_AUTO_STAMP_FRESH_THRESHOLD_MS || 120000));
 const GPS_VEHICLE_CYCLE_KEY_PREFIX = 'elive:gps-vehicle-cycle:';
 const GPS_VEHICLE_CYCLE_TTL_SECONDS = 36 * 60 * 60;
 const GPS_AUTO_STAMP_KEY_PREFIX = 'elive:gps-auto-stamp:';
@@ -1171,8 +1174,52 @@ async function resolveVehicleTrip(input, isInside, dataOverride = null) {
   await writeVehicleCycleState(input.licensePlate, state);
   return { state, activeTrip, trips, nowMinutes };
 }
-function getGpsDwellKey(codeRun) {
-  return `${GPS_DWELL_KEY_PREFIX}${normalizeCodeRun(codeRun)}`;
+function getGpsDwellKey(codeRun, geofenceId = null) {
+  const normalizedCodeRun = normalizeCodeRun(codeRun);
+  const normalizedGeofenceId = cleanText(geofenceId).toUpperCase();
+  return normalizedGeofenceId
+    ? `${GPS_DWELL_KEY_PREFIX}${normalizedCodeRun}:${normalizedGeofenceId}`
+    : `${GPS_DWELL_KEY_PREFIX}${normalizedCodeRun}`;
+}
+function getGpsLastProcessedKey(licensePlate) {
+  const normalizedPlate = normalizeLicensePlate(licensePlate);
+  if (!normalizedPlate) throw new Error('licensePlate is required for GPS processing state.');
+  return `${GPS_LAST_PROCESSED_KEY_PREFIX}${createHash('sha256').update(normalizedPlate).digest('hex')}`;
+}
+async function readGpsLastProcessedState(licensePlate) {
+  const client = requireRedisClient();
+  const raw = await client.get(getGpsLastProcessedKey(licensePlate));
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch {
+    await client.del(getGpsLastProcessedKey(licensePlate));
+    return null;
+  }
+}
+async function writeGpsLastProcessedState(input, classification = 'PROCESSED') {
+  const state = {
+    licensePlate: input.licensePlate,
+    normalizedLicensePlate: normalizeLicensePlate(input.licensePlate),
+    gpsId: input.gpsId,
+    gpsTime: input.gpsTime instanceof Date ? input.gpsTime.toISOString() : input.gpsTime,
+    receivedAt: input.receivedAt instanceof Date ? input.receivedAt.toISOString() : input.receivedAt,
+    latitude: input.latitude,
+    longitude: input.longitude,
+    speedKmh: input.speedKmh ?? input.speed,
+    classification,
+    processedAt: new Date().toISOString(),
+  };
+  await requireRedisClient().set(getGpsLastProcessedKey(input.licensePlate), JSON.stringify(state), { EX: GPS_LAST_PROCESSED_TTL_SECONDS });
+  return state;
+}
+async function classifyGpsInput(input) {
+  const previous = await readGpsLastProcessedState(input.licensePlate);
+  if (!previous?.gpsTime) return { classification: 'FRESH', previous };
+  const currentTime = input.gpsTime instanceof Date ? input.gpsTime.getTime() : Date.parse(input.gpsTime);
+  const previousTime = Date.parse(previous.gpsTime);
+  if (!Number.isFinite(currentTime) || !Number.isFinite(previousTime)) return { classification: 'FRESH', previous };
+  if (currentTime < previousTime) return { classification: 'OUT_OF_ORDER', previous };
+  if (currentTime === previousTime) return { classification: 'DUPLICATE', previous };
+  return { classification: 'FRESH', previous };
 }
 function validateGpsDockPayload(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
@@ -1216,20 +1263,20 @@ function findGpsGeofenceById(geofenceId, latitude, longitude) {
     ),
   };
 }
-async function readGpsDwellState(codeRun) {
+async function readGpsDwellState(codeRun, geofenceId = null) {
   const client = requireRedisClient();
-  const rawState = await client.get(getGpsDwellKey(codeRun));
+  const rawState = await client.get(getGpsDwellKey(codeRun, geofenceId));
   if (!rawState) return null;
   try {
     return JSON.parse(rawState);
   } catch {
-    await client.del(getGpsDwellKey(codeRun));
+    await client.del(getGpsDwellKey(codeRun, geofenceId));
     return null;
   }
 }
-async function writeGpsDwellState(codeRun, state) {
+async function writeGpsDwellState(codeRun, state, geofenceId = state?.geofenceId) {
   const client = requireRedisClient();
-  await client.set(getGpsDwellKey(codeRun), JSON.stringify(state), {
+  await client.set(getGpsDwellKey(codeRun, geofenceId), JSON.stringify(state), {
     EX: GPS_DWELL_STATE_TTL_SECONDS,
   });
   return state;
@@ -1687,7 +1734,7 @@ async function evaluateGpsDock(payload, dataOverride = null) {
   const platesMatch = activeTrip
     ? normalizeLicensePlate(input.licensePlate) === normalizeLicensePlate(activeTrip.planLicensePlate)
     : normalizeLicensePlate(input.licensePlate) === normalizeLicensePlate(input.planLicensePlate);
-  const previous = await readGpsDwellState(effectiveCodeRun);
+  const previous = await readGpsDwellState(effectiveCodeRun, evaluatedGeofence.id);
   const previousMatchesTarget = Boolean(
     previous &&
     previous.codeRun === effectiveCodeRun &&
@@ -1797,8 +1844,8 @@ async function evaluateGpsDock(payload, dataOverride = null) {
         ? previous?.confirmedAt || new Date(eventTimeMs).toISOString()
         : new Date(eventTimeMs).toISOString()
       : null,
-    readyForGpsStampEta: isInside && gpsAgeMs <= GPS_STALE_THRESHOLD_MS && !vehicleCycle.waitingForExit && eligibleEtaTrips.length > 0,
-    readyForGpsStampEtd: GPS_AUTO_STAMP_ETD_ENABLED && status === 'OUTSIDE_GEOFENCE' && wasInsideBeforeExit && Boolean(activeTrip?.stampEta) && !activeTrip?.noWorkAction && !activeTrip?.stampEtd,
+    readyForGpsStampEta: isInside && gpsAgeMs <= GPS_AUTO_STAMP_FRESH_THRESHOLD_MS && !vehicleCycle.waitingForExit && eligibleEtaTrips.length > 0,
+    readyForGpsStampEtd: GPS_AUTO_STAMP_ETD_ENABLED && gpsAgeMs <= GPS_AUTO_STAMP_FRESH_THRESHOLD_MS && status === 'OUTSIDE_GEOFENCE' && wasInsideBeforeExit && Boolean(activeTrip?.stampEta) && !activeTrip?.noWorkAction && !activeTrip?.stampEtd,
     autoStampExecuted: false,
     autoStampEtaResult: null,
     autoStampEtaResults: [],
@@ -1932,47 +1979,67 @@ async function runGpsBackgroundCycle() {
     return { skipped: true, reason: 'LEADER_LOCK_NOT_ACQUIRED' };
   }
   const startedAt = Date.now();
-  const summary = { processed: 0, confirmed: 0, etaStamped: 0, etdStamped: 0, stamped: 0, alreadyStamped: 0, failed: 0, failures: [] };
+  const summary = {
+    cycleInputMode: 'FRESH_APPS_SCRIPT_RESPONSE',
+    dashboardSnapshotRole: 'DISPLAY_ONLY',
+    processed: 0, confirmed: 0, etaStamped: 0, etdStamped: 0, stamped: 0, alreadyStamped: 0,
+    freshGpsCount: 0, duplicateGpsCount: 0, outOfOrderGpsCount: 0, staleGpsCount: 0,
+    skippedGpsCount: 0, minimumGpsAgeSeconds: null, maximumGpsAgeSeconds: null,
+    failed: 0, failures: [],
+  };
   try {
     if (await client.exists(APPS_SCRIPT_MUTATION_LOCK_KEY)) {
-      const status = {
-        enabled: true,
-        running: true,
-        skipped: true,
-        reason: 'APPS_SCRIPT_MUTATION_IN_PROGRESS',
-        lastCycleStartedAt: new Date(startedAt).toISOString(),
-        lastCycleCompletedAt: new Date().toISOString(),
-        durationMs: Date.now() - startedAt,
-        ...summary,
-      };
+      const status = { enabled: true, running: true, skipped: true, reason: 'APPS_SCRIPT_MUTATION_IN_PROGRESS', lastCycleStartedAt: new Date(startedAt).toISOString(), lastCycleCompletedAt: new Date().toISOString(), durationMs: Date.now() - startedAt, ...summary };
       await writeGpsWorkerStatus(status);
-      console.log(JSON.stringify({ logType: 'ELIVE_GPS_WORKER', ...status }));
       return status;
     }
     const realtimeSynchronization = await synchronizeGpsWorkerRealtime();
+    if (!realtimeSynchronization.synchronized || realtimeSynchronization.fallbackUsed || realtimeSynchronization.source !== 'google-apps-script-synchronizer') {
+      throw new Error('GPS_FRESH_RESPONSE_UNAVAILABLE');
+    }
+    const workerDate = getBangkokDateText(new Date());
+    const dailyPlanResult = await getGpsWorkerDailyPlan(workerDate);
+    const realtime = realtimeSynchronization.realtime;
+    const workerData = {
+      plan: dailyPlanResult.plan,
+      actual: Array.isArray(realtime?.actual) ? realtime.actual : [],
+      gps: Array.isArray(realtime?.gps) ? realtime.gps : [],
+    };
+    summary.dailyPlanSource = dailyPlanResult.source;
+    summary.realtimeSource = realtimeSynchronization.source;
+    summary.realtimeFallbackUsed = false;
+    summary.realtimeSynchronized = true;
+    summary.sourceFetchedAt = realtime.cachedAt || new Date().toISOString();
+    summary.snapshotWrittenAt = realtime.cachedAt || null;
     const pendingRetrySummary = await processDuePendingGpsStamps();
     summary.pendingRetry = pendingRetrySummary;
-    const workerDate = getBangkokDateText(new Date());
-    const workerDataResult = await getGpsWorkerCycleData(workerDate);
-    workerDataResult.realtimeSource = realtimeSynchronization.source;
-    workerDataResult.realtimeFallbackUsed = realtimeSynchronization.fallbackUsed;
-    workerDataResult.realtimeFallbackAgeMs = realtimeSynchronization.fallbackAgeMs;
-    workerDataResult.realtimeSynchronized = realtimeSynchronization.synchronized;
-    summary.dailyPlanSource = workerDataResult.planSource;
-    summary.realtimeSource = workerDataResult.realtimeSource;
-    summary.realtimeFallbackUsed = workerDataResult.realtimeFallbackUsed;
-    summary.realtimeFallbackAgeMs = workerDataResult.realtimeFallbackAgeMs;
-    summary.realtimeSynchronized = workerDataResult.realtimeSynchronized;
-    const inputs = buildBackgroundGpsInputs(workerDataResult.data);
+    const inputs = buildBackgroundGpsInputs(workerData);
     for (const input of inputs) {
       if (gpsWorkerStopping) break;
       try {
-        const result = await evaluateGpsDock(input, workerDataResult.data);
+        const parsedGpsTime = parseBangkokDateTime(input.gpsTime, 'gpsTime');
+        const parsedInput = { ...input, gpsTime: parsedGpsTime, receivedAt: parseBangkokDateTime(input.receivedAt, 'receivedAt'), speedKmh: Number(input.speedKmh ?? input.speed) };
+        const gpsAgeSeconds = Math.max(0, Math.floor((Date.now() - parsedGpsTime.getTime()) / 1000));
+        summary.minimumGpsAgeSeconds = summary.minimumGpsAgeSeconds === null ? gpsAgeSeconds : Math.min(summary.minimumGpsAgeSeconds, gpsAgeSeconds);
+        summary.maximumGpsAgeSeconds = summary.maximumGpsAgeSeconds === null ? gpsAgeSeconds : Math.max(summary.maximumGpsAgeSeconds, gpsAgeSeconds);
+        const classified = await classifyGpsInput(parsedInput);
+        if (classified.classification === 'DUPLICATE') {
+          summary.duplicateGpsCount += 1; summary.skippedGpsCount += 1; continue;
+        }
+        if (classified.classification === 'OUT_OF_ORDER') {
+          summary.outOfOrderGpsCount += 1; summary.skippedGpsCount += 1; continue;
+        }
+        if (gpsAgeSeconds > Math.floor(GPS_STALE_THRESHOLD_MS / 1000)) {
+          summary.staleGpsCount += 1; summary.skippedGpsCount += 1;
+          await writeGpsLastProcessedState(parsedInput, 'STALE');
+          continue;
+        }
+        summary.freshGpsCount += 1;
+        const result = await evaluateGpsDock(input, workerData);
+        await writeGpsLastProcessedState(parsedInput, 'PROCESSED');
         summary.processed += 1;
         if (result.status === 'DOCK_IN_CONFIRMED') summary.confirmed += 1;
-        const etaBatchResults = Array.isArray(result.autoStampEtaResults)
-          ? result.autoStampEtaResults.map(item => item.result).filter(Boolean)
-          : result.autoStampEtaResult ? [result.autoStampEtaResult] : [];
+        const etaBatchResults = Array.isArray(result.autoStampEtaResults) ? result.autoStampEtaResults.map(item => item.result).filter(Boolean) : result.autoStampEtaResult ? [result.autoStampEtaResult] : [];
         const etaStampedCount = etaBatchResults.filter(item => item.status === 'STAMPED').length;
         const etaAlreadyStampedCount = etaBatchResults.filter(item => item.status === 'ALREADY_STAMPED').length;
         summary.etaStamped += etaStampedCount;
@@ -1984,37 +2051,21 @@ async function runGpsBackgroundCycle() {
         summary.failures.push({ gpsIdHash: hashAuditValue(input.gpsId), error: getErrorMessage(error) });
       }
     }
-    const status = {
-      enabled: true,
-      running: true,
-      lastCycleStartedAt: new Date(startedAt).toISOString(),
-      lastCycleCompletedAt: new Date().toISOString(),
-      durationMs: Date.now() - startedAt,
-      ...summary,
-    };
+    const status = { enabled: true, running: true, lastCycleStartedAt: new Date(startedAt).toISOString(), lastCycleCompletedAt: new Date().toISOString(), durationMs: Date.now() - startedAt, ...summary };
     await writeGpsWorkerStatus(status);
     console.log(JSON.stringify({ logType: 'ELIVE_GPS_WORKER', ...status }));
     return status;
   } catch (error) {
-    const status = {
-      enabled: true,
-      running: true,
-      lastCycleStartedAt: new Date(startedAt).toISOString(),
-      lastCycleCompletedAt: new Date().toISOString(),
-      durationMs: Date.now() - startedAt,
-      error: getErrorMessage(error),
-      ...summary,
-    };
+    const status = { enabled: true, running: true, lastCycleStartedAt: new Date(startedAt).toISOString(), lastCycleCompletedAt: new Date().toISOString(), durationMs: Date.now() - startedAt, error: getErrorMessage(error), autoStampSuppressed: true, ...summary };
     await writeGpsWorkerStatus(status).catch(() => {});
     console.error('GPS Background Worker cycle failed:', status);
     return status;
   } finally {
-    await releaseGpsWorkerLock(client, lockToken).catch(error => {
-      console.error('Unable to release GPS Worker lock:', getErrorMessage(error));
-    });
+    await releaseGpsWorkerLock(client, lockToken).catch(error => console.error('Unable to release GPS Worker lock:', getErrorMessage(error)));
     gpsWorkerCycleRunning = false;
   }
 }
+
 function scheduleNextGpsWorkerCycle(delayMs) {
   if (gpsWorkerStopping || !GPS_BACKGROUND_WORKER_ENABLED) return;
   gpsWorkerTimer = setTimeout(async () => {
@@ -3516,7 +3567,14 @@ app.get(['/health', '/api/health'], (req, res) => {
       realtimeSynchronizerIntervalSeconds: Math.floor(GPS_BACKGROUND_WORKER_INTERVAL_MS / 1000),
       realtimeSynchronizerLockSeconds: GPS_REALTIME_SYNCHRONIZER_LOCK_SECONDS,
       eliveReadsSharedRealtimeSnapshot: true,
-      gpsWorkerReadsSharedRealtimeSnapshot: true,
+      gpsWorkerReadsSharedRealtimeSnapshot: false,
+      gpsWorkerInputMode: 'FRESH_APPS_SCRIPT_RESPONSE',
+      dashboardSnapshotRole: 'DISPLAY_ONLY',
+      fallbackAutoStampAllowed: false,
+      duplicateGpsGuardEnabled: true,
+      outOfOrderGpsGuardEnabled: true,
+      autoStampFreshThresholdSeconds: Math.floor(GPS_AUTO_STAMP_FRESH_THRESHOLD_MS / 1000),
+      lastProcessedGpsTtlSeconds: GPS_LAST_PROCESSED_TTL_SECONDS,
       directGetTrucksForDashboardEnabled: false,
       realtimeCacheTtlSeconds: GPS_REALTIME_CACHE_TTL_SECONDS,
       realtimeFallbackMaximumAgeSeconds: Math.floor(GPS_REALTIME_FALLBACK_MAX_AGE_MS / 1000),
@@ -3550,6 +3608,7 @@ app.get(['/health', '/api/health'], (req, res) => {
       etdRule: 'IMMEDIATE_ON_FIRST_FRESH_GPS_OUTSIDE_TARGET_GEOFENCE_AFTER_INSIDE',
       geofenceSelectionPolicy: 'ACTIVE_TRIP_DROP_POINT_TARGET_WITH_NEAREST_DEBUG_ONLY',
       dwellStateIsolation: 'CODE_RUN_AND_TARGET_GEOFENCE',
+      dwellStateTtlSeconds: GPS_DWELL_STATE_TTL_SECONDS,
       vehicleCycleTtlSeconds: GPS_VEHICLE_CYCLE_TTL_SECONDS,
       geofences: GPS_GEOFENCES,
     },
@@ -3664,7 +3723,23 @@ app.get('/api/gps/geofences', requireAuthentication, requireMinimumRole('TV_VIEW
 app.get('/api/gps/dock-status/:codeRun', requireAuthentication, requireMinimumRole('TV_VIEWER'), async (req, res) => {
   try {
     const codeRun = normalizeCodeRun(req.params.codeRun);
-    const state = await readGpsDwellState(codeRun);
+    let state = await readGpsDwellState(codeRun);
+    if (!state) {
+      const client = requireRedisClient();
+      const keys = [];
+      let cursor = '0';
+      do {
+        const result = await client.scan(cursor, { MATCH: `${GPS_DWELL_KEY_PREFIX}${codeRun}:*`, COUNT: 20 });
+        cursor = String(result.cursor);
+        keys.push(...result.keys);
+      } while (cursor !== '0' && keys.length < 20);
+      const records = (await Promise.all(keys.map(key => client.get(key))))
+        .filter(Boolean)
+        .map(value => { try { return JSON.parse(value); } catch { return null; } })
+        .filter(Boolean)
+        .sort((a, b) => Date.parse(b.evaluatedAt || 0) - Date.parse(a.evaluatedAt || 0));
+      state = records[0] || null;
+    }
     res.setHeader('Cache-Control', 'no-store');
     return res.status(200).json({
       success: true,
