@@ -97,7 +97,7 @@ const GPS_GEOFENCES = Object.freeze([
     name: 'TPCAP-LSP',
     latitude: 13.624391050915499,
     longitude: 101.01532262451346,
-    radiusMeters: 80,
+    radiusMeters: 60,
   }),
   Object.freeze({
     id: 'TPCAP-R2',
