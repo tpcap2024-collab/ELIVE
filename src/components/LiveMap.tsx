@@ -1400,10 +1400,10 @@ export function LiveMap({
   );
   const gpsAgeText = selectedGpsLocation ? getGpsAgeText(selectedGpsLocation) : '-';
   const stationName = selectedGpsLocation?.locationName || 'ไม่พบชื่อสถานี';
-  const insideGeofence = gpsDockResult?.isInside ?? selectedGeofenceEvaluation?.isInside ?? false;
-  const geofenceName = gpsDockResult?.geofenceName || selectedGeofenceEvaluation?.name || '-';
-  const geofenceDistance = gpsDockResult?.distanceMeters ?? selectedGeofenceEvaluation?.distanceMeters;
-  const geofenceRadius = gpsDockResult?.radiusMeters ?? selectedGeofenceEvaluation?.radiusMeters;
+  const insideGeofence = selectedGeofenceEvaluation?.isInside ?? false;
+  const geofenceName = selectedGeofenceEvaluation?.name || '-';
+  const geofenceDistance = selectedGeofenceEvaluation?.distanceMeters;
+  const geofenceRadius = selectedGeofenceEvaluation?.radiusMeters;
   const etaStatus = hasStampedEta ? 'STAMPED' : gpsDockResult?.readyForGpsStampEta ? 'READY' : 'WAITING';
   const etdStatus = hasStampedEtd ? 'STAMPED' : gpsDockResult?.readyForGpsStampEtd ? 'READY' : 'WAITING';
   return (
