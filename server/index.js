@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '28';
+const API_VERSION = '29';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -77,7 +77,7 @@ const GPS_PENDING_STAMP_LOCK_BUSY_MAX_RETRY_MS = 15 * 60 * 1000;
 const GPS_PENDING_STAMP_LOCK_COOLDOWN_KEY = 'elive:gps-pending-stamp:apps-script-lock-cooldown';
 const GPS_PENDING_STAMP_LOCK_COOLDOWN_SECONDS = 60;
 const GPS_AUTO_STAMP_ETA_ENABLED = cleanText(process.env.GPS_AUTO_STAMP_ETA_ENABLED || 'true').toLowerCase() === 'true';
-const GPS_AUTO_STAMP_ETD_ENABLED = cleanText(process.env.GPS_AUTO_STAMP_ETD_ENABLED || 'false').toLowerCase() === 'true';
+const GPS_AUTO_STAMP_ETD_ENABLED = cleanText(process.env.GPS_AUTO_STAMP_ETD_ENABLED || 'true').toLowerCase() === 'true';
 const GPS_BACKGROUND_WORKER_ENABLED = cleanText(process.env.GPS_BACKGROUND_WORKER_ENABLED || 'false').toLowerCase() === 'true';
 const GPS_BACKGROUND_WORKER_INTERVAL_MS = Math.max(15000, Number(process.env.GPS_BACKGROUND_WORKER_INTERVAL_MS || 60000));
 const GPS_WORKER_LOCK_KEY = 'elive:gps-worker:leader';
@@ -1983,7 +1983,8 @@ async function runGpsBackgroundCycle() {
     cycleInputMode: 'FRESH_APPS_SCRIPT_RESPONSE',
     dashboardSnapshotRole: 'DISPLAY_ONLY',
     processed: 0, confirmed: 0, etaStamped: 0, etdStamped: 0, stamped: 0, alreadyStamped: 0,
-    freshGpsCount: 0, duplicateGpsCount: 0, outOfOrderGpsCount: 0, staleGpsCount: 0,
+    freshGpsCount: 0, duplicateGpsCount: 0, duplicateGpsReevaluatedCount: 0,
+    outOfOrderGpsCount: 0, staleGpsCount: 0,
     skippedGpsCount: 0, minimumGpsAgeSeconds: null, maximumGpsAgeSeconds: null,
     failed: 0, failures: [],
   };
@@ -2023,20 +2024,29 @@ async function runGpsBackgroundCycle() {
         summary.minimumGpsAgeSeconds = summary.minimumGpsAgeSeconds === null ? gpsAgeSeconds : Math.min(summary.minimumGpsAgeSeconds, gpsAgeSeconds);
         summary.maximumGpsAgeSeconds = summary.maximumGpsAgeSeconds === null ? gpsAgeSeconds : Math.max(summary.maximumGpsAgeSeconds, gpsAgeSeconds);
         const classified = await classifyGpsInput(parsedInput);
-        if (classified.classification === 'DUPLICATE') {
-          summary.duplicateGpsCount += 1; summary.skippedGpsCount += 1; continue;
-        }
         if (classified.classification === 'OUT_OF_ORDER') {
-          summary.outOfOrderGpsCount += 1; summary.skippedGpsCount += 1; continue;
+          summary.outOfOrderGpsCount += 1;
+          summary.skippedGpsCount += 1;
+          continue;
         }
         if (gpsAgeSeconds > Math.floor(GPS_STALE_THRESHOLD_MS / 1000)) {
-          summary.staleGpsCount += 1; summary.skippedGpsCount += 1;
+          summary.staleGpsCount += 1;
+          summary.skippedGpsCount += 1;
           await writeGpsLastProcessedState(parsedInput, 'STALE');
           continue;
         }
-        summary.freshGpsCount += 1;
+        const isDuplicateGps = classified.classification === 'DUPLICATE';
+        if (isDuplicateGps) {
+          summary.duplicateGpsCount += 1;
+          summary.duplicateGpsReevaluatedCount += 1;
+        } else {
+          summary.freshGpsCount += 1;
+        }
         const result = await evaluateGpsDock(input, workerData);
-        await writeGpsLastProcessedState(parsedInput, 'PROCESSED');
+        await writeGpsLastProcessedState(
+          parsedInput,
+          isDuplicateGps ? 'DUPLICATE_REEVALUATED' : 'PROCESSED'
+        );
         summary.processed += 1;
         if (result.status === 'DOCK_IN_CONFIRMED') summary.confirmed += 1;
         const etaBatchResults = Array.isArray(result.autoStampEtaResults) ? result.autoStampEtaResults.map(item => item.result).filter(Boolean) : result.autoStampEtaResult ? [result.autoStampEtaResult] : [];
@@ -3572,6 +3582,8 @@ app.get(['/health', '/api/health'], (req, res) => {
       dashboardSnapshotRole: 'DISPLAY_ONLY',
       fallbackAutoStampAllowed: false,
       duplicateGpsGuardEnabled: true,
+      duplicateGpsPolicy: 'REEVALUATE_STATE_WITHOUT_DUPLICATING_PENDING_STAMP',
+      duplicateGpsReevaluatesActiveTripAndActual: true,
       outOfOrderGpsGuardEnabled: true,
       autoStampFreshThresholdSeconds: Math.floor(GPS_AUTO_STAMP_FRESH_THRESHOLD_MS / 1000),
       lastProcessedGpsTtlSeconds: GPS_LAST_PROCESSED_TTL_SECONDS,
@@ -3605,7 +3617,8 @@ app.get(['/health', '/api/health'], (req, res) => {
       etaEarlyWindowGuardLayers: ['TRIP_SELECTION', 'PENDING_CREATION', 'PENDING_PROCESSING', 'MANUAL_ROUTE'],
       pendingStampRetryBaseSeconds: Math.floor(GPS_PENDING_STAMP_BASE_RETRY_MS / 1000),
       pendingStampRetryMaximumSeconds: Math.floor(GPS_PENDING_STAMP_MAX_RETRY_MS / 1000),
-      etdRule: 'IMMEDIATE_ON_FIRST_FRESH_GPS_OUTSIDE_TARGET_GEOFENCE_AFTER_INSIDE',
+      etdRule: 'IMMEDIATE_ON_FIRST_FRESH_OR_DUPLICATE_REEVALUATED_GPS_OUTSIDE_TARGET_GEOFENCE_AFTER_INSIDE',
+      etdDefaultEnabled: true,
       geofenceSelectionPolicy: 'ACTIVE_TRIP_DROP_POINT_TARGET_WITH_NEAREST_DEBUG_ONLY',
       dwellStateIsolation: 'CODE_RUN_AND_TARGET_GEOFENCE',
       dwellStateTtlSeconds: GPS_DWELL_STATE_TTL_SECONDS,
