@@ -427,10 +427,8 @@ function createGeofenceMarkerIcon(
   });
 }
 function createTruckMarkerIcon(
-  heading: number,
   isMoving: boolean
 ): L.DivIcon {
-  const safeHeading = Number.isFinite(heading) ? heading : 0;
   const markerColor = isMoving ? '#16a34a' : '#dc2626';
   const statusText = isMoving ? 'รถวิ่ง' : 'รถจอด';
   return L.divIcon({
@@ -438,7 +436,7 @@ function createTruckMarkerIcon(
     html: `
       <div style="display:flex;flex-direction:column;align-items:center;">
         <div style="width:48px;height:48px;display:flex;align-items:center;justify-content:center;border-radius:14px;background:${markerColor};border:4px solid white;box-shadow:0 5px 16px ${isMoving ? 'rgba(22,163,74,0.45)' : 'rgba(220,38,38,0.45)'};box-sizing:border-box;">
-          <svg width="31" height="31" viewBox="0 0 64 64" aria-hidden="true" style="transform:rotate(${safeHeading}deg);transform-origin:center;">
+          <svg width="31" height="31" viewBox="0 0 64 64" aria-hidden="true">
             <path fill="white" d="M7 16h31v27H7zM38 24h11l8 9v10H38z"/>
             <path fill="${markerColor}" d="M42 28h6l5 6H42z"/>
             <circle cx="18" cy="47" r="7" fill="#0f172a" stroke="white" stroke-width="3"/>
@@ -781,6 +779,9 @@ export function LiveMap({
           zoom:
             10,
 
+          maxZoom:
+            22,
+
           zoomControl:
             true,
 
@@ -792,21 +793,30 @@ export function LiveMap({
     const streetLayer = L.tileLayer(
       'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
       {
-        maxZoom: 19,
+        maxNativeZoom: 19,
+        maxZoom: 22,
+        updateWhenZooming: false,
+        keepBuffer: 4,
         attribution: '© OpenStreetMap contributors',
       }
     );
     const satelliteLayer = L.tileLayer(
       'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
       {
-        maxZoom: 19,
+        maxNativeZoom: 19,
+        maxZoom: 22,
+        updateWhenZooming: false,
+        keepBuffer: 4,
         attribution: 'Tiles © Esri',
       }
     );
     const terrainLayer = L.tileLayer(
       'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
       {
-        maxZoom: 17,
+        maxNativeZoom: 17,
+        maxZoom: 22,
+        updateWhenZooming: false,
+        keepBuffer: 4,
         attribution: 'Map data © OpenStreetMap contributors, SRTM | Map style © OpenTopoMap',
       }
     );
@@ -1197,7 +1207,6 @@ export function LiveMap({
         {
           icon:
             createTruckMarkerIcon(
-              selectedGpsLocation.heading,
               Number(selectedGpsLocation.speed) > 0
             ),
 
