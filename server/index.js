@@ -1203,6 +1203,19 @@ function findNearestGpsGeofence(latitude, longitude) {
     }))
     .sort((first, second) => first.distanceMeters - second.distanceMeters)[0];
 }
+function findGpsGeofenceById(geofenceId, latitude, longitude) {
+  const geofence = GPS_GEOFENCES.find(item => item.id === geofenceId);
+  if (!geofence) return null;
+  return {
+    ...geofence,
+    distanceMeters: calculateDistanceMeters(
+      latitude,
+      longitude,
+      geofence.latitude,
+      geofence.longitude
+    ),
+  };
+}
 async function readGpsDwellState(codeRun) {
   const client = requireRedisClient();
   const rawState = await client.get(getGpsDwellKey(codeRun));
@@ -1623,16 +1636,48 @@ async function evaluateGpsDock(payload, dataOverride = null) {
   const receivedAtMs = input.receivedAt.getTime();
   const eventTimeMs = Math.min(receivedAtMs, nowMs);
   const gpsAgeMs = Math.max(0, nowMs - gpsTimeMs);
-  const nearest = findNearestGpsGeofence(input.latitude, input.longitude);
-  const isInside = nearest.distanceMeters <= nearest.radiusMeters;
+  const nearestGeofence = findNearestGpsGeofence(input.latitude, input.longitude);
+  const nearestIsInside = nearestGeofence.distanceMeters <= nearestGeofence.radiusMeters;
   const isParked = input.speedKmh === GPS_PARKING_SPEED_THRESHOLD_KMH;
-  const tripResolution = await resolveVehicleTrip(input, isInside, dataOverride);
-  const vehicleCycle = tripResolution.state;
-  const activeTrip = tripResolution.activeTrip;
+
+  let tripResolution = await resolveVehicleTrip(input, nearestIsInside, dataOverride);
+  let vehicleCycle = tripResolution.state;
+  let activeTrip = tripResolution.activeTrip;
+  let targetGeofenceId = activeTrip
+    ? getGeofenceIdForDropPoint(activeTrip.dropPoint)
+    : null;
+  let evaluatedGeofence = targetGeofenceId
+    ? findGpsGeofenceById(targetGeofenceId, input.latitude, input.longitude)
+    : nearestGeofence;
+  let isInside = Boolean(
+    evaluatedGeofence &&
+    evaluatedGeofence.distanceMeters <= evaluatedGeofence.radiusMeters
+  );
+
+  if (isInside !== nearestIsInside) {
+    tripResolution = await resolveVehicleTrip(input, isInside, dataOverride);
+    vehicleCycle = tripResolution.state;
+    activeTrip = tripResolution.activeTrip;
+    targetGeofenceId = activeTrip
+      ? getGeofenceIdForDropPoint(activeTrip.dropPoint)
+      : null;
+    evaluatedGeofence = targetGeofenceId
+      ? findGpsGeofenceById(targetGeofenceId, input.latitude, input.longitude)
+      : nearestGeofence;
+    isInside = Boolean(
+      evaluatedGeofence &&
+      evaluatedGeofence.distanceMeters <= evaluatedGeofence.radiusMeters
+    );
+  }
+
+  if (!evaluatedGeofence) {
+    throw new Error('TARGET_GEOFENCE_NOT_FOUND');
+  }
+
   const eligibleEtaTrips = selectGpsEtaArrivalGroup(
     tripResolution.trips,
     activeTrip,
-    nearest.id
+    evaluatedGeofence.id
   ).filter(trip =>
     trip.planEtaMinutes === null ||
     tripResolution.nowMinutes >=
@@ -1643,13 +1688,24 @@ async function evaluateGpsDock(payload, dataOverride = null) {
     ? normalizeLicensePlate(input.licensePlate) === normalizeLicensePlate(activeTrip.planLicensePlate)
     : normalizeLicensePlate(input.licensePlate) === normalizeLicensePlate(input.planLicensePlate);
   const previous = await readGpsDwellState(effectiveCodeRun);
-  const wasInsideBeforeExit = previous?.isInside === true || previous?.hasBeenInside === true;
+  const previousMatchesTarget = Boolean(
+    previous &&
+    previous.codeRun === effectiveCodeRun &&
+    previous.geofenceId === evaluatedGeofence.id
+  );
+  const wasInsideBeforeExit = Boolean(
+    previousMatchesTarget &&
+    (previous.isInside === true || previous.hasBeenInside === true)
+  );
   const hasBeenInside = isInside || wasInsideBeforeExit;
-  const lastInsideGeofenceName = isInside ? nearest.name : previous?.lastInsideGeofenceName || previous?.geofenceName || null;
-  let parkingStartedAtMs = Number(previous?.parkingStartedAtMs || 0);
-  let movingStartedAtMs = Number(previous?.movingStartedAtMs || 0);
+  const lastInsideGeofenceName = isInside
+    ? evaluatedGeofence.name
+    : wasInsideBeforeExit
+      ? previous?.lastInsideGeofenceName || evaluatedGeofence.name
+      : null;
+  let parkingStartedAtMs = Number(previousMatchesTarget ? previous?.parkingStartedAtMs || 0 : 0);
+  let movingStartedAtMs = Number(previousMatchesTarget ? previous?.movingStartedAtMs || 0 : 0);
   let status = 'OUTSIDE_GEOFENCE';
-
   if (vehicleCycle.waitingForExit) {
     status = 'WAITING_FOR_EXIT_AFTER_ETD';
     parkingStartedAtMs = 0;
@@ -1658,6 +1714,10 @@ async function evaluateGpsDock(payload, dataOverride = null) {
     status = vehicleCycle.selectionReason === 'WAITING_FOR_PLAN_WINDOW'
       ? 'WAITING_FOR_PLAN_WINDOW'
       : 'NO_ACTIVE_TRIP';
+    parkingStartedAtMs = 0;
+    movingStartedAtMs = 0;
+  } else if (!targetGeofenceId) {
+    status = 'TARGET_GEOFENCE_UNAVAILABLE';
     parkingStartedAtMs = 0;
     movingStartedAtMs = 0;
   } else if (!platesMatch) {
@@ -1673,11 +1733,10 @@ async function evaluateGpsDock(payload, dataOverride = null) {
   } else {
     status = 'DOCK_IN_CONFIRMED';
     movingStartedAtMs = 0;
-    if (!parkingStartedAtMs || previous?.geofenceId !== nearest.id || previous?.codeRun !== effectiveCodeRun) {
+    if (!parkingStartedAtMs || !previousMatchesTarget) {
       parkingStartedAtMs = eventTimeMs;
     }
   }
-
   const dwellSeconds = parkingStartedAtMs && isInside && isParked && !vehicleCycle.waitingForExit && activeTrip
     ? Math.max(0, Math.floor((eventTimeMs - parkingStartedAtMs) / 1000))
     : 0;
@@ -1699,6 +1758,11 @@ async function evaluateGpsDock(payload, dataOverride = null) {
     nextPlanEta: vehicleCycle.nextPlanEta,
     tripOrdering: vehicleCycle.tripOrdering,
     noWorkAction: activeTrip?.noWorkAction === true,
+    targetDropPoint: activeTrip?.dropPoint || null,
+    targetGeofenceId,
+    geofenceSelectionMode: activeTrip ? 'ACTIVE_TRIP_DROP_POINT' : 'NEAREST_FALLBACK',
+    nearestGeofenceId: nearestGeofence.id,
+    nearestGeofenceDistanceMeters: Number(nearestGeofence.distanceMeters.toFixed(2)),
     eligibleEtaCodeRuns: eligibleEtaTrips.map(trip => trip.codeRun),
     eligibleEtaTripCount: eligibleEtaTrips.length,
     gpsId: input.gpsId,
@@ -1706,12 +1770,12 @@ async function evaluateGpsDock(payload, dataOverride = null) {
     longitude: input.longitude,
     licensePlate: input.licensePlate,
     planLicensePlate: activeTrip?.planLicensePlate || input.planLicensePlate,
-    geofenceId: nearest.id,
-    geofenceName: nearest.name,
-    geofenceLatitude: nearest.latitude,
-    geofenceLongitude: nearest.longitude,
-    radiusMeters: nearest.radiusMeters,
-    distanceMeters: Number(nearest.distanceMeters.toFixed(2)),
+    geofenceId: evaluatedGeofence.id,
+    geofenceName: evaluatedGeofence.name,
+    geofenceLatitude: evaluatedGeofence.latitude,
+    geofenceLongitude: evaluatedGeofence.longitude,
+    radiusMeters: evaluatedGeofence.radiusMeters,
+    distanceMeters: Number(evaluatedGeofence.distanceMeters.toFixed(2)),
     isInside,
     wasInsideBeforeExit,
     hasBeenInside,
@@ -1729,7 +1793,9 @@ async function evaluateGpsDock(payload, dataOverride = null) {
     movingStartedAtMs,
     dwellSeconds,
     confirmedAt: status === 'DOCK_IN_CONFIRMED'
-      ? previous?.confirmedAt || new Date(eventTimeMs).toISOString()
+      ? previousMatchesTarget
+        ? previous?.confirmedAt || new Date(eventTimeMs).toISOString()
+        : new Date(eventTimeMs).toISOString()
       : null,
     readyForGpsStampEta: isInside && gpsAgeMs <= GPS_STALE_THRESHOLD_MS && !vehicleCycle.waitingForExit && eligibleEtaTrips.length > 0,
     readyForGpsStampEtd: GPS_AUTO_STAMP_ETD_ENABLED && status === 'OUTSIDE_GEOFENCE' && wasInsideBeforeExit && Boolean(activeTrip?.stampEta) && !activeTrip?.noWorkAction && !activeTrip?.stampEtd,
@@ -1757,6 +1823,7 @@ async function evaluateGpsDock(payload, dataOverride = null) {
   await writeGpsDwellState(effectiveCodeRun, state);
   return createGpsDockResult(state);
 }
+
 function normalizeGpsHeader(value) {
   return cleanText(value).toLowerCase().replace(/\s/g, '');
 }
@@ -3480,7 +3547,9 @@ app.get(['/health', '/api/health'], (req, res) => {
       etaEarlyWindowGuardLayers: ['TRIP_SELECTION', 'PENDING_CREATION', 'PENDING_PROCESSING', 'MANUAL_ROUTE'],
       pendingStampRetryBaseSeconds: Math.floor(GPS_PENDING_STAMP_BASE_RETRY_MS / 1000),
       pendingStampRetryMaximumSeconds: Math.floor(GPS_PENDING_STAMP_MAX_RETRY_MS / 1000),
-      etdRule: 'IMMEDIATE_ON_FIRST_FRESH_GPS_OUTSIDE_AFTER_INSIDE',
+      etdRule: 'IMMEDIATE_ON_FIRST_FRESH_GPS_OUTSIDE_TARGET_GEOFENCE_AFTER_INSIDE',
+      geofenceSelectionPolicy: 'ACTIVE_TRIP_DROP_POINT_TARGET_WITH_NEAREST_DEBUG_ONLY',
+      dwellStateIsolation: 'CODE_RUN_AND_TARGET_GEOFENCE',
       vehicleCycleTtlSeconds: GPS_VEHICLE_CYCLE_TTL_SECONDS,
       geofences: GPS_GEOFENCES,
     },
