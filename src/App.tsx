@@ -160,7 +160,7 @@ function getPlanEtaSortValue(value?: string): number {
 }
 
 export default function App() {
-  const [trucks, setTrucks] = useState<Truck[]>(mockTrucks);
+  const [trucks, setTrucks] = useState<Truck[]>([]);
   const [gpsLocations, setGpsLocations] = useState<GpsLocation[]>([]);
   const [currentView, setCurrentView] = useState<CurrentView>('dashboard');
   const [selectedGpsTruckId, setSelectedGpsTruckId] = useState<string | null>(null);
@@ -344,15 +344,19 @@ export default function App() {
       const data = await fetchEliveDashboardData(selectedDate);
       if (authenticationGeneration !== authenticationGenerationRef.current) return;
 
-      const normalizedTrucks = data.trucks.map(truck =>
-        hasNoWorkAction(truck)
-          ? {
-              ...truck,
-              status: 'COMPLETED' as const,
-              performanceStatus: 'NO_DROP' as const,
-            }
-          : truck
-      );
+      const normalizedTrucks = data.trucks
+        .filter(truck =>
+          String(truck.planDate || '').trim().slice(0, 10) === selectedDate
+        )
+        .map(truck =>
+          hasNoWorkAction(truck)
+            ? {
+                ...truck,
+                status: 'COMPLETED' as const,
+                performanceStatus: 'NO_DROP' as const,
+              }
+            : truck
+        );
       setTrucks(normalizedTrucks);
       trucksRef.current = normalizedTrucks;
 
