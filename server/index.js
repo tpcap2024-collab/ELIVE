@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '30';
+const API_VERSION = '31';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -549,6 +549,13 @@ function getAuditDescriptor(req) {
       action: 'ADMIN_SESSION_REVOKE_ALL',
       targetType: 'SESSION',
       targetIdHash: null,
+    };
+  }
+  if (method === 'POST' && path === '/api/cache/daily-plan/clear') {
+    return {
+      action: 'DAILY_PLAN_CACHE_CLEAR',
+      targetType: 'DAILY_PLAN_CACHE',
+      targetIdHash: hashAuditValue(req.body?.date),
     };
   }
   if (method === 'POST' && path === '/api/cache/clear') {
@@ -3521,6 +3528,8 @@ app.get(['/health', '/api/health'], (req, res) => {
       '/api/admin/sessions',
       '/api/admin/sessions/revoke-user',
       '/api/admin/sessions/revoke-all',
+      '/api/cache/daily-plan/clear',
+      '/api/cache/clear',
       '/api/trucks',
       '/api/trucks/update',
       '/api/gps/geofences',
@@ -4305,6 +4314,45 @@ app.post(
       });
     } catch (error) {
       return sendRouteError(res, error, 'Unable to revoke all Sessions.', 500);
+    }
+  }
+);
+
+app.post(
+  '/api/cache/daily-plan/clear',
+  requireAuthentication,
+  requireMinimumRole('ADMIN'),
+  async (req, res) => {
+    try {
+      const date = validateDateText(req.body?.date, 'date');
+      const cacheKey = getGpsDailyPlanCacheKey(date);
+      const client = requireRedisClient();
+      const deletedDailyPlanCacheCount = await client.del(cacheKey);
+      clearTruckCache();
+
+      const freshResult = await getGpsWorkerDailyPlan(date, true);
+      const rowCount = Math.max(0, freshResult.plan.length - 1);
+
+      req.auditDetails = {
+        date,
+        cacheKeyHash: hashAuditValue(cacheKey),
+        deletedDailyPlanCacheCount,
+        refreshedFrom: freshResult.source,
+        rowCount,
+      };
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(200).json({
+        success: true,
+        date,
+        deletedDailyPlanCacheCount,
+        refreshed: true,
+        source: freshResult.source,
+        rowCount,
+        message: `ล้างแคชแผนวันที่ ${date} และโหลดข้อมูลสดใหม่แล้ว`,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      return sendRouteError(res, error, 'Unable to clear Daily Plan cache.', 500);
     }
   }
 );
