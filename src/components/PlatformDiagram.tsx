@@ -406,7 +406,9 @@ export function PlatformDiagram({ trucks }: PlatformDiagramProps) {
                   onClick={() => setTimelineView(option)}
                   className={`rounded-md border px-3 py-1.5 text-[9px] font-bold transition-colors ${
                     timelineView === option
-                      ? 'border-violet-800 bg-violet-700 text-white shadow-sm'
+                      ? option === 'ALL'
+                        ? 'border-slate-800 bg-slate-800 text-white shadow-sm'
+                        : 'border-blue-700 bg-blue-600 text-white shadow-sm'
                       : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-100'
                   }`}
                 >
@@ -579,14 +581,8 @@ export function PlatformDiagram({ trucks }: PlatformDiagramProps) {
                             </div>
 
                             <div className="flex">
-                              <div className="sticky left-8 z-20 flex w-12 shrink-0 items-stretch border-r border-slate-300 bg-white shadow-[2px_0_5px_rgba(0,0,0,0.05)]">
-                                <div className="flex w-7 items-center justify-center border-r border-slate-200 text-sm font-bold text-slate-800">
-                                  {dock.id}
-                                </div>
-                                <div className="flex w-5 flex-col items-center justify-center text-[6px] font-bold leading-[7px] text-slate-500">
-                                  {(timelineView === 'ALL' || timelineView === 'PLAN') && <span className="text-blue-700">P</span>}
-                                  {(timelineView === 'ALL' || timelineView === 'ACTUAL') && <span className="text-emerald-700">A</span>}
-                                </div>
+                              <div className="sticky left-8 z-20 flex w-12 shrink-0 items-center justify-center border-r border-slate-300 bg-white text-sm font-bold text-slate-800 shadow-[2px_0_5px_rgba(0,0,0,0.05)]">
+                                {dock.id}
                               </div>
                               <div className="relative flex flex-1 flex-col">
                                 {(['PLAN', 'ACTUAL'] as const)
@@ -595,7 +591,7 @@ export function PlatformDiagram({ trucks }: PlatformDiagramProps) {
                                     <div
                                       key={rowType}
                                       className={`relative flex h-[56px] border-b border-slate-300 last:border-b-0 ${
-                                        rowType === 'PLAN' ? 'bg-white' : 'bg-emerald-50/60'
+                                        rowType === 'PLAN' ? 'bg-white' : 'bg-emerald-100/80'
                                       }`}
                                     >
                                       {HOURS.map(hour => (
