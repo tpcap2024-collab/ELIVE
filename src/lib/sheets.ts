@@ -1441,6 +1441,7 @@ export async function fetchTrucksFromSheets(
     trucks.push({
       id: codeRun,
       planDate,
+      planRemark: normalizePlanRemark(row[12]),
       route: String(row[2] || ''),
       supplierName: String(row[3] || ''),
       licensePlate: String(row[4] || ''),
