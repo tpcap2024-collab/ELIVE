@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '31';
+const API_VERSION = '32';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -52,6 +52,8 @@ const GPS_DWELL_THRESHOLD_MS = 3 * 60 * 1000;
 const GPS_STALE_THRESHOLD_MS = 5 * 60 * 1000;
 const GPS_MOVEMENT_GRACE_MS = 30 * 1000;
 const GPS_NEXT_TRIP_EARLY_WINDOW_MINUTES = 90;
+const GPS_MORNING_PLAN_START_MINUTES = 6 * 60;
+const GPS_MORNING_PLAN_END_MINUTES = 12 * 60;
 const GPS_LSP_ARRIVAL_GROUP_WINDOW_MINUTES = 30;
 const GPS_DWELL_STATE_TTL_SECONDS = 36 * 60 * 60;
 const GPS_DWELL_KEY_PREFIX = 'elive:gps-dwell:';
@@ -1018,19 +1020,28 @@ function getGeofenceIdForDropPoint(dropPoint) {
   if (/^(?:L1|L2|L3|M1)(?:-|\b)/.test(normalizedDropPoint)) return 'TPCAP-LSP';
   return null;
 }
+function isGpsMorningEvent(nowMinutes) {
+  return Number.isFinite(nowMinutes) && nowMinutes < GPS_MORNING_PLAN_END_MINUTES;
+}
+function isPlanAllowedForGpsEtaShift(planEtaMinutes, nowMinutes) {
+  if (planEtaMinutes === null || planEtaMinutes === undefined) return false;
+  if (!isGpsMorningEvent(nowMinutes)) return true;
+  return planEtaMinutes >= GPS_MORNING_PLAN_START_MINUTES &&
+    planEtaMinutes < GPS_MORNING_PLAN_END_MINUTES;
+}
 function selectGpsEtaStampTrips(trips, nowMinutes, geofenceId) {
   return trips
     .filter(trip =>
       !trip.stampEta &&
       !trip.stampEtd &&
       !trip.noWorkAction &&
-      (trip.planEtaMinutes === null ||
-        nowMinutes >= trip.planEtaMinutes - GPS_NEXT_TRIP_EARLY_WINDOW_MINUTES) &&
+      isPlanAllowedForGpsEtaShift(trip.planEtaMinutes, nowMinutes) &&
+      nowMinutes >= trip.planEtaMinutes - GPS_NEXT_TRIP_EARLY_WINDOW_MINUTES &&
       getGeofenceIdForDropPoint(trip.dropPoint) === geofenceId
     )
     .sort(compareTripsByPlanTime);
 }
-function selectGpsEtaArrivalGroup(trips, activeTrip, geofenceId) {
+function selectGpsEtaArrivalGroup(trips, activeTrip, geofenceId, nowMinutes) {
   if (!activeTrip) return [];
   const activeGeofenceId = getGeofenceIdForDropPoint(activeTrip.dropPoint);
   if (!activeGeofenceId || activeGeofenceId !== geofenceId) return [];
@@ -1038,6 +1049,7 @@ function selectGpsEtaArrivalGroup(trips, activeTrip, geofenceId) {
     !trip.stampEta &&
     !trip.stampEtd &&
     !trip.noWorkAction &&
+    isPlanAllowedForGpsEtaShift(trip.planEtaMinutes, nowMinutes) &&
     getGeofenceIdForDropPoint(trip.dropPoint) === geofenceId;
   if (geofenceId !== 'TPCAP-LSP' || activeTrip.planEtaMinutes === null) {
     return isPendingEtaTrip(activeTrip) ? [activeTrip] : [];
@@ -1051,8 +1063,7 @@ function selectGpsEtaArrivalGroup(trips, activeTrip, geofenceId) {
     )
     .sort(compareTripsByPlanTime);
 }
-
-function selectTripForVehicle(trips, nowMinutes, previousCycle = null) {
+function selectTripForVehicle(trips, nowMinutes, previousCycle = null, detectedGeofenceId = null) {
   const inProgressTrips = trips
     .filter(trip => trip.stampEta && !trip.stampEtd && !trip.noWorkAction)
     .sort(compareTripsByPlanTime);
@@ -1066,18 +1077,33 @@ function selectTripForVehicle(trips, nowMinutes, previousCycle = null) {
       planEtaDifferenceMinutes: null,
     };
   }
-  const pendingTrips = trips.filter(
+  const allPendingTrips = trips.filter(
     trip => !trip.stampEta && !trip.stampEtd && !trip.noWorkAction
   );
+  const geofencePendingTrips = detectedGeofenceId
+    ? allPendingTrips.filter(trip =>
+        getGeofenceIdForDropPoint(trip.dropPoint) === detectedGeofenceId
+      )
+    : [];
+  const pendingTrips = geofencePendingTrips.filter(trip =>
+    isPlanAllowedForGpsEtaShift(trip.planEtaMinutes, nowMinutes)
+  );
   if (!pendingTrips.length) {
+    let selectionReason = 'NO_PENDING_TRIP';
+    if (!detectedGeofenceId && allPendingTrips.length) {
+      selectionReason = 'OUTSIDE_ALL_GEOFENCES';
+    } else if (detectedGeofenceId && !geofencePendingTrips.length && allPendingTrips.length) {
+      selectionReason = 'NO_PLAN_FOR_DETECTED_GEOFENCE';
+    } else if (geofencePendingTrips.length && !pendingTrips.length) {
+      selectionReason = 'NO_PLAN_IN_ACTIVE_SHIFT';
+    }
     return {
       activeTrip: null,
-      selectionReason: 'NO_PENDING_TRIP',
+      selectionReason,
       planEtaDifferenceMinutes: null,
     };
   }
   const eligiblePendingTrips = pendingTrips.filter(trip =>
-    trip.planEtaMinutes === null ||
     nowMinutes >= trip.planEtaMinutes - GPS_NEXT_TRIP_EARLY_WINDOW_MINUTES
   );
   if (!eligiblePendingTrips.length) {
@@ -1098,36 +1124,29 @@ function selectTripForVehicle(trips, nowMinutes, previousCycle = null) {
     return {
       activeTrip: lockedPending,
       selectionReason: 'LOCKED_ACTIVE_TRIP',
-      planEtaDifferenceMinutes: lockedPending.planEtaMinutes === null
-        ? null
-        : Math.abs(lockedPending.planEtaMinutes - nowMinutes),
+      planEtaDifferenceMinutes: Math.abs(lockedPending.planEtaMinutes - nowMinutes),
     };
   }
   const activeTrip = [...eligiblePendingTrips].sort((first, second) => {
-    const firstDistance = first.planEtaMinutes === null
-      ? Number.MAX_SAFE_INTEGER
-      : Math.abs(first.planEtaMinutes - nowMinutes);
-    const secondDistance = second.planEtaMinutes === null
-      ? Number.MAX_SAFE_INTEGER
-      : Math.abs(second.planEtaMinutes - nowMinutes);
+    const firstDistance = Math.abs(first.planEtaMinutes - nowMinutes);
+    const secondDistance = Math.abs(second.planEtaMinutes - nowMinutes);
     if (firstDistance !== secondDistance) return firstDistance - secondDistance;
     return compareTripsByPlanTime(first, second);
   })[0];
   return {
     activeTrip,
     selectionReason: 'NEAREST_PENDING_PLAN_ETA',
-    planEtaDifferenceMinutes: activeTrip.planEtaMinutes === null
-      ? null
-      : Math.abs(activeTrip.planEtaMinutes - nowMinutes),
+    planEtaDifferenceMinutes: Math.abs(activeTrip.planEtaMinutes - nowMinutes),
   };
 }
-async function resolveVehicleTrip(input, isInside, dataOverride = null) {
+
+async function resolveVehicleTrip(input, isInside, dataOverride = null, detectedGeofenceId = null) {
   const truckResult = dataOverride ? { data: dataOverride, source: 'gps-worker-cycle' } : await getTruckDataWithCache(false);
   const dateText = getBangkokDateText(input.gpsTime);
   const trips = buildTripsForPlate(truckResult.data, input.licensePlate, dateText);
   const previousCycle = await readVehicleCycleState(input.licensePlate);
   const nowMinutes = getBangkokMinuteOfDay(input.gpsTime);
-  const selected = selectTripForVehicle(trips, nowMinutes, previousCycle);
+  const selected = selectTripForVehicle(trips, nowMinutes, previousCycle, detectedGeofenceId);
   const completedTrips = trips.filter(trip => trip.completed).sort(compareTripsByPlanTime);
   const latestCompletedTrip = completedTrips.length
     ? completedTrips[completedTrips.length - 1]
@@ -1165,6 +1184,7 @@ async function resolveVehicleTrip(input, isInside, dataOverride = null) {
     activeTripSequence: activeTrip?.tripSequence || null,
     planEtaDifferenceMinutes: selected.planEtaDifferenceMinutes,
     gpsMinuteOfDay: nowMinutes,
+    detectedGeofenceId: detectedGeofenceId || null,
     nextCodeRun: nextPendingTrip?.codeRun || null,
     nextPlanEta: nextPendingTrip?.planEta || null,
     requestedCodeRun: input.codeRun,
@@ -1175,7 +1195,7 @@ async function resolveVehicleTrip(input, isInside, dataOverride = null) {
       ? 'WAITING_FOR_EXIT_AFTER_ETD'
       : selected.selectionReason,
     tripCount: trips.length,
-    tripOrdering: 'ACTIVE_TRIP_THEN_LSP_ARRIVAL_GROUP_WITHIN_30_MINUTES',
+    tripOrdering: 'IN_PROGRESS_THEN_DETECTED_GEOFENCE_THEN_MORNING_SHIFT_THEN_PLAN_WINDOW_THEN_NEAREST_PLAN_ETA',
     updatedAt: new Date().toISOString(),
   };
   await writeVehicleCycleState(input.licensePlate, state);
@@ -1321,6 +1341,7 @@ function findTripByCodeRun(data, codeRun) {
     codeRun: normalizedCodeRun,
     planDate: parseSheetDateText(planRow[1]),
     planLicensePlate: cleanText(planRow[4]),
+    dropPoint: cleanText(planRow[9]).toUpperCase(),
     planEta: cleanText(planRow[10]),
     planEtaMinutes: parsePlanMinutes(planRow[10]),
     stampEta: cleanText(actualRow[4]),
@@ -1454,7 +1475,7 @@ async function createPendingGpsStamp(stampType, state) {
   const created = await client.set(getPendingStampKey(pendingId), JSON.stringify(initial), { NX: true, EX: GPS_PENDING_STAMP_TTL_SECONDS });
   if (created) {
     await client.zAdd(GPS_PENDING_STAMP_SCHEDULE_KEY, [{ score: Date.now(), value: pendingId }]);
-    console.log(JSON.stringify({ logType: 'ELIVE_GPS_STAMP', event: 'PENDING_STAMP_CREATED', pendingId, codeRun, stampType: normalizedStampType, licensePlate: state.licensePlate, gpsTime: state.gpsTime }));
+    console.log(JSON.stringify({ logType: 'ELIVE_GPS_STAMP', event: 'PENDING_STAMP_CREATED', pendingId, codeRun, stampType: normalizedStampType, licensePlate: state.licensePlate, gpsTime: state.gpsTime, detectedGeofenceId: state.detectedGeofenceId || state.geofenceId || null, selectedPlanEta: state.activePlanEta || null }));
     return initial;
   }
   return await readPendingStamp(pendingId);
@@ -1512,6 +1533,42 @@ async function processPendingGpsStamp(pendingId) {
           etaWindow,
         });
       }
+      const pendingEventMinutes = getBangkokMinuteOfDay(
+        parseBangkokDateTime(record.gpsTime, 'gpsTime')
+      );
+      const pendingGeofenceId = GPS_GEOFENCES.find(
+        geofence => geofence.name === record.geofence || geofence.id === record.geofence
+      )?.id || null;
+      const tripGeofenceId = getGeofenceIdForDropPoint(trip.dropPoint);
+      if (!pendingGeofenceId || tripGeofenceId !== pendingGeofenceId) {
+        console.warn(JSON.stringify({
+          logType: 'ELIVE_GPS_STAMP',
+          event: 'PENDING_ETA_SUPERSEDED_GEOFENCE_MISMATCH',
+          pendingId,
+          codeRun: record.codeRun,
+          pendingGeofenceId,
+          tripGeofenceId,
+          dropPoint: trip.dropPoint,
+        }));
+        return await closePendingStamp(record, 'SUPERSEDED', {
+          lastError: 'PLAN_GEOFENCE_DOES_NOT_MATCH_DETECTED_GEOFENCE',
+        });
+      }
+      if (!isPlanAllowedForGpsEtaShift(trip.planEtaMinutes, pendingEventMinutes)) {
+        console.warn(JSON.stringify({
+          logType: 'ELIVE_GPS_STAMP',
+          event: 'PENDING_ETA_SUPERSEDED_OUTSIDE_ACTIVE_SHIFT',
+          pendingId,
+          codeRun: record.codeRun,
+          gpsMinuteOfDay: pendingEventMinutes,
+          planEta: trip.planEta,
+          planEtaMinutes: trip.planEtaMinutes,
+          activeShift: 'MORNING',
+        }));
+        return await closePendingStamp(record, 'SUPERSEDED', {
+          lastError: 'PLAN_OUTSIDE_ACTIVE_SHIFT',
+        });
+      }
       const currentTrips = buildTripsForPlate(
         latestData,
         record.licensePlate,
@@ -1520,20 +1577,19 @@ async function processPendingGpsStamp(pendingId) {
       const currentCycle = await readVehicleCycleState(record.licensePlate);
       const currentSelection = selectTripForVehicle(
         currentTrips,
-        getBangkokMinuteOfDay(new Date()),
-        currentCycle
+        pendingEventMinutes,
+        currentCycle,
+        pendingGeofenceId
       );
       const selectedCodeRun = currentSelection.activeTrip?.codeRun || null;
       const selectedGeofenceId = currentSelection.activeTrip
         ? getGeofenceIdForDropPoint(currentSelection.activeTrip.dropPoint)
         : null;
-      const pendingGeofenceId = GPS_GEOFENCES.find(
-        geofence => geofence.name === record.geofence || geofence.id === record.geofence
-      )?.id || null;
       const currentArrivalGroup = selectGpsEtaArrivalGroup(
         currentTrips,
         currentSelection.activeTrip,
-        pendingGeofenceId
+        pendingGeofenceId,
+        pendingEventMinutes
       );
       const pendingIsInCurrentArrivalGroup = currentArrivalGroup.some(
         arrivalTrip => arrivalTrip.codeRun === record.codeRun
@@ -1692,38 +1748,28 @@ async function evaluateGpsDock(payload, dataOverride = null) {
   const gpsAgeMs = Math.max(0, nowMs - gpsTimeMs);
   const nearestGeofence = findNearestGpsGeofence(input.latitude, input.longitude);
   const nearestIsInside = nearestGeofence.distanceMeters <= nearestGeofence.radiusMeters;
+  const detectedGeofenceId = nearestIsInside ? nearestGeofence.id : null;
   const isParked = input.speedKmh === GPS_PARKING_SPEED_THRESHOLD_KMH;
-
-  let tripResolution = await resolveVehicleTrip(input, nearestIsInside, dataOverride);
-  let vehicleCycle = tripResolution.state;
-  let activeTrip = tripResolution.activeTrip;
-  let targetGeofenceId = activeTrip
+  const tripResolution = await resolveVehicleTrip(
+    input,
+    nearestIsInside,
+    dataOverride,
+    detectedGeofenceId
+  );
+  const vehicleCycle = tripResolution.state;
+  const activeTrip = tripResolution.activeTrip;
+  const targetGeofenceId = activeTrip
     ? getGeofenceIdForDropPoint(activeTrip.dropPoint)
-    : null;
-  let evaluatedGeofence = targetGeofenceId
+    : detectedGeofenceId;
+  const evaluatedGeofence = targetGeofenceId
     ? findGpsGeofenceById(targetGeofenceId, input.latitude, input.longitude)
     : nearestGeofence;
-  let isInside = Boolean(
+  const isInside = Boolean(
+    detectedGeofenceId &&
     evaluatedGeofence &&
+    evaluatedGeofence.id === detectedGeofenceId &&
     evaluatedGeofence.distanceMeters <= evaluatedGeofence.radiusMeters
   );
-
-  if (isInside !== nearestIsInside) {
-    tripResolution = await resolveVehicleTrip(input, isInside, dataOverride);
-    vehicleCycle = tripResolution.state;
-    activeTrip = tripResolution.activeTrip;
-    targetGeofenceId = activeTrip
-      ? getGeofenceIdForDropPoint(activeTrip.dropPoint)
-      : null;
-    evaluatedGeofence = targetGeofenceId
-      ? findGpsGeofenceById(targetGeofenceId, input.latitude, input.longitude)
-      : nearestGeofence;
-    isInside = Boolean(
-      evaluatedGeofence &&
-      evaluatedGeofence.distanceMeters <= evaluatedGeofence.radiusMeters
-    );
-  }
-
   if (!evaluatedGeofence) {
     throw new Error('TARGET_GEOFENCE_NOT_FOUND');
   }
@@ -1731,9 +1777,11 @@ async function evaluateGpsDock(payload, dataOverride = null) {
   const eligibleEtaTrips = selectGpsEtaArrivalGroup(
     tripResolution.trips,
     activeTrip,
-    evaluatedGeofence.id
+    detectedGeofenceId,
+    tripResolution.nowMinutes
   ).filter(trip =>
-    trip.planEtaMinutes === null ||
+    trip.planEtaMinutes !== null &&
+    isPlanAllowedForGpsEtaShift(trip.planEtaMinutes, tripResolution.nowMinutes) &&
     tripResolution.nowMinutes >=
       trip.planEtaMinutes - GPS_NEXT_TRIP_EARLY_WINDOW_MINUTES
   );
@@ -1814,7 +1862,8 @@ async function evaluateGpsDock(payload, dataOverride = null) {
     noWorkAction: activeTrip?.noWorkAction === true,
     targetDropPoint: activeTrip?.dropPoint || null,
     targetGeofenceId,
-    geofenceSelectionMode: activeTrip ? 'ACTIVE_TRIP_DROP_POINT' : 'NEAREST_FALLBACK',
+    geofenceSelectionMode: activeTrip ? 'DETECTED_GEOFENCE_MATCHED_TO_ACTIVE_TRIP' : 'DETECTED_GEOFENCE_ONLY',
+    detectedGeofenceId,
     nearestGeofenceId: nearestGeofence.id,
     nearestGeofenceDistanceMeters: Number(nearestGeofence.distanceMeters.toFixed(2)),
     eligibleEtaCodeRuns: eligibleEtaTrips.map(trip => trip.codeRun),
@@ -3594,9 +3643,13 @@ app.get(['/health', '/api/health'], (req, res) => {
       gpsStaleThresholdSeconds: Math.floor(GPS_STALE_THRESHOLD_MS / 1000),
       movementGraceSeconds: Math.floor(GPS_MOVEMENT_GRACE_MS / 1000),
       multipleTripsPerVehiclePerDay: true,
-      tripSelectionPolicy: 'IN_PROGRESS_THEN_PLAN_WINDOW_THEN_LOCKED_THEN_NEAREST_PLAN_ETA',
+      tripSelectionPolicy: 'IN_PROGRESS_THEN_DETECTED_GEOFENCE_THEN_MORNING_SHIFT_THEN_PLAN_WINDOW_THEN_LOCKED_THEN_NEAREST_PLAN_ETA',
       activeTripLockEnabled: true,
       futureTripGuardEnabled: true,
+      geofenceFirstEtaSelectionEnabled: true,
+      morningPlanGuardEnabled: true,
+      morningPlanStartMinutes: GPS_MORNING_PLAN_START_MINUTES,
+      morningPlanEndMinutesExclusive: GPS_MORNING_PLAN_END_MINUTES,
       nextTripEarlyWindowMinutes: GPS_NEXT_TRIP_EARLY_WINDOW_MINUTES,
       noWorkActionKeyword: 'ไม่มีงาน',
       noWorkActionAutoStampBlocked: true,
@@ -3615,7 +3668,7 @@ app.get(['/health', '/api/health'], (req, res) => {
       pendingStampRetryBaseSeconds: Math.floor(GPS_PENDING_STAMP_BASE_RETRY_MS / 1000),
       pendingStampRetryMaximumSeconds: Math.floor(GPS_PENDING_STAMP_MAX_RETRY_MS / 1000),
       etdRule: 'IMMEDIATE_ON_FIRST_FRESH_GPS_OUTSIDE_TARGET_GEOFENCE_AFTER_INSIDE',
-      geofenceSelectionPolicy: 'ACTIVE_TRIP_DROP_POINT_TARGET_WITH_NEAREST_DEBUG_ONLY',
+      geofenceSelectionPolicy: 'DETECT_GEOFENCE_FIRST_THEN_MATCH_PLAN_DROP_POINT',
       dwellStateIsolation: 'CODE_RUN_AND_TARGET_GEOFENCE',
       dwellStateTtlSeconds: GPS_DWELL_STATE_TTL_SECONDS,
       vehicleCycleTtlSeconds: GPS_VEHICLE_CYCLE_TTL_SECONDS,
