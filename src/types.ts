@@ -32,6 +32,7 @@ export interface Truck {
   gpsId?: string;
   gpsLocation?: GpsLocation;
   planDate?: string;
+  planRemark?: 'REGULAR' | 'EXTRA' | 'CANCEL';
   route: string;
   licensePlate: string;
   supplierName: string;
