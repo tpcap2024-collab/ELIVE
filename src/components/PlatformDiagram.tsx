@@ -18,6 +18,7 @@ interface PlatformDiagramProps {
 }
 
 type GroupFilter = 'M1' | 'L1' | 'L2' | 'L3' | 'R1' | 'R2';
+type TimelineViewFilter = 'ALL' | 'PLAN' | 'ACTUAL';
 
 type DockDefinition = {
   id: string;
@@ -198,8 +199,60 @@ function getTruckColor(truck: Truck): string {
   return 'bg-slate-300 border-slate-500 text-slate-800';
 }
 
+function getBangkokCurrentMinutes(): number {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Bangkok',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(new Date());
+  const hour = Number(parts.find(part => part.type === 'hour')?.value || 0) % 24;
+  const minute = Number(parts.find(part => part.type === 'minute')?.value || 0);
+  return (hour - START_HOUR) * 60 + minute;
+}
+
+function getTimelinePosition(startMins: number, durationMins: number) {
+  const leftPercent = (startMins / TOTAL_MINS) * 100;
+  const widthPercent = (durationMins / TOTAL_MINS) * 100;
+  const left = Math.max(0, leftPercent);
+  let width = widthPercent;
+  if (leftPercent < 0) width += leftPercent;
+  if (left + width > 100) width = 100 - left;
+  return width > 0 ? { left, width } : null;
+}
+
+function getPlanDurationMinutes(truck: Truck): number {
+  const difference = calculateMinutesDifference(truck.planEta || '', truck.planEtd || '');
+  return difference !== null && difference > 0 ? difference : 60;
+}
+
+function getActualDurationMinutes(truck: Truck, actualEta: string): number {
+  if (truck.stampEtd) {
+    const difference = calculateMinutesDifference(actualEta, truck.stampEtd);
+    if (difference !== null && difference > 0) return difference;
+  }
+  const start = parseTimeToMinutes(actualEta);
+  if (start === null) return 0;
+  const elapsed = getBangkokCurrentMinutes() - start;
+  return Math.max(10, elapsed > 0 ? elapsed : 10);
+}
+
+function getTimelineCardColor(truck: Truck, rowType: 'PLAN' | 'ACTUAL'): string {
+  const base = getTruckColor(truck);
+  if (truck.planRemark === 'EXTRA') {
+    return `${base} ring-2 ring-inset ring-red-700`;
+  }
+  if (rowType === 'ACTUAL' && truck.stampEta && !truck.stampEtd) {
+    return truck.performanceStatus === 'DELAY'
+      ? 'bg-orange-500 border-orange-700 text-white'
+      : 'bg-yellow-400 border-yellow-600 text-slate-900';
+  }
+  return base;
+}
+
 export function PlatformDiagram({ trucks }: PlatformDiagramProps) {
   const [selectedTruck, setSelectedTruck] = useState<Truck | null>(null);
+  const [timelineView, setTimelineView] = useState<TimelineViewFilter>('ALL');
   const [selectedGroups, setSelectedGroups] = useState<GroupFilter[]>([
     ...GROUP_FILTER_OPTIONS,
   ]);
@@ -343,7 +396,25 @@ export function PlatformDiagram({ trucks }: PlatformDiagramProps) {
             <h2 className="text-xl font-bold tracking-tight text-slate-800">Platform Dashboard</h2>
             <p className="mt-1 text-sm text-slate-500">Real-Time Dock and Truck Operation Monitoring</p>
           </div>
-          <div className="flex flex-wrap items-center gap-1.5">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-1.5">
+              <span className="mr-1 whitespace-nowrap text-[9px] font-bold uppercase text-slate-500">View:</span>
+              {(['ALL', 'PLAN', 'ACTUAL'] as TimelineViewFilter[]).map(option => (
+                <button
+                  key={option}
+                  type="button"
+                  onClick={() => setTimelineView(option)}
+                  className={`rounded-md border px-3 py-1.5 text-[9px] font-bold transition-colors ${
+                    timelineView === option
+                      ? 'border-violet-800 bg-violet-700 text-white shadow-sm'
+                      : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  {option}
+                </button>
+              ))}
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5">
             <span className="mr-1 whitespace-nowrap text-[9px] font-bold uppercase text-slate-500">Show Dock:</span>
             <button type="button" onClick={allGroupsSelected ? clearAllGroups : selectAllGroups} className={`rounded-md border px-3 py-1.5 text-[9px] font-bold transition-colors ${allGroupsSelected ? 'border-slate-800 bg-slate-800 text-white' : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-100'}`}>ALL</button>
             {GROUP_FILTER_OPTIONS.map(groupName => {
@@ -352,6 +423,7 @@ export function PlatformDiagram({ trucks }: PlatformDiagramProps) {
                 <button key={groupName} type="button" onClick={() => toggleGroupFilter(groupName)} className={`rounded-md border px-3 py-1.5 text-[9px] font-bold transition-colors ${isSelected ? 'border-blue-700 bg-blue-600 text-white shadow-sm' : 'border-slate-300 bg-white text-slate-500 hover:bg-slate-100'}`}>{groupName}</button>
               );
             })}
+            </div>
           </div>
           <div className="flex shrink-0 items-center gap-3">
             <span className="whitespace-nowrap text-[9px] font-medium text-slate-500">แสดง {selectedGroups.length} จาก {GROUP_FILTER_OPTIONS.length} กลุ่ม</span>
@@ -506,78 +578,81 @@ export function PlatformDiagram({ trucks }: PlatformDiagramProps) {
                               </div>
                             </div>
 
-                            <div className="flex h-[56px]">
-                              <div className="sticky left-8 z-20 flex w-12 shrink-0 items-center justify-center border-r border-slate-300 bg-white text-sm font-bold text-slate-800 shadow-[2px_0_5px_rgba(0,0,0,0.05)]">
-                                {dock.id}
+                            <div className="flex">
+                              <div className="sticky left-8 z-20 flex w-12 shrink-0 items-stretch border-r border-slate-300 bg-white shadow-[2px_0_5px_rgba(0,0,0,0.05)]">
+                                <div className="flex w-7 items-center justify-center border-r border-slate-200 text-sm font-bold text-slate-800">
+                                  {dock.id}
+                                </div>
+                                <div className="flex w-5 flex-col items-center justify-center text-[6px] font-bold leading-[7px] text-slate-500">
+                                  {(timelineView === 'ALL' || timelineView === 'PLAN') && <span className="text-blue-700">P</span>}
+                                  {(timelineView === 'ALL' || timelineView === 'ACTUAL') && <span className="text-emerald-700">A</span>}
+                                </div>
                               </div>
-
-                              <div className="relative flex flex-1">
-                                {HOURS.map(hour => (
-                                  <div
-                                    key={hour}
-                                    className={`flex flex-1 border-r border-slate-400 ${getHourBackgroundClass(hour)}`}
-                                  >
-                                    {MINUTES.map(minute => (
-                                      <div
-                                        key={minute}
-                                        className="flex-1 border-r border-slate-100/80 last:border-r-0"
-                                      />
-                                    ))}
-                                  </div>
-                                ))}
-
-                                {dockTrucks.map(truck => {
-                                  const etaToUse = truck.planEta || truck.stampEta;
-                                  const startMins = parseTimeToMinutes(etaToUse);
-                                  if (startMins === null) return null;
-
-                                  let durationMins = 60;
-                                  const etdToUse = truck.planEtd || truck.stampEtd;
-                                  if (etdToUse) {
-                                    const difference = calculateMinutesDifference(
-                                      etaToUse || '',
-                                      etdToUse
-                                    );
-                                    if (difference !== null && difference > 0) {
-                                      durationMins = difference;
-                                    }
-                                  }
-
-                                  const leftPercent = (startMins / TOTAL_MINS) * 100;
-                                  const widthPercent = (durationMins / TOTAL_MINS) * 100;
-                                  const left = Math.max(0, leftPercent);
-                                  let width = widthPercent;
-
-                                  if (leftPercent < 0) width = widthPercent + leftPercent;
-                                  if (left + width > 100) width = 100 - left;
-                                  if (width <= 0) return null;
-
-                                  return (
-                                    <motion.div
-                                      key={truck.id}
-                                      initial={{ opacity: 0, scaleY: 0 }}
-                                      animate={{ opacity: 1, scaleY: 1 }}
-                                      onClick={() => setSelectedTruck(truck)}
-                                      className={`absolute bottom-0.5 top-0.5 flex cursor-pointer flex-col items-center justify-center overflow-hidden border p-0.5 text-center transition-shadow hover:z-10 hover:shadow-lg ${getTruckColor(
-                                        truck
-                                      )}`}
-                                      style={{ left: `${left}%`, width: `${width}%` }}
-                                      title={`${truck.licensePlate} (${truck.route})`}
+                              <div className="relative flex flex-1 flex-col">
+                                {(['PLAN', 'ACTUAL'] as const)
+                                  .filter(rowType => timelineView === 'ALL' || timelineView === rowType)
+                                  .map(rowType => (
+                                    <div
+                                      key={rowType}
+                                      className={`relative flex h-[56px] border-b border-slate-300 last:border-b-0 ${
+                                        rowType === 'PLAN' ? 'bg-white' : 'bg-emerald-50/60'
+                                      }`}
                                     >
-                                      <div className="w-full truncate text-[6px] font-bold leading-[7px]">
-                                        {truck.route}
+                                      {HOURS.map(hour => (
+                                        <div key={hour} className={`flex flex-1 border-r border-slate-400 ${getHourBackgroundClass(hour)}`}>
+                                          {MINUTES.map(minute => (
+                                            <div key={minute} className="flex-1 border-r border-slate-100/80 last:border-r-0" />
+                                          ))}
+                                        </div>
+                                      ))}
+                                      <div className={`absolute left-1 top-1 z-[1] rounded px-1 py-0.5 text-[6px] font-black ${
+                                        rowType === 'PLAN'
+                                          ? 'bg-blue-100 text-blue-700'
+                                          : 'bg-emerald-100 text-emerald-700'
+                                      }`}>
+                                        {rowType}
                                       </div>
-                                      <div className="w-full truncate text-[6px] font-bold leading-[7px]">
-                                        {truck.licensePlate}
-                                      </div>
-                                      {!isNonInboundProject(truck) && truck.performanceStatus === 'DELAY' && (
-                                        <AlertTriangle className="absolute right-0.5 top-0.5 h-2.5 w-2.5 text-white" />
-                                      )}
-                                    </motion.div>
-                                  );
-                                })}
+                                      {dockTrucks.map(truck => {
+                                        const startText = rowType === 'PLAN'
+                                          ? truck.planEta
+                                          : truck.stampEta || truck.actualEta || '';
+                                        const startMins = parseTimeToMinutes(startText);
+                                        if (startMins === null) return null;
+                                        const durationMins = rowType === 'PLAN'
+                                          ? getPlanDurationMinutes(truck)
+                                          : getActualDurationMinutes(truck, startText);
+                                        const position = getTimelinePosition(startMins, durationMins);
+                                        if (!position) return null;
+                                        const endText = rowType === 'PLAN'
+                                          ? truck.planEtd || '-'
+                                          : truck.stampEtd || 'NOW';
+                                        return (
+                                          <motion.div
+                                            key={`${rowType}-${truck.id}`}
+                                            initial={{ opacity: 0, scaleY: 0 }}
+                                            animate={{ opacity: 1, scaleY: 1 }}
+                                            onClick={() => setSelectedTruck(truck)}
+                                            className={`absolute bottom-1 top-1 flex cursor-pointer flex-col items-center justify-center overflow-hidden border p-0.5 text-center transition-shadow hover:z-10 hover:shadow-lg ${getTimelineCardColor(truck, rowType)}`}
+                                            style={{ left: `${position.left}%`, width: `${position.width}%` }}
+                                            title={`${rowType}: ${truck.licensePlate} (${truck.route}) ${startText}-${endText}`}
+                                          >
+                                            {truck.planRemark === 'EXTRA' && (
+                                              <div className="absolute left-0.5 top-0 text-[5px] font-black">+EXTRA</div>
+                                            )}
+                                            <div className="w-full truncate text-[6px] font-bold leading-[7px]">{truck.route}</div>
+                                            <div className="w-full truncate text-[6px] font-bold leading-[7px]">{truck.licensePlate}</div>
+                                            <div className="w-full truncate text-[5px] font-semibold leading-[6px]">
+                                              {rowType === 'PLAN' ? `${startText}-${endText}` : `ETA ${startText} ETD ${endText}`}
+                                            </div>
+                                            {!isNonInboundProject(truck) && truck.performanceStatus === 'DELAY' && (
+                                              <AlertTriangle className="absolute right-0.5 top-0.5 h-2.5 w-2.5 text-white" />
+                                            )}
+                                          </motion.div>
+                                        );
+                                      })}
+                                    </div>
+                                  ))}
                               </div>
-
                               <div className="sticky right-0 z-20 flex w-12 shrink-0 border-l border-slate-400 bg-white shadow-[-2px_0_5px_rgba(0,0,0,0.05)]">
                                 <div className="flex flex-1 items-center justify-center text-xs font-bold">
                                   {dockTrucks.length}
