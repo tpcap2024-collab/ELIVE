@@ -250,8 +250,41 @@ function getTimelineCardColor(truck: Truck, rowType: 'PLAN' | 'ACTUAL'): string 
   return base;
 }
 
+function getPerformanceLabel(truck: Truck): string {
+  if (hasNoWorkAction(truck)) return 'NO DROP';
+  if (
+    truck.status === 'DOCK_IN' ||
+    truck.status === 'UNLOADING' ||
+    truck.status === 'UNLOADING_AT_TPCAP'
+  ) {
+    return 'UNLOADING';
+  }
+  if (truck.performanceStatus === 'DELAY') {
+    const actualEta = truck.stampEta || truck.actualEta || '';
+    const difference = actualEta
+      ? calculateMinutesDifference(truck.planEta || '', actualEta)
+      : null;
+    return difference !== null && difference > 0
+      ? `DELAY ${difference} MIN`
+      : 'DELAY';
+  }
+  if (truck.performanceStatus === 'EARLY') {
+    const actualEta = truck.stampEta || truck.actualEta || '';
+    const difference = actualEta
+      ? calculateMinutesDifference(actualEta, truck.planEta || '')
+      : null;
+    return difference !== null && difference > 0
+      ? `EARLY ${difference} MIN`
+      : 'EARLY';
+  }
+  if (truck.performanceStatus === 'WARNING') return 'WARNING';
+  if (truck.performanceStatus === 'NO_DROP') return 'NO DROP';
+  return 'ON-TIME';
+}
+
 export function PlatformDiagram({ trucks }: PlatformDiagramProps) {
   const [selectedTruck, setSelectedTruck] = useState<Truck | null>(null);
+  const [hoveredTruckId, setHoveredTruckId] = useState<string | null>(null);
   const [timelineView, setTimelineView] = useState<TimelineViewFilter>('ALL');
   const [selectedGroups, setSelectedGroups] = useState<GroupFilter[]>([
     ...GROUP_FILTER_OPTIONS,
@@ -628,17 +661,28 @@ export function PlatformDiagram({ trucks }: PlatformDiagramProps) {
                                             initial={{ opacity: 0, scaleY: 0 }}
                                             animate={{ opacity: 1, scaleY: 1 }}
                                             onClick={() => setSelectedTruck(truck)}
-                                            className={`absolute bottom-1 top-1 flex cursor-pointer flex-col items-center justify-center overflow-hidden border p-0.5 text-center transition-shadow hover:z-10 hover:shadow-lg ${getTimelineCardColor(truck, rowType)}`}
+                                            onMouseEnter={() => setHoveredTruckId(truck.id)}
+                                            onMouseLeave={() => setHoveredTruckId(null)}
+                                            className={`absolute bottom-1 top-1 flex cursor-pointer flex-col items-center justify-center overflow-hidden border p-0.5 text-center transition-all hover:z-10 ${getTimelineCardColor(truck, rowType)} ${
+                                              hoveredTruckId === truck.id
+                                                ? 'z-30 ring-[3px] ring-yellow-300 ring-offset-1 ring-offset-yellow-100 shadow-xl shadow-yellow-400/80'
+                                                : 'hover:shadow-lg'
+                                            }`}
                                             style={{ left: `${position.left}%`, width: `${position.width}%` }}
                                             title={`${rowType}: ${truck.licensePlate} (${truck.route}) ${startText}-${endText}`}
                                           >
                                             {truck.planRemark === 'EXTRA' && (
                                               <div className="absolute left-0.5 top-0 text-[5px] font-black">+EXTRA</div>
                                             )}
-                                            <div className="w-full truncate text-[6px] font-bold leading-[7px]">{truck.route}</div>
-                                            <div className="w-full truncate text-[6px] font-bold leading-[7px]">{truck.licensePlate}</div>
-                                            <div className="w-full truncate text-[5px] font-semibold leading-[6px]">
-                                              {rowType === 'PLAN' ? `${startText}-${endText}` : `ETA ${startText} ETD ${endText}`}
+                                            <div className="w-full truncate text-[7px] font-bold leading-[8px]">{truck.route}</div>
+                                            <div className="w-full truncate text-[7px] font-bold leading-[8px]">{truck.licensePlate}</div>
+                                            {rowType === 'ACTUAL' && (
+                                              <div className="w-full truncate text-[6px] font-semibold leading-[7px]">
+                                                {startText}-{endText}
+                                              </div>
+                                            )}
+                                            <div className="w-full truncate text-[6px] font-black leading-[7px]">
+                                              {getPerformanceLabel(truck)}
                                             </div>
                                             {!isNonInboundProject(truck) && truck.performanceStatus === 'DELAY' && (
                                               <AlertTriangle className="absolute right-0.5 top-0.5 h-2.5 w-2.5 text-white" />
