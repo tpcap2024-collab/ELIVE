@@ -1350,7 +1350,13 @@ export default function App() {
               </main>
             )}
             {currentView === 'diagram' && (
-              <main className="min-w-0 flex-1 overflow-hidden bg-white"><PlatformDiagram trucks={filteredTrucks} /></main>
+              <main className="min-w-0 flex-1 overflow-hidden bg-white"><PlatformDiagram
+                trucks={filteredTrucks}
+                onOpenMap={(truckId) => {
+                  setSelectedGpsTruckId(truckId);
+                  setCurrentView('map');
+                }}
+              /></main>
             )}
             {canOperate && currentView === 'incident' && (
               <main className="flex-1 overflow-hidden"><IncidentCenter trucks={filteredTrucks} onUpdateTruck={handleUpdateTruck} /></main>
