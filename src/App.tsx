@@ -495,8 +495,22 @@ export default function App() {
   };
 
   const handleOpenGps = (truckId: string) => {
-    setSelectedGpsTruckId(truckId);
-    setIsGpsPopupOpen(true);
+    const openPopup = () => {
+      setSelectedGpsTruckId(truckId);
+      setIsGpsPopupOpen(true);
+    };
+
+    if (document.fullscreenElement) {
+      void document.exitFullscreen()
+        .then(openPopup)
+        .catch(error => {
+          console.error('Unable to exit fullscreen before opening Live Map:', error);
+          openPopup();
+        });
+      return;
+    }
+
+    openPopup();
   };
 
   const closeGpsPopup = () => {
@@ -1353,7 +1367,7 @@ export default function App() {
               <main className="min-w-0 flex-1 overflow-hidden bg-white"><PlatformDiagram
                 trucks={filteredTrucks}
                 onOpenMap={(truckId) => {
-                  openGpsPopup(truckId);
+                  handleOpenGps(truckId);
                 }}
               /></main>
             )}
