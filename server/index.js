@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '40';
+const API_VERSION = '43';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -54,6 +54,8 @@ const GPS_MOVEMENT_GRACE_MS = 30 * 1000;
 const GPS_NEXT_TRIP_EARLY_WINDOW_MINUTES = 90;
 const GPS_MORNING_PLAN_START_MINUTES = 6 * 60;
 const GPS_MORNING_PLAN_END_MINUTES = 12 * 60;
+const GPS_AFTERNOON_PLAN_START_MINUTES = 13 * 60;
+const GPS_AFTERNOON_PLAN_END_MINUTES = 18 * 60;
 const GPS_OPERATION_CUTOFF_MINUTES = 20 * 60;
 const GPS_LSP_ARRIVAL_GROUP_WINDOW_MINUTES = 30;
 const GPS_DWELL_STATE_TTL_SECONDS = 36 * 60 * 60;
@@ -1051,29 +1053,42 @@ function getGeofenceIdForDropPoint(dropPoint) {
   if (/^(?:L1|L2|L3|M1)(?:-|\b)/.test(normalizedDropPoint)) return 'TPCAP-LSP';
   return null;
 }
-function isGpsMorningEvent(nowMinutes) {
-  return Number.isFinite(nowMinutes) && nowMinutes < GPS_MORNING_PLAN_END_MINUTES;
+function getGpsEtaShiftWindow(nowMinutes) {
+  if (!Number.isFinite(nowMinutes)) return null;
+  if (nowMinutes >= GPS_MORNING_PLAN_START_MINUTES && nowMinutes < GPS_AFTERNOON_PLAN_START_MINUTES) {
+    return { shift: 'MORNING', planStartMinutes: GPS_MORNING_PLAN_START_MINUTES, planEndMinutes: GPS_MORNING_PLAN_END_MINUTES };
+  }
+  if (nowMinutes >= GPS_AFTERNOON_PLAN_START_MINUTES && nowMinutes <= GPS_AFTERNOON_PLAN_END_MINUTES) {
+    return { shift: 'AFTERNOON', planStartMinutes: GPS_AFTERNOON_PLAN_START_MINUTES, planEndMinutes: GPS_AFTERNOON_PLAN_END_MINUTES };
+  }
+  return null;
 }
 function isPlanAllowedForGpsEtaShift(planEtaMinutes, nowMinutes) {
-  if (!Number.isFinite(planEtaMinutes) || !Number.isFinite(nowMinutes)) return false;
-  if (nowMinutes >= GPS_OPERATION_CUTOFF_MINUTES) return false;
-  if (isGpsMorningEvent(nowMinutes)) {
-    return planEtaMinutes >= GPS_MORNING_PLAN_START_MINUTES &&
-      planEtaMinutes < GPS_MORNING_PLAN_END_MINUTES;
-  }
-  return planEtaMinutes >= GPS_MORNING_PLAN_END_MINUTES &&
-    planEtaMinutes < GPS_OPERATION_CUTOFF_MINUTES;
+  const window = getGpsEtaShiftWindow(nowMinutes);
+  return Boolean(Number.isFinite(planEtaMinutes) && window && planEtaMinutes >= window.planStartMinutes && planEtaMinutes <= window.planEndMinutes);
 }
+
 function selectGpsEtaArrivalGroup(trips, activeTrip, geofenceId, nowMinutes) {
   if (!geofenceId) return [];
-  return trips.filter(trip =>
-    !trip.stampEta && !trip.stampEtd && !trip.noWorkAction &&
-    getGeofenceIdForDropPoint(trip.dropPoint) === geofenceId
-  ).sort((a, b) => {
-    const ad = a.planEtaMinutes === null ? Number.MAX_SAFE_INTEGER : Math.abs(a.planEtaMinutes - nowMinutes);
-    const bd = b.planEtaMinutes === null ? Number.MAX_SAFE_INTEGER : Math.abs(b.planEtaMinutes - nowMinutes);
-    return ad - bd || compareTripsByPlanTime(a, b);
-  });
+  const candidates = trips
+    .filter(trip =>
+      !trip.stampEta &&
+      !trip.stampEtd &&
+      !trip.noWorkAction &&
+      isPlanAllowedForGpsEtaShift(trip.planEtaMinutes, nowMinutes) &&
+      getGeofenceIdForDropPoint(trip.dropPoint) === geofenceId
+    )
+    .sort((first, second) => {
+      const firstDistance = first.planEtaMinutes === null
+        ? Number.MAX_SAFE_INTEGER
+        : Math.abs(first.planEtaMinutes - nowMinutes);
+      const secondDistance = second.planEtaMinutes === null
+        ? Number.MAX_SAFE_INTEGER
+        : Math.abs(second.planEtaMinutes - nowMinutes);
+      if (firstDistance !== secondDistance) return firstDistance - secondDistance;
+      return compareTripsByPlanTime(first, second);
+    });
+  return candidates.slice(0, 1);
 }
 
 function selectTripForVehicle(trips, nowMinutes, previousCycle = null, detectedGeofenceId = null) {
@@ -1082,7 +1097,7 @@ function selectTripForVehicle(trips, nowMinutes, previousCycle = null, detectedG
     const locked = inProgress.find(t => t.codeRun === previousCycle?.activeCodeRun);
     return { activeTrip: locked || inProgress[0], selectionReason: locked ? 'LOCKED_ACTIVE_TRIP' : 'ETA_WITHOUT_ETD', planEtaDifferenceMinutes: null };
   }
-  const candidates = trips.filter(t => !t.stampEta && !t.stampEtd && !t.noWorkAction && detectedGeofenceId && getGeofenceIdForDropPoint(t.dropPoint) === detectedGeofenceId)
+  const candidates = trips.filter(t => !t.stampEta && !t.stampEtd && !t.noWorkAction && detectedGeofenceId && isPlanAllowedForGpsEtaShift(t.planEtaMinutes, nowMinutes) && getGeofenceIdForDropPoint(t.dropPoint) === detectedGeofenceId)
     .sort((a,b) => {
       const ad=a.planEtaMinutes===null?Number.MAX_SAFE_INTEGER:Math.abs(a.planEtaMinutes-nowMinutes);
       const bd=b.planEtaMinutes===null?Number.MAX_SAFE_INTEGER:Math.abs(b.planEtaMinutes-nowMinutes);
@@ -1098,7 +1113,7 @@ async function resolveVehicleTrip(input, isInside, dataOverride = null, detected
   const trips = buildTripsForPlate(truckResult.data, input.licensePlate, dateText);
   const storedCycle = await readVehicleCycleState(input.licensePlate);
   const previousCycle = storedCycle?.date === dateText ? storedCycle : null;
-  const nowMinutes = getBangkokMinuteOfDay(input.gpsTime);
+  const nowMinutes = getBangkokMinuteOfDay(new Date());
   const selected = selectTripForVehicle(trips, nowMinutes, previousCycle, detectedGeofenceId);
   const completedTrips = trips.filter(trip => trip.completed).sort(compareTripsByPlanTime);
   const latestCompletedTrip = completedTrips.length
@@ -1382,9 +1397,6 @@ function isAppsScriptLockBusyError(error) {
 function getTerminalPendingStampErrorReason(error) {
   const message = getErrorMessage(error).toUpperCase();
   const terminalReasons = [
-    'ETA_BEFORE_PLAN_WINDOW',
-    'STAMP_DATE_DOES_NOT_MATCH_PLAN_DATE',
-    'PLAN_ETA_UNAVAILABLE',
     'IS CANCELLED',
     'CANNOT STAMP ETA BECAUSE THIS TRIP ALREADY HAS STAMP ETD',
   ];
@@ -1403,6 +1415,9 @@ async function readPendingStamp(pendingId) {
     await requireRedisClient().multi().del(getPendingStampKey(pendingId)).zRem(GPS_PENDING_STAMP_SCHEDULE_KEY, pendingId).exec();
     return null;
   }
+}
+function isActivePendingStamp(record) {
+  return Boolean(record && ['PENDING', 'PROCESSING', 'RETRY_WAIT'].includes(record.status));
 }
 async function writePendingStamp(record, scheduleAtMs = null) {
   const client = requireRedisClient();
@@ -1456,7 +1471,7 @@ async function createPendingGpsStamp(stampType, state) {
         gpsSnapshot: { gpsId: state.gpsId, gpsTime: state.gpsTime, latitude: state.latitude, longitude: state.longitude, speed: state.speedKmh, geofence: state.lastInsideGeofenceName || state.geofenceName },
       };
   const initial = {
-    pendingSchemaVersion: 40,
+    pendingSchemaVersion: 43,
     operationDate: operation.operationDate,
     cutoffAt: operation.cutoffAt,
     pendingId, stampType: normalizedStampType, codeRun,
@@ -1467,19 +1482,41 @@ async function createPendingGpsStamp(stampType, state) {
     nextRetryAt: now, createdAt: now, updatedAt: now, completedAt: null,
   };
   const client = requireRedisClient();
-  const created = await client.set(getPendingStampKey(pendingId), JSON.stringify(initial), {
-    NX: true,
-    EX: Math.min(
-      GPS_PENDING_STAMP_TTL_SECONDS,
-      getGpsOperationStateTtlSeconds(operation.operationDate)
-    ),
-  });
-  if (created) {
-    await client.zAdd(GPS_PENDING_STAMP_SCHEDULE_KEY, [{ score: Date.now(), value: pendingId }]);
-    console.log(JSON.stringify({ logType: 'ELIVE_GPS_STAMP', event: 'PENDING_STAMP_CREATED', pendingId, codeRun, stampType: normalizedStampType, licensePlate: state.licensePlate, gpsTime: state.gpsTime }));
-    return initial;
+  const pendingKey = getPendingStampKey(pendingId);
+  const pendingTtlSeconds = Math.min(
+    GPS_PENDING_STAMP_TTL_SECONDS,
+    getGpsOperationStateTtlSeconds(operation.operationDate)
+  );
+  const existing = await readPendingStamp(pendingId);
+  if (isActivePendingStamp(existing)) {
+    console.log(JSON.stringify({
+      logType: 'ELIVE_GPS_STAMP',
+      event: 'PENDING_STAMP_ALREADY_ACTIVE',
+      pendingId,
+      codeRun,
+      stampType: normalizedStampType,
+      pendingStatus: existing.status,
+    }));
+    return existing;
   }
-  return await readPendingStamp(pendingId);
+  const recreated = Boolean(existing);
+  await client.set(pendingKey, JSON.stringify(initial), { EX: pendingTtlSeconds });
+  await client.zAdd(
+    GPS_PENDING_STAMP_SCHEDULE_KEY,
+    [{ score: Date.now(), value: pendingId }]
+  );
+  console.log(JSON.stringify({
+    logType: 'ELIVE_GPS_STAMP',
+    event: recreated ? 'PENDING_STAMP_RECREATED' : 'PENDING_STAMP_CREATED',
+    pendingId,
+    codeRun,
+    stampType: normalizedStampType,
+    licensePlate: state.licensePlate,
+    gpsTime: state.gpsTime,
+    previousStatus: existing?.status || null,
+    previousError: existing?.lastError || null,
+  }));
+  return initial;
 }
 async function closePendingStamp(record, status, details = {}) {
   const now = new Date().toISOString();
@@ -1515,21 +1552,6 @@ async function processPendingGpsStamp(pendingId) {
       return await closePendingStamp(record, 'SUPERSEDED', {
         lastError: 'GPS_OPERATION_DAY_CLOSED',
         terminalReason: 'DAY_BOUNDARY_CLEANUP',
-      });
-    }
-    if (record.stampType === 'ETA' && Number(record.pendingSchemaVersion || 0) < 40) {
-      console.warn(JSON.stringify({
-        logType: 'ELIVE_GPS_STAMP',
-        event: 'LEGACY_ETA_PENDING_SUPERSEDED',
-        pendingId,
-        codeRun: record.codeRun,
-        gpsTime: record.gpsTime || null,
-        selectedPlanEta: record.selectedPlanEta || null,
-        reason: 'REVALIDATE_WITH_FRESH_GPS_AND_PLAN',
-      }));
-      return await closePendingStamp(record, 'SUPERSEDED', {
-        lastError: 'LEGACY_ETA_PENDING_REQUIRES_FRESH_REVALIDATION',
-        terminalReason: 'LEGACY_PENDING_SCHEMA_V36',
       });
     }
     const attemptCount = Number(record.attemptCount || 0) + 1;
@@ -1651,7 +1673,7 @@ async function executeGpsAutoStampEta(state) {
   if (!GPS_AUTO_STAMP_ETA_ENABLED || !state?.readyForGpsStampEta || !state?.isInside) return null;
   if (state.waitingForExit || !state.activeCodeRun || state.activeCodeRun !== state.codeRun) return null;
   const pending = await createPendingGpsStamp('ETA', state);
-  return { ...pending, queued: true };
+  return { ...pending, queued: isActivePendingStamp(pending) };
 }
 async function executeGpsAutoStampEtaBatch(state, trips) {
   if (!GPS_AUTO_STAMP_ETA_ENABLED || !state?.isInside || state.waitingForExit) {
@@ -1668,7 +1690,8 @@ async function executeGpsAutoStampEtaBatch(state, trips) {
       activeTripSequence: trip.tripSequence,
       planLicensePlate: trip.planLicensePlate,
       noWorkAction: trip.noWorkAction === true,
-      readyForGpsStampEta: true,
+      etaActualMissing: !trip.stampEta,
+      readyForGpsStampEta: !trip.stampEta,
     };
     const result = await executeGpsAutoStampEta(tripState);
     results.push({
@@ -1689,7 +1712,7 @@ async function executeGpsAutoStampEtd(state, activeTrip) {
   if (!state.activeCodeRun || state.activeCodeRun !== state.codeRun) return null;
   console.log(JSON.stringify({logType:'ELIVE_GPS_STAMP',event:recovery?'ETD_RECONCILIATION_OUTSIDE_DETECTED':'ETD_EXIT_DETECTED',codeRun:state.activeCodeRun,licensePlate:state.licensePlate,gpsTime:state.gpsTime,targetGeofenceId:state.targetGeofenceId,distanceMeters:state.distanceMeters,radiusMeters:state.radiusMeters,detectionMode:state.etdDetectionMode}));
   const pending=await createPendingGpsStamp('ETD',state);
-  return {...pending,queued:true,detectionMode:state.etdDetectionMode};
+  return { ...pending, queued: isActivePendingStamp(pending), detectionMode: state.etdDetectionMode };
 }
 
 async function evaluateGpsDock(payload, dataOverride = null) {
@@ -1977,6 +2000,7 @@ async function runGpsBackgroundCycle() {
     dashboardSnapshotRole: 'DISPLAY_ONLY',
     processed: 0, confirmed: 0, etaStamped: 0, etdStamped: 0, stamped: 0, alreadyStamped: 0,
     freshGpsCount: 0, duplicateGpsCount: 0, outOfOrderGpsCount: 0, staleGpsCount: 0,
+    historicalGpsCount: 0,
     skippedGpsCount: 0, minimumGpsAgeSeconds: null, maximumGpsAgeSeconds: null,
     failed: 0, failures: [],
   };
@@ -2035,6 +2059,22 @@ async function runGpsBackgroundCycle() {
         const gpsAgeSeconds = Math.max(0, Math.floor((Date.now() - parsedGpsTime.getTime()) / 1000));
         summary.minimumGpsAgeSeconds = summary.minimumGpsAgeSeconds === null ? gpsAgeSeconds : Math.min(summary.minimumGpsAgeSeconds, gpsAgeSeconds);
         summary.maximumGpsAgeSeconds = summary.maximumGpsAgeSeconds === null ? gpsAgeSeconds : Math.max(summary.maximumGpsAgeSeconds, gpsAgeSeconds);
+        const gpsOperationDate = getBangkokDateText(parsedGpsTime);
+        if (gpsOperationDate !== workerDate) {
+          summary.historicalGpsCount += 1;
+          summary.skippedGpsCount += 1;
+          console.log(JSON.stringify({
+            logType: 'ELIVE_GPS_WORKER',
+            event: 'GPS_HISTORICAL_DATE_SKIPPED',
+            gpsIdHash: hashAuditValue(input.gpsId),
+            licensePlateHash: hashAuditValue(input.licensePlate),
+            gpsOperationDate,
+            workerDate,
+            gpsTime: parsedGpsTime.toISOString(),
+          }));
+          await writeGpsLastProcessedState(parsedInput, 'HISTORICAL_DATE_SKIPPED');
+          continue;
+        }
         const classified = await classifyGpsInput(parsedInput);
         if (classified.classification === 'DUPLICATE') summary.duplicateGpsCount += 1;
         if (classified.classification === 'OUT_OF_ORDER') summary.outOfOrderGpsCount += 1;
@@ -2056,6 +2096,8 @@ async function runGpsBackgroundCycle() {
         summary.failures.push({ gpsIdHash: hashAuditValue(input.gpsId), error: getErrorMessage(error) });
       }
     }
+    const postEvaluationPendingRetry = await processDuePendingGpsStamps();
+    summary.postEvaluationPendingRetry = postEvaluationPendingRetry;
     const status = { enabled: true, running: true, lastCycleStartedAt: new Date(startedAt).toISOString(), lastCycleCompletedAt: new Date().toISOString(), durationMs: Date.now() - startedAt, ...summary };
     await writeGpsWorkerStatus(status);
     console.log(JSON.stringify({ logType: 'ELIVE_GPS_WORKER', ...status }));
@@ -3580,25 +3622,31 @@ app.get(['/health', '/api/health'], (req, res) => {
       gpsWorkerInputMode: 'FRESH_APPS_SCRIPT_RESPONSE',
       dashboardSnapshotRole: 'DISPLAY_ONLY',
       fallbackAutoStampAllowed: false,
-      duplicateGpsGuardEnabled: true,
-      outOfOrderGpsGuardEnabled: true,
+      duplicateGpsGuardEnabled: false,
+      outOfOrderGpsGuardEnabled: false,
       autoStampFreshThresholdSeconds: Math.floor(GPS_AUTO_STAMP_FRESH_THRESHOLD_MS / 1000),
       lastProcessedGpsTtlSeconds: GPS_LAST_PROCESSED_TTL_SECONDS,
       directGetTrucksForDashboardEnabled: false,
       realtimeCacheTtlSeconds: GPS_REALTIME_CACHE_TTL_SECONDS,
       realtimeFallbackMaximumAgeSeconds: Math.floor(GPS_REALTIME_FALLBACK_MAX_AGE_MS / 1000),
-      realtimeFallbackStillEnforcesGpsStaleGuard: true,
+      realtimeFallbackStillEnforcesGpsStaleGuard: false,
       serviceMode: SERVICE_MODE,
       parkingSpeedThresholdKmh: GPS_PARKING_SPEED_THRESHOLD_KMH,
       dwellThresholdSeconds: Math.floor(GPS_DWELL_THRESHOLD_MS / 1000),
       gpsStaleThresholdSeconds: Math.floor(GPS_STALE_THRESHOLD_MS / 1000),
       movementGraceSeconds: Math.floor(GPS_MOVEMENT_GRACE_MS / 1000),
       multipleTripsPerVehiclePerDay: true,
-      tripSelectionPolicy: 'IN_PROGRESS_THEN_PLAN_WINDOW_THEN_LOCKED_THEN_NEAREST_PLAN_ETA',
+      tripSelectionPolicy: 'IN_PROGRESS_THEN_ACTIVE_SHIFT_THEN_MATCHING_GEOFENCE_NEAREST_PLAN_ETA_SINGLE_CANDIDATE',
       activeTripLockEnabled: true,
+      singleEtaCandidatePerVehicleCycle: true,
       futureTripGuardEnabled: false,
       etaPermissiveModeEnabled: true,
-      etaFiltersRemoved: ['GPS_FRESHNESS', 'DUPLICATE', 'OUT_OF_ORDER', 'PLAN_WINDOW', 'MORNING_AFTERNOON_SHIFT', 'ARRIVAL_GROUP_30_MINUTES'],
+      etaFiltersRemoved: ['GPS_FRESHNESS', 'DUPLICATE', 'OUT_OF_ORDER', 'PLAN_WINDOW', 'ARRIVAL_GROUP_30_MINUTES'],
+      etaShiftGuardEnabled: true,
+      etaShiftSelectionUsesCurrentBangkokTime: true,
+      gpsFreshnessPolicy: 'IGNORE_AGE_WITHIN_CURRENT_BANGKOK_DATE',
+      historicalGpsPolicy: 'SKIP_WHEN_GPS_DATE_IS_NOT_CURRENT_BANGKOK_DATE',
+      sameDayGpsRequired: true,
       etaCoreIntegrityGuardsRetained: ['ACTUAL_ETA_EMPTY', 'SAME_OPERATION_DATE', 'LICENSE_PLATE_MATCH', 'INSIDE_MATCHING_GEOFENCE', 'NOT_CANCELLED', 'NO_WORK_ACTION_BLOCK', 'IDEMPOTENT_PENDING_QUEUE'],
       nextTripEarlyWindowMinutes: GPS_NEXT_TRIP_EARLY_WINDOW_MINUTES,
       operationTimeZone: 'Asia/Bangkok',
@@ -3606,24 +3654,29 @@ app.get(['/health', '/api/health'], (req, res) => {
       operationCutoffTime: '20:00',
       hardCutoffEnabled: true,
       manualStampAvailableAfterCutoff: true,
-      morningPlanWindow: '06:00-11:59',
-      afternoonPlanWindow: '12:00-19:59',
+      morningPlanWindow: '06:00-12:00',
+      morningSelectionTimeWindow: '06:00-12:59',
+      afternoonPlanWindow: '13:00-18:00',
+      afternoonSelectionTimeWindow: '13:00-18:00',
+      outsideShiftEtaSelectionDisabled: true,
       noWorkActionKeyword: 'ไม่มีงาน',
       noWorkActionAutoStampBlocked: true,
       tripTieBreaker: 'EARLIER_PLAN_ETA_THEN_CODE_RUN_NUMERIC',
       exitRequiredBeforeNextTrip: true,
-      etaRule: 'STAMP_ACTIVE_ARRIVAL_GROUP_IN_MATCHING_GEOFENCE',
-      multiDropSameGeofenceEtaEnabled: true,
+      etaRule: 'STAMP_ONE_NEAREST_PLAN_IN_MATCHING_GEOFENCE',
+      multiDropSameGeofenceEtaEnabled: false,
       lspArrivalGroupWindowMinutes: GPS_LSP_ARRIVAL_GROUP_WINDOW_MINUTES,
       dropPointGeofenceMapping: { L1: 'TPCAP-LSP', L2: 'TPCAP-LSP', L3: 'TPCAP-LSP', M1: 'TPCAP-LSP', R1: 'TPCAP-R1', R2: 'TPCAP-R2' },
       pendingStampRetryQueueEnabled: true,
-      pendingStampSchemaVersion: 40,
-      legacyEtaPendingAutoSuperseded: true,
+      pendingStampSchemaVersion: 43,
+      legacyEtaPendingAutoSuperseded: false,
+      terminalPendingRecordCanBeRecreated: true,
+      newlyCreatedPendingProcessedInSameWorkerCycle: true,
       pendingStampTerminalValidationErrorsBecomeSuperseded: true,
-      pendingStampTerminalValidationReasons: ['ETA_BEFORE_PLAN_WINDOW', 'STAMP_DATE_DOES_NOT_MATCH_PLAN_DATE', 'PLAN_ETA_UNAVAILABLE'],
+      pendingStampTerminalValidationReasons: ['IS_CANCELLED', 'ETA_AFTER_ETD'],
       pendingStampBatchSize: GPS_PENDING_STAMP_BATCH_SIZE,
       pendingStampOrder: 'GPS_TIME_THEN_CREATED_AT_THEN_CODE_RUN',
-      etaEarlyWindowGuardLayers: ['TRIP_SELECTION', 'PENDING_CREATION', 'PENDING_PROCESSING', 'MANUAL_ROUTE'],
+      etaEarlyWindowGuardLayers: ['MANUAL_ROUTE_ONLY'],
       pendingStampRetryBaseSeconds: Math.floor(GPS_PENDING_STAMP_BASE_RETRY_MS / 1000),
       pendingStampRetryMaximumSeconds: Math.floor(GPS_PENDING_STAMP_MAX_RETRY_MS / 1000),
       etdRule: 'NORMAL_EXIT_AFTER_INSIDE_OR_OPEN_ETA_RECONCILIATION_ON_FRESH_GPS_OUTSIDE_TARGET_GEOFENCE',
