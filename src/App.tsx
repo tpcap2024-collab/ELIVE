@@ -118,6 +118,12 @@ function hasNoWorkAction(truck: Truck): boolean {
   const text = String(truck.actionProblem || '');
   return text.includes('ไม่มีงาน') || text.includes('GPS มีปัญหา');
 }
+
+function shouldSendToActionCenter(truck: Truck): boolean {
+  const actionProblem = String(truck.actionProblem || '').trim();
+  if (!actionProblem) return true;
+  return !actionProblem.includes('ไม่มีงาน');
+}
 const NO_WORK_DISPLAY_DURATION_MS = 10 * 60 * 1000;
 function parseActionUpdatedAt(truck: Truck): Date | null {
   const value = String((truck as Truck & { actionUpdatedAt?: string }).actionUpdatedAt || '').trim();
@@ -608,6 +614,11 @@ export default function App() {
 
   const inboundTrucks = useMemo(
     () => filteredTrucks.filter(isInboundProject),
+    [filteredTrucks]
+  );
+
+  const actionCenterTrucks = useMemo(
+    () => filteredTrucks.filter(shouldSendToActionCenter),
     [filteredTrucks]
   );
 
@@ -1372,7 +1383,7 @@ export default function App() {
               /></main>
             )}
             {canOperate && currentView === 'incident' && (
-              <main className="flex-1 overflow-hidden"><IncidentCenter trucks={filteredTrucks} onUpdateTruck={handleUpdateTruck} /></main>
+              <main className="flex-1 overflow-hidden"><IncidentCenter trucks={actionCenterTrucks} onUpdateTruck={handleUpdateTruck} /></main>
             )}
             {canOperate && currentView === 'warehouse' && (
               <main className="flex-1 overflow-hidden"><WarehouseStamp trucks={inboundTrucks} onUpdateTruck={handleUpdateTruck} /></main>
