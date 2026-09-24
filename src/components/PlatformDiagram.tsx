@@ -811,7 +811,7 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
                           </span>
                         </div>
                         <p className="mt-1 truncate text-sm font-semibold text-slate-500">
-                          {selectedTruck.route || '-'} · {selectedTruck.licensePlate || '-'} · {selectedTruck.id || '-'} · {selectedTruck.dropPoint || '-'}
+                          {selectedTruck.route || '-'} · {selectedTruck.licensePlate || '-'} · {selectedTruck.dropPoint || '-'}
                         </p>
                       </div>
                     </div>
@@ -885,7 +885,6 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
                           ['Driver', selectedTruck.driverName || '-'],
                           ['Telephone', selectedTruck.phone || '-'],
                           ['Plan Date', selectedTruck.planDate || '-'],
-                          ['Code Run', selectedTruck.id || '-'],
                           ['Route', selectedTruck.route || '-'],
                           ['License Plate', selectedTruck.licensePlate || '-'],
                         ].map(([label, value]) => (
