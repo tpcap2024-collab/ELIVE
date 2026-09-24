@@ -496,9 +496,13 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
                   type="button"
                   onClick={() => setTimelineView(option)}
                   className={`rounded-md border px-3 py-1.5 text-[9px] font-bold transition-colors ${
-                    timelineView === option
-                      ? 'border-blue-700 bg-blue-600 text-white shadow-sm'
-                      : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-100'
+                    timelineView === 'ALL'
+                      ? option === 'ALL'
+                        ? 'border-slate-800 bg-slate-800 text-white shadow-sm'
+                        : 'border-blue-700 bg-blue-600 text-white shadow-sm'
+                      : timelineView === option
+                        ? 'border-blue-700 bg-blue-600 text-white shadow-sm'
+                        : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-100'
                   }`}
                 >
                   {option}
