@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '43';
+const API_VERSION = '44';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -3639,6 +3639,9 @@ app.get(['/health', '/api/health'], (req, res) => {
       tripSelectionPolicy: 'IN_PROGRESS_THEN_ACTIVE_SHIFT_THEN_MATCHING_GEOFENCE_NEAREST_PLAN_ETA_SINGLE_CANDIDATE',
       activeTripLockEnabled: true,
       singleEtaCandidatePerVehicleCycle: true,
+      lspStampCopyToM1Enabled: true,
+      lspStampCopyTargets: ['M1-1', 'M1-2'],
+      lspStampCopyMatchKeys: ['PLAN_DATE', 'LICENSE_PLATE'],
       futureTripGuardEnabled: false,
       etaPermissiveModeEnabled: true,
       etaFiltersRemoved: ['GPS_FRESHNESS', 'DUPLICATE', 'OUT_OF_ORDER', 'PLAN_WINDOW', 'ARRIVAL_GROUP_30_MINUTES'],
