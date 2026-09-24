@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '37';
+const API_VERSION = '38';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -1473,7 +1473,7 @@ async function createPendingGpsStamp(stampType, state) {
         gpsSnapshot: { gpsId: state.gpsId, gpsTime: state.gpsTime, latitude: state.latitude, longitude: state.longitude, speed: state.speedKmh, geofence: state.lastInsideGeofenceName || state.geofenceName },
       };
   const initial = {
-    pendingSchemaVersion: 37,
+    pendingSchemaVersion: 38,
     operationDate: operation.operationDate,
     cutoffAt: operation.cutoffAt,
     pendingId, stampType: normalizedStampType, codeRun,
@@ -1489,19 +1489,51 @@ async function createPendingGpsStamp(stampType, state) {
     nextRetryAt: now, createdAt: now, updatedAt: now, completedAt: null,
   };
   const client = requireRedisClient();
-  const created = await client.set(getPendingStampKey(pendingId), JSON.stringify(initial), {
+  const pendingKey = getPendingStampKey(pendingId);
+  const pendingTtlSeconds = Math.min(
+    GPS_PENDING_STAMP_TTL_SECONDS,
+    getGpsOperationStateTtlSeconds(operation.operationDate)
+  );
+  let created = await client.set(pendingKey, JSON.stringify(initial), {
     NX: true,
-    EX: Math.min(
-      GPS_PENDING_STAMP_TTL_SECONDS,
-      getGpsOperationStateTtlSeconds(operation.operationDate)
-    ),
+    EX: pendingTtlSeconds,
   });
-  if (created) {
-    await client.zAdd(GPS_PENDING_STAMP_SCHEDULE_KEY, [{ score: Date.now(), value: pendingId }]);
-    console.log(JSON.stringify({ logType: 'ELIVE_GPS_STAMP', event: 'PENDING_STAMP_CREATED', pendingId, codeRun, stampType: normalizedStampType, licensePlate: state.licensePlate, gpsTime: state.gpsTime }));
-    return initial;
+  if (!created) {
+    const existing = await readPendingStamp(pendingId);
+    const actualStillMissingStamp = normalizedStampType === 'ETA'
+      ? state?.etaActualMissing !== false
+      : state?.etdActualMissing !== false;
+    const terminalOrStaleStatuses = new Set([
+      'STAMPED', 'ALREADY_STAMPED', 'BLOCKED_NO_WORK', 'SUPERSEDED',
+    ]);
+    const shouldReopen = Boolean(
+      existing && actualStillMissingStamp &&
+      terminalOrStaleStatuses.has(existing.status) &&
+      existing.operationDate === operation.operationDate
+    );
+    if (!shouldReopen) return existing;
+    await client.set(pendingKey, JSON.stringify(initial), { EX: pendingTtlSeconds });
+    created = 'REOPENED';
+    console.warn(JSON.stringify({
+      logType: 'ELIVE_GPS_STAMP',
+      event: 'PENDING_STAMP_REOPENED_ACTUAL_STILL_MISSING',
+      pendingId, codeRun, stampType: normalizedStampType,
+      previousStatus: existing.status,
+      previousError: existing.lastError || null,
+      previousCompletedAt: existing.completedAt || null,
+      sourceGpsTime: state.gpsTime,
+      reconciliationDetectedAt: state.reconciliationDetectedAt || null,
+    }));
   }
-  return await readPendingStamp(pendingId);
+  await client.zAdd(GPS_PENDING_STAMP_SCHEDULE_KEY, [{ score: Date.now(), value: pendingId }]);
+  console.log(JSON.stringify({
+    logType: 'ELIVE_GPS_STAMP',
+    event: created === 'REOPENED' ? 'PENDING_STAMP_RECREATED' : 'PENDING_STAMP_CREATED',
+    pendingId, codeRun, stampType: normalizedStampType,
+    licensePlate: state.licensePlate, gpsTime: initial.gpsTime,
+    etaDetectionMode: state.etaDetectionMode || null,
+  }));
+  return initial;
 }
 async function closePendingStamp(record, status, details = {}) {
   const now = new Date().toISOString();
@@ -1539,7 +1571,7 @@ async function processPendingGpsStamp(pendingId) {
         terminalReason: 'DAY_BOUNDARY_CLEANUP',
       });
     }
-    if (record.stampType === 'ETA' && Number(record.pendingSchemaVersion || 0) < 37) {
+    if (record.stampType === 'ETA' && Number(record.pendingSchemaVersion || 0) < 38) {
       console.warn(JSON.stringify({
         logType: 'ELIVE_GPS_STAMP',
         event: 'LEGACY_ETA_PENDING_SUPERSEDED',
@@ -1748,7 +1780,7 @@ async function executeGpsAutoStampEta(state) {
   if (!GPS_AUTO_STAMP_ETA_ENABLED || !state?.readyForGpsStampEta || !state?.isInside) return null;
   if (state.waitingForExit || !state.activeCodeRun || state.activeCodeRun !== state.codeRun) return null;
   const pending = await createPendingGpsStamp('ETA', state);
-  return { ...pending, queued: true };
+  return { ...pending, queued: ['PENDING', 'PROCESSING', 'RETRY_WAIT'].includes(pending?.status) };
 }
 async function executeGpsAutoStampEtaBatch(state, trips) {
   if (!GPS_AUTO_STAMP_ETA_ENABLED || !state?.isInside || state.waitingForExit) {
@@ -1784,6 +1816,7 @@ async function executeGpsAutoStampEtaBatch(state, trips) {
       activeTripSequence: trip.tripSequence,
       planLicensePlate: trip.planLicensePlate,
       noWorkAction: trip.noWorkAction === true,
+      etaActualMissing: !trip.stampEta,
       readyForGpsStampEta: true,
     };
     const result = await executeGpsAutoStampEta(tripState);
@@ -1804,8 +1837,8 @@ async function executeGpsAutoStampEtd(state, activeTrip) {
   if (!state.wasInsideBeforeExit && !recovery) return null;
   if (!state.activeCodeRun || state.activeCodeRun !== state.codeRun) return null;
   console.log(JSON.stringify({logType:'ELIVE_GPS_STAMP',event:recovery?'ETD_RECONCILIATION_OUTSIDE_DETECTED':'ETD_EXIT_DETECTED',codeRun:state.activeCodeRun,licensePlate:state.licensePlate,gpsTime:state.gpsTime,targetGeofenceId:state.targetGeofenceId,distanceMeters:state.distanceMeters,radiusMeters:state.radiusMeters,detectionMode:state.etdDetectionMode}));
-  const pending=await createPendingGpsStamp('ETD',state);
-  return {...pending,queued:true,detectionMode:state.etdDetectionMode};
+  const pending=await createPendingGpsStamp('ETD', { ...state, etdActualMissing: !activeTrip.stampEtd });
+  return {...pending,queued:['PENDING','PROCESSING','RETRY_WAIT'].includes(pending?.status),detectionMode:state.etdDetectionMode};
 }
 
 async function evaluateGpsDock(payload, dataOverride = null) {
@@ -3799,8 +3832,10 @@ app.get(['/health', '/api/health'], (req, res) => {
       lspArrivalGroupWindowMinutes: GPS_LSP_ARRIVAL_GROUP_WINDOW_MINUTES,
       dropPointGeofenceMapping: { L1: 'TPCAP-LSP', L2: 'TPCAP-LSP', L3: 'TPCAP-LSP', M1: 'TPCAP-LSP', R1: 'TPCAP-R1', R2: 'TPCAP-R2' },
       pendingStampRetryQueueEnabled: true,
-      pendingStampSchemaVersion: 37,
+      pendingStampSchemaVersion: 38,
       legacyEtaPendingAutoSuperseded: true,
+      terminalPendingReopenWhenActualStillMissing: true,
+      pendingUiQueuedRequiresActiveQueueStatus: true,
       pendingStampTerminalValidationErrorsBecomeSuperseded: true,
       pendingStampTerminalValidationReasons: ['ETA_BEFORE_PLAN_WINDOW', 'STAMP_DATE_DOES_NOT_MATCH_PLAN_DATE', 'PLAN_ETA_UNAVAILABLE'],
       pendingStampBatchSize: GPS_PENDING_STAMP_BATCH_SIZE,
