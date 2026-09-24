@@ -290,7 +290,8 @@ function getPerformanceLabel(truck: Truck): string {
   if (truck.performanceStatus === 'WARNING') return 'WARNING';
   if (truck.performanceStatus === 'NO_DROP') return 'NO DROP';
   const actualEta = truck.stampEta || truck.actualEta || '';
-  return actualEta ? 'ON-TIME' : 'PLANNED';
+  if (!actualEta) return isOverdueAndNotDocked(truck) ? 'WAITING' : 'PLANNED';
+  return 'ON-TIME';
 }
 
 function getDurationText(start?: string, end?: string): string {
@@ -925,7 +926,19 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
                     <div className="flex gap-2">
                       <button type="button" onClick={() => setSelectedTruck(null)} className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-100">Close</button>
                       {onOpenMap && (
-                        <button type="button" onClick={() => { onOpenMap(selectedTruck.id); setSelectedTruck(null); }} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700">View Live Map</button>
+                        <button
+                          type="button"
+                          onMouseDown={event => event.stopPropagation()}
+                          onClick={event => {
+                            event.stopPropagation();
+                            const truckId = selectedTruck.id;
+                            setSelectedTruck(null);
+                            onOpenMap(truckId);
+                          }}
+                          className="relative z-10 rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2"
+                        >
+                          View Live Map
+                        </button>
                       )}
                     </div>
                   </div>
