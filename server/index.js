@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '35';
+const API_VERSION = '36';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -54,6 +54,7 @@ const GPS_MOVEMENT_GRACE_MS = 30 * 1000;
 const GPS_NEXT_TRIP_EARLY_WINDOW_MINUTES = 90;
 const GPS_MORNING_PLAN_START_MINUTES = 6 * 60;
 const GPS_MORNING_PLAN_END_MINUTES = 12 * 60;
+const GPS_OPERATION_CUTOFF_MINUTES = 20 * 60;
 const GPS_LSP_ARRIVAL_GROUP_WINDOW_MINUTES = 30;
 const GPS_DWELL_STATE_TTL_SECONDS = 36 * 60 * 60;
 const GPS_DWELL_KEY_PREFIX = 'elive:gps-dwell:';
@@ -749,6 +750,28 @@ function getBangkokMinuteOfDay(date = new Date()) {
   const minute = Number(parts.find(part => part.type === 'minute')?.value || 0);
   return hour * 60 + minute;
 }
+function getGpsOperationCutoffDate(operationDate) {
+  return parseBangkokDateTime(`${operationDate}T20:00:00+07:00`, 'operationCutoff');
+}
+function getGpsOperationStateTtlSeconds(operationDate, now = new Date()) {
+  const cutoffMs = getGpsOperationCutoffDate(operationDate).getTime();
+  return Math.max(1, Math.floor((cutoffMs - now.getTime()) / 1000));
+}
+function getGpsOperationDecision(date = new Date()) {
+  const operationDate = getBangkokDateText(date);
+  const minuteOfDay = getBangkokMinuteOfDay(date);
+  return {
+    operationDate,
+    minuteOfDay,
+    open: minuteOfDay < GPS_OPERATION_CUTOFF_MINUTES,
+    cutoffMinutes: GPS_OPERATION_CUTOFF_MINUTES,
+    cutoffAt: getGpsOperationCutoffDate(operationDate).toISOString(),
+  };
+}
+function isSameGpsOperationDate(firstTime, secondTime) {
+  return getBangkokDateText(parseBangkokDateTime(firstTime, 'firstTime')) ===
+    getBangkokDateText(parseBangkokDateTime(secondTime, 'secondTime'));
+}
 function getVehicleCycleKey(licensePlate) {
   const normalizedPlate = normalizeLicensePlate(licensePlate);
   if (!normalizedPlate) throw new Error('licensePlate is required for Vehicle Cycle.');
@@ -767,8 +790,15 @@ async function readVehicleCycleState(licensePlate) {
 }
 async function writeVehicleCycleState(licensePlate, state) {
   const client = requireRedisClient();
-  await client.set(getVehicleCycleKey(licensePlate), JSON.stringify(state), {
-    EX: GPS_VEHICLE_CYCLE_TTL_SECONDS,
+  const operationDate = state?.date || getBangkokDateText(new Date());
+  await client.set(getVehicleCycleKey(licensePlate), JSON.stringify({
+    ...state,
+    operationDate,
+  }), {
+    EX: Math.min(
+      GPS_VEHICLE_CYCLE_TTL_SECONDS,
+      getGpsOperationStateTtlSeconds(operationDate)
+    ),
   });
   return state;
 }
@@ -1025,9 +1055,14 @@ function isGpsMorningEvent(nowMinutes) {
   return Number.isFinite(nowMinutes) && nowMinutes < GPS_MORNING_PLAN_END_MINUTES;
 }
 function isPlanAllowedForGpsEtaShift(planEtaMinutes, nowMinutes) {
-  if (planEtaMinutes === null || planEtaMinutes === undefined) return false;
-  if (!isGpsMorningEvent(nowMinutes)) return true;
-  return planEtaMinutes >= GPS_MORNING_PLAN_START_MINUTES && planEtaMinutes < GPS_MORNING_PLAN_END_MINUTES;
+  if (!Number.isFinite(planEtaMinutes) || !Number.isFinite(nowMinutes)) return false;
+  if (nowMinutes >= GPS_OPERATION_CUTOFF_MINUTES) return false;
+  if (isGpsMorningEvent(nowMinutes)) {
+    return planEtaMinutes >= GPS_MORNING_PLAN_START_MINUTES &&
+      planEtaMinutes < GPS_MORNING_PLAN_END_MINUTES;
+  }
+  return planEtaMinutes >= GPS_MORNING_PLAN_END_MINUTES &&
+    planEtaMinutes < GPS_OPERATION_CUTOFF_MINUTES;
 }
 function selectGpsEtaArrivalGroup(trips, activeTrip, geofenceId, nowMinutes) {
   if (!activeTrip || getGeofenceIdForDropPoint(activeTrip.dropPoint) !== geofenceId) return [];
@@ -1073,7 +1108,8 @@ async function resolveVehicleTrip(input, isInside, dataOverride = null, detected
   const truckResult = dataOverride ? { data: dataOverride, source: 'gps-worker-cycle' } : await getTruckDataWithCache(false);
   const dateText = getBangkokDateText(input.gpsTime);
   const trips = buildTripsForPlate(truckResult.data, input.licensePlate, dateText);
-  const previousCycle = await readVehicleCycleState(input.licensePlate);
+  const storedCycle = await readVehicleCycleState(input.licensePlate);
+  const previousCycle = storedCycle?.date === dateText ? storedCycle : null;
   const nowMinutes = getBangkokMinuteOfDay(input.gpsTime);
   const selected = selectTripForVehicle(trips, nowMinutes, previousCycle, detectedGeofenceId);
   const completedTrips = trips.filter(trip => trip.completed).sort(compareTripsByPlanTime);
@@ -1152,7 +1188,10 @@ async function readGpsLastProcessedState(licensePlate) {
   }
 }
 async function writeGpsLastProcessedState(input, classification = 'PROCESSED') {
+  const gpsDate = input.gpsTime instanceof Date ? input.gpsTime : parseBangkokDateTime(input.gpsTime, 'gpsTime');
+  const operationDate = getBangkokDateText(gpsDate);
   const state = {
+    operationDate,
     licensePlate: input.licensePlate,
     normalizedLicensePlate: normalizeLicensePlate(input.licensePlate),
     gpsId: input.gpsId,
@@ -1164,12 +1203,22 @@ async function writeGpsLastProcessedState(input, classification = 'PROCESSED') {
     classification,
     processedAt: new Date().toISOString(),
   };
-  await requireRedisClient().set(getGpsLastProcessedKey(input.licensePlate), JSON.stringify(state), { EX: GPS_LAST_PROCESSED_TTL_SECONDS });
+  await requireRedisClient().set(getGpsLastProcessedKey(input.licensePlate), JSON.stringify(state), {
+    EX: Math.min(
+      GPS_LAST_PROCESSED_TTL_SECONDS,
+      getGpsOperationStateTtlSeconds(operationDate)
+    ),
+  });
   return state;
 }
 async function classifyGpsInput(input) {
   const previous = await readGpsLastProcessedState(input.licensePlate);
-  if (!previous?.gpsTime) return { classification: 'FRESH', previous };
+  const currentOperationDate = getBangkokDateText(
+    input.gpsTime instanceof Date ? input.gpsTime : parseBangkokDateTime(input.gpsTime, 'gpsTime')
+  );
+  if (!previous?.gpsTime || previous.operationDate !== currentOperationDate) {
+    return { classification: 'FRESH_NEW_OPERATION_DAY', previous };
+  }
   const currentTime = input.gpsTime instanceof Date ? input.gpsTime.getTime() : Date.parse(input.gpsTime);
   const previousTime = Date.parse(previous.gpsTime);
   if (!Number.isFinite(currentTime) || !Number.isFinite(previousTime)) return { classification: 'FRESH', previous };
@@ -1232,8 +1281,16 @@ async function readGpsDwellState(codeRun, geofenceId = null) {
 }
 async function writeGpsDwellState(codeRun, state, geofenceId = state?.geofenceId) {
   const client = requireRedisClient();
-  await client.set(getGpsDwellKey(codeRun, geofenceId), JSON.stringify(state), {
-    EX: GPS_DWELL_STATE_TTL_SECONDS,
+  const operationDate = state?.operationDate ||
+    (state?.gpsTime ? getBangkokDateText(parseBangkokDateTime(state.gpsTime, 'gpsTime')) : getBangkokDateText(new Date()));
+  await client.set(getGpsDwellKey(codeRun, geofenceId), JSON.stringify({
+    ...state,
+    operationDate,
+  }), {
+    EX: Math.min(
+      GPS_DWELL_STATE_TTL_SECONDS,
+      getGpsOperationStateTtlSeconds(operationDate)
+    ),
   });
   return state;
 }
@@ -1368,6 +1425,24 @@ async function writePendingStamp(record, scheduleAtMs = null) {
   return record;
 }
 async function createPendingGpsStamp(stampType, state) {
+  const operation = getGpsOperationDecision(new Date());
+  const gpsOperationDate = getBangkokDateText(parseBangkokDateTime(state.gpsTime, 'gpsTime'));
+  if (!operation.open || gpsOperationDate !== operation.operationDate) {
+    console.warn(JSON.stringify({
+      logType: 'ELIVE_GPS_STAMP',
+      event: 'AUTO_STAMP_SUPPRESSED_OPERATION_CLOSED',
+      stampType,
+      codeRun: state.activeCodeRun || state.codeRun || null,
+      gpsOperationDate,
+      currentOperationDate: operation.operationDate,
+      cutoffAt: operation.cutoffAt,
+    }));
+    return {
+      status: 'SUPERSEDED',
+      queued: false,
+      lastError: 'GPS_OPERATION_DAY_CLOSED',
+    };
+  }
   const normalizedStampType = normalizeStampType(stampType);
   const codeRun = normalizeCodeRun(state.activeCodeRun || state.codeRun);
   const pendingId = getPendingStampId(normalizedStampType, codeRun);
@@ -1393,7 +1468,9 @@ async function createPendingGpsStamp(stampType, state) {
         gpsSnapshot: { gpsId: state.gpsId, gpsTime: state.gpsTime, latitude: state.latitude, longitude: state.longitude, speed: state.speedKmh, geofence: state.lastInsideGeofenceName || state.geofenceName },
       };
   const initial = {
-    pendingSchemaVersion: 35,
+    pendingSchemaVersion: 36,
+    operationDate: operation.operationDate,
+    cutoffAt: operation.cutoffAt,
     pendingId, stampType: normalizedStampType, codeRun,
     licensePlate: state.licensePlate, normalizedLicensePlate: normalizeLicensePlate(state.licensePlate),
     gpsId: state.gpsId, gpsTime: state.gpsTime, selectedPlanEta: state.activePlanEta || null,
@@ -1402,7 +1479,13 @@ async function createPendingGpsStamp(stampType, state) {
     nextRetryAt: now, createdAt: now, updatedAt: now, completedAt: null,
   };
   const client = requireRedisClient();
-  const created = await client.set(getPendingStampKey(pendingId), JSON.stringify(initial), { NX: true, EX: GPS_PENDING_STAMP_TTL_SECONDS });
+  const created = await client.set(getPendingStampKey(pendingId), JSON.stringify(initial), {
+    NX: true,
+    EX: Math.min(
+      GPS_PENDING_STAMP_TTL_SECONDS,
+      getGpsOperationStateTtlSeconds(operation.operationDate)
+    ),
+  });
   if (created) {
     await client.zAdd(GPS_PENDING_STAMP_SCHEDULE_KEY, [{ score: Date.now(), value: pendingId }]);
     console.log(JSON.stringify({ logType: 'ELIVE_GPS_STAMP', event: 'PENDING_STAMP_CREATED', pendingId, codeRun, stampType: normalizedStampType, licensePlate: state.licensePlate, gpsTime: state.gpsTime }));
@@ -1426,7 +1509,27 @@ async function processPendingGpsStamp(pendingId) {
     let record = await readPendingStamp(pendingId);
     if (!record) return { status: 'MISSING', pendingId };
     if (['STAMPED', 'ALREADY_STAMPED', 'BLOCKED_NO_WORK', 'SUPERSEDED'].includes(record.status)) return record;
-    if (record.stampType === 'ETA' && Number(record.pendingSchemaVersion || 0) < 35) {
+    const operation = getGpsOperationDecision(new Date());
+    const pendingOperationDate = record.operationDate || getBangkokDateText(
+      parseBangkokDateTime(record.gpsTime, 'gpsTime')
+    );
+    if (!operation.open || pendingOperationDate !== operation.operationDate) {
+      console.warn(JSON.stringify({
+        logType: 'ELIVE_GPS_STAMP',
+        event: 'PENDING_STAMP_EXPIRED_AT_DAY_BOUNDARY',
+        pendingId,
+        codeRun: record.codeRun,
+        stampType: record.stampType,
+        pendingOperationDate,
+        currentOperationDate: operation.operationDate,
+        cutoffAt: operation.cutoffAt,
+      }));
+      return await closePendingStamp(record, 'SUPERSEDED', {
+        lastError: 'GPS_OPERATION_DAY_CLOSED',
+        terminalReason: 'DAY_BOUNDARY_CLEANUP',
+      });
+    }
+    if (record.stampType === 'ETA' && Number(record.pendingSchemaVersion || 0) < 36) {
       console.warn(JSON.stringify({
         logType: 'ELIVE_GPS_STAMP',
         event: 'LEGACY_ETA_PENDING_SUPERSEDED',
@@ -1438,7 +1541,7 @@ async function processPendingGpsStamp(pendingId) {
       }));
       return await closePendingStamp(record, 'SUPERSEDED', {
         lastError: 'LEGACY_ETA_PENDING_REQUIRES_FRESH_REVALIDATION',
-        terminalReason: 'LEGACY_PENDING_SCHEMA',
+        terminalReason: 'LEGACY_PENDING_SCHEMA_V36',
       });
     }
     const attemptCount = Number(record.attemptCount || 0) + 1;
@@ -1540,6 +1643,13 @@ async function processPendingGpsStamp(pendingId) {
           selectedCodeRun,
         });
       }
+    }
+    const finalOperation = getGpsOperationDecision(new Date());
+    if (!finalOperation.open || record.operationDate !== finalOperation.operationDate) {
+      return await closePendingStamp(record, 'SUPERSEDED', {
+        lastError: 'GPS_OPERATION_DAY_CLOSED',
+        terminalReason: 'FINAL_PRE_SEND_CUTOFF_GUARD',
+      });
     }
     console.log(JSON.stringify({ logType: 'ELIVE_GPS_STAMP', event: 'STAMP_REQUEST_SENT', pendingId, codeRun: record.codeRun, stampType: record.stampType, attemptCount }));
     const response = await stampActualData(record.payload);
@@ -1715,8 +1825,10 @@ async function evaluateGpsDock(payload, dataOverride = null) {
     ? normalizeLicensePlate(input.licensePlate) === normalizeLicensePlate(activeTrip.planLicensePlate)
     : normalizeLicensePlate(input.licensePlate) === normalizeLicensePlate(input.planLicensePlate);
   const previous = await readGpsDwellState(effectiveCodeRun, evaluatedGeofence.id);
+  const operationDate = getBangkokDateText(input.gpsTime);
   const previousMatchesTarget = Boolean(
     previous &&
+    previous.operationDate === operationDate &&
     previous.codeRun === effectiveCodeRun &&
     previous.geofenceId === evaluatedGeofence.id
   );
@@ -1769,6 +1881,7 @@ async function evaluateGpsDock(payload, dataOverride = null) {
   const isOpenEtaTrip = Boolean(activeTrip?.stampEta) && !activeTrip?.stampEtd;
   const etdDetectionMode = isOpenEtaTrip && !isInside ? (wasInsideBeforeExit ? 'NORMAL_EXIT_AFTER_INSIDE' : 'ETA_OPEN_TRIP_OUTSIDE_RECONCILIATION') : null;
   const state = {
+    operationDate,
     codeRun: effectiveCodeRun,
     requestedCodeRun: input.codeRun,
     activeCodeRun: vehicleCycle.activeCodeRun,
@@ -1826,10 +1939,10 @@ async function evaluateGpsDock(payload, dataOverride = null) {
         ? previous?.confirmedAt || new Date(eventTimeMs).toISOString()
         : new Date(eventTimeMs).toISOString()
       : null,
-    readyForGpsStampEta: isInside && gpsAgeMs <= GPS_AUTO_STAMP_FRESH_THRESHOLD_MS && !vehicleCycle.waitingForExit && eligibleEtaTrips.length > 0,
+    readyForGpsStampEta: getGpsOperationDecision(new Date()).open && isInside && gpsAgeMs <= GPS_AUTO_STAMP_FRESH_THRESHOLD_MS && !vehicleCycle.waitingForExit && eligibleEtaTrips.length > 0,
     etdDetectionMode,
     etdReconciliationEnabled: GPS_ETD_RECONCILIATION_ENABLED,
-    readyForGpsStampEtd: gpsAgeMs <= GPS_AUTO_STAMP_FRESH_THRESHOLD_MS && status === 'OUTSIDE_GEOFENCE' && isOpenEtaTrip && !activeTrip?.noWorkAction && ((GPS_AUTO_STAMP_ETD_ENABLED && wasInsideBeforeExit) || (GPS_ETD_RECONCILIATION_ENABLED && etdDetectionMode === 'ETA_OPEN_TRIP_OUTSIDE_RECONCILIATION')),
+    readyForGpsStampEtd: getGpsOperationDecision(new Date()).open && gpsAgeMs <= GPS_AUTO_STAMP_FRESH_THRESHOLD_MS && status === 'OUTSIDE_GEOFENCE' && isOpenEtaTrip && !activeTrip?.noWorkAction && ((GPS_AUTO_STAMP_ETD_ENABLED && wasInsideBeforeExit) || (GPS_ETD_RECONCILIATION_ENABLED && etdDetectionMode === 'ETA_OPEN_TRIP_OUTSIDE_RECONCILIATION')),
     autoStampExecuted: false,
     autoStampEtaResult: null,
     autoStampEtaResults: [],
@@ -1972,6 +2085,26 @@ async function runGpsBackgroundCycle() {
     failed: 0, failures: [],
   };
   try {
+    const operation = getGpsOperationDecision(new Date());
+    if (!operation.open) {
+      const pendingRetrySummary = await processDuePendingGpsStamps();
+      const status = {
+        enabled: true,
+        running: true,
+        skipped: true,
+        reason: 'GPS_OPERATION_DAY_CLOSED',
+        operationDate: operation.operationDate,
+        cutoffAt: operation.cutoffAt,
+        pendingRetry: pendingRetrySummary,
+        lastCycleStartedAt: new Date(startedAt).toISOString(),
+        lastCycleCompletedAt: new Date().toISOString(),
+        durationMs: Date.now() - startedAt,
+        ...summary,
+      };
+      await writeGpsWorkerStatus(status);
+      console.log(JSON.stringify({ logType: 'ELIVE_GPS_WORKER', ...status }));
+      return status;
+    }
     if (await client.exists(APPS_SCRIPT_MUTATION_LOCK_KEY)) {
       const status = { enabled: true, running: true, skipped: true, reason: 'APPS_SCRIPT_MUTATION_IN_PROGRESS', lastCycleStartedAt: new Date(startedAt).toISOString(), lastCycleCompletedAt: new Date().toISOString(), durationMs: Date.now() - startedAt, ...summary };
       await writeGpsWorkerStatus(status);
@@ -3577,6 +3710,13 @@ app.get(['/health', '/api/health'], (req, res) => {
       activeTripLockEnabled: true,
       futureTripGuardEnabled: true,
       nextTripEarlyWindowMinutes: GPS_NEXT_TRIP_EARLY_WINDOW_MINUTES,
+      operationTimeZone: 'Asia/Bangkok',
+      operationCutoffMinutes: GPS_OPERATION_CUTOFF_MINUTES,
+      operationCutoffTime: '20:00',
+      hardCutoffEnabled: true,
+      manualStampAvailableAfterCutoff: true,
+      morningPlanWindow: '06:00-11:59',
+      afternoonPlanWindow: '12:00-19:59',
       noWorkActionKeyword: 'ไม่มีงาน',
       noWorkActionAutoStampBlocked: true,
       tripTieBreaker: 'EARLIER_PLAN_ETA_THEN_CODE_RUN_NUMERIC',
@@ -3586,7 +3726,7 @@ app.get(['/health', '/api/health'], (req, res) => {
       lspArrivalGroupWindowMinutes: GPS_LSP_ARRIVAL_GROUP_WINDOW_MINUTES,
       dropPointGeofenceMapping: { L1: 'TPCAP-LSP', L2: 'TPCAP-LSP', L3: 'TPCAP-LSP', M1: 'TPCAP-LSP', R1: 'TPCAP-R1', R2: 'TPCAP-R2' },
       pendingStampRetryQueueEnabled: true,
-      pendingStampSchemaVersion: 35,
+      pendingStampSchemaVersion: 36,
       legacyEtaPendingAutoSuperseded: true,
       pendingStampTerminalValidationErrorsBecomeSuperseded: true,
       pendingStampTerminalValidationReasons: ['ETA_BEFORE_PLAN_WINDOW', 'STAMP_DATE_DOES_NOT_MATCH_PLAN_DATE', 'PLAN_ETA_UNAVAILABLE'],
