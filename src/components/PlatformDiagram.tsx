@@ -289,7 +289,8 @@ function getPerformanceLabel(truck: Truck): string {
   }
   if (truck.performanceStatus === 'WARNING') return 'WARNING';
   if (truck.performanceStatus === 'NO_DROP') return 'NO DROP';
-  return 'ON-TIME';
+  const actualEta = truck.stampEta || truck.actualEta || '';
+  return actualEta ? 'ON-TIME' : 'PLANNED';
 }
 
 function getDurationText(start?: string, end?: string): string {
