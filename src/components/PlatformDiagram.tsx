@@ -15,6 +15,7 @@ import { calculateMinutesDifference } from '../utils';
 
 interface PlatformDiagramProps {
   trucks: Truck[];
+  onOpenMap?: (truckId: string) => void;
 }
 
 type GroupFilter = 'M1' | 'L1' | 'L2' | 'L3' | 'R1' | 'R2';
@@ -252,6 +253,15 @@ function getTimelineCardColor(truck: Truck, rowType: 'PLAN' | 'ACTUAL'): string 
 
 function getPerformanceLabel(truck: Truck): string {
   if (hasNoWorkAction(truck)) return 'NO DROP';
+  if (isOverdueAndNotDocked(truck)) {
+    const planMinutes = parseTimeToMinutes(truck.planEta);
+    const currentMinutes = getBangkokCurrentMinutes();
+    const sameDate = String(truck.planDate || '').slice(0, 10) === new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok' }).format(new Date());
+    if (sameDate && planMinutes !== null && currentMinutes > planMinutes) {
+      return `DELAY ${currentMinutes - planMinutes} MIN`;
+    }
+    return 'WAITING';
+  }
   if (
     truck.status === 'DOCK_IN' ||
     truck.status === 'UNLOADING' ||
@@ -282,8 +292,54 @@ function getPerformanceLabel(truck: Truck): string {
   return 'ON-TIME';
 }
 
-export function PlatformDiagram({ trucks }: PlatformDiagramProps) {
+function getDurationText(start?: string, end?: string): string {
+  if (!start || !end) return '-';
+  const minutes = calculateMinutesDifference(start, end);
+  if (minutes === null || minutes < 0) return '-';
+  return `${minutes} MIN`;
+}
+
+function getPerformanceSummary(truck: Truck) {
+  const label = getPerformanceLabel(truck);
+  const actualEta = truck.stampEta || truck.actualEta || '';
+  if (isOverdueAndNotDocked(truck)) {
+    return {
+      label,
+      tone: 'red',
+      description: actualEta
+        ? `Actual ETA ${actualEta}`
+        : 'เลย Plan ETA แล้ว แต่ยังไม่มี Actual ETA',
+    };
+  }
+  if (truck.status === 'DOCK_IN' || truck.status === 'UNLOADING' || truck.status === 'UNLOADING_AT_TPCAP') {
+    return { label: 'UNLOADING', tone: 'amber', description: 'รถเข้าพื้นที่แล้วและกำลังปฏิบัติงาน' };
+  }
+  if (truck.performanceStatus === 'DELAY') {
+    return { label, tone: 'red', description: `Plan ETA ${truck.planEta || '-'} | Actual ETA ${actualEta || '-'}` };
+  }
+  if (truck.performanceStatus === 'EARLY') {
+    return { label, tone: 'blue', description: `Plan ETA ${truck.planEta || '-'} | Actual ETA ${actualEta || '-'}` };
+  }
+  if (truck.performanceStatus === 'NO_DROP' || hasNoWorkAction(truck)) {
+    return { label: 'NO DROP', tone: 'slate', description: truck.actionProblem || 'ไม่มีงานลง' };
+  }
+  return {
+    label: actualEta ? 'ON-TIME' : 'PLANNED',
+    tone: actualEta ? 'green' : 'slate',
+    description: actualEta ? `Plan ETA ${truck.planEta || '-'} | Actual ETA ${actualEta}` : 'ยังไม่มี Actual ETA',
+  };
+}
+
+function getStatusBadgeClass(status: Truck['status']): string {
+  if (status === 'COMPLETED' || status === 'TRUCK_OUT') return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+  if (status === 'DOCK_IN' || status === 'UNLOADING' || status === 'UNLOADING_AT_TPCAP') return 'border-amber-200 bg-amber-50 text-amber-800';
+  if (status === 'WAITING_AREA') return 'border-slate-200 bg-slate-100 text-slate-700';
+  return 'border-blue-200 bg-blue-50 text-blue-700';
+}
+
+export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
   const [selectedTruck, setSelectedTruck] = useState<Truck | null>(null);
+  const [selectedRowType, setSelectedRowType] = useState<'PLAN' | 'ACTUAL'>('PLAN');
   const [hoveredTruckId, setHoveredTruckId] = useState<string | null>(null);
   const [timelineView, setTimelineView] = useState<TimelineViewFilter>('ALL');
   const [selectedGroups, setSelectedGroups] = useState<GroupFilter[]>([
@@ -660,7 +716,7 @@ export function PlatformDiagram({ trucks }: PlatformDiagramProps) {
                                             key={`${rowType}-${truck.id}`}
                                             initial={{ opacity: 0, scaleY: 0 }}
                                             animate={{ opacity: 1, scaleY: 1 }}
-                                            onClick={() => setSelectedTruck(truck)}
+                                            onClick={() => { setSelectedTruck(truck); setSelectedRowType(rowType); }}
                                             onMouseEnter={() => setHoveredTruckId(truck.id)}
                                             onMouseLeave={() => setHoveredTruckId(null)}
                                             className={`absolute bottom-1 top-1 flex cursor-pointer flex-col items-center justify-center overflow-hidden border p-0.5 text-center transition-all hover:z-10 ${getTimelineCardColor(truck, rowType)} ${
@@ -711,87 +767,171 @@ export function PlatformDiagram({ trucks }: PlatformDiagramProps) {
         </div>
 
         <AnimatePresence>
-          {selectedTruck && (
-            <div
-              className="fixed inset-0 z-[1000] flex items-center justify-center bg-slate-950/60 p-3 backdrop-blur-sm sm:p-6"
-              onMouseDown={event => {
-                if (event.target === event.currentTarget) setSelectedTruck(null);
-              }}
-            >
-              <motion.div
-                initial={{ opacity: 0, scale: 0.96, y: 12 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.96, y: 12 }}
-                className="flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
+          {selectedTruck && (() => {
+            const actualEta = selectedTruck.stampEta || selectedTruck.actualEta || '';
+            const actualEtd = selectedTruck.stampEtd || '';
+            const performance = getPerformanceSummary(selectedTruck);
+            const toneClass = performance.tone === 'red'
+              ? 'border-red-200 bg-red-50 text-red-700'
+              : performance.tone === 'amber'
+                ? 'border-amber-200 bg-amber-50 text-amber-800'
+                : performance.tone === 'blue'
+                  ? 'border-blue-200 bg-blue-50 text-blue-700'
+                  : performance.tone === 'green'
+                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                    : 'border-slate-200 bg-slate-50 text-slate-700';
+            return (
+              <div
+                className="fixed inset-0 z-[1000] flex items-center justify-center bg-slate-950/65 p-2 backdrop-blur-sm sm:p-4"
+                onMouseDown={event => {
+                  if (event.target === event.currentTarget) setSelectedTruck(null);
+                }}
               >
-                <div className="flex shrink-0 items-center justify-between border-b border-slate-200 bg-slate-50 px-5 py-4 sm:px-7 sm:py-5">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-blue-600 text-white shadow-sm">
-                      <TruckIcon className="h-6 w-6" />
-                    </div>
-                    <div>
-                      <h3 className="text-lg font-bold text-slate-900 sm:text-xl">Truck Details</h3>
-                      <p className="mt-0.5 text-xs text-slate-500 sm:text-sm">
-                        {selectedTruck.route || '-'} · {selectedTruck.licensePlate || '-'}
-                      </p>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedTruck(null)}
-                    className="rounded-xl p-2.5 text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-700"
-                    aria-label="Close truck details"
-                  >
-                    <X className="h-6 w-6" />
-                  </button>
-                </div>
-
-                <div className="min-h-0 flex-1 overflow-y-auto p-5 sm:p-7">
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                    {[
-                      ['License Plate', selectedTruck.licensePlate || '-'],
-                      ['Route', selectedTruck.route || '-'],
-                      ['Supplier', selectedTruck.supplierName || '-'],
-                      ['Project', selectedTruck.project || '-'],
-                      ['Drop Point', selectedTruck.dropPoint || '-'],
-                      ['Status', selectedTruck.status || '-'],
-                      ['Performance', selectedTruck.performanceStatus || '-'],
-                      ['Plan ETA', selectedTruck.planEta || '-'],
-                      ['Plan ETD', selectedTruck.planEtd || '-'],
-                      ['Actual ETA', selectedTruck.stampEta || selectedTruck.actualEta || '-'],
-                      ['Actual ETD', selectedTruck.stampEtd || '-'],
-                    ].map(([label, value]) => (
-                      <div
-                        key={label}
-                        className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3.5"
-                      >
-                        <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                          {label}
-                        </div>
-                        <div className={`break-words text-base font-semibold text-slate-800 ${
-                          label.includes('ETA') || label.includes('ETD') ? 'font-mono' : ''
-                        }`}>
-                          {value}
-                        </div>
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.97, y: 10 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.97, y: 10 }}
+                  className="flex max-h-[94vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
+                >
+                  <div className="flex shrink-0 items-start justify-between gap-4 border-b border-slate-200 bg-white px-5 py-4 sm:px-7">
+                    <div className="flex min-w-0 items-center gap-4">
+                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-white shadow-sm">
+                        <TruckIcon className="h-7 w-7" />
                       </div>
-                    ))}
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="text-xl font-black text-slate-900 sm:text-2xl">Trip Details</h3>
+                          {selectedTruck.planRemark === 'EXTRA' && (
+                            <span className="rounded-full border border-red-300 bg-red-50 px-2.5 py-1 text-xs font-black text-red-700">+ EXTRA</span>
+                          )}
+                          <span className={`rounded-full border px-2.5 py-1 text-xs font-black ${getStatusBadgeClass(selectedTruck.status)}`}>
+                            {selectedTruck.status.replaceAll('_', ' ')}
+                          </span>
+                        </div>
+                        <p className="mt-1 truncate text-sm font-semibold text-slate-500">
+                          {selectedTruck.route || '-'} · {selectedTruck.licensePlate || '-'} · {selectedTruck.id || '-'} · {selectedTruck.dropPoint || '-'}
+                        </p>
+                      </div>
+                    </div>
+                    <button type="button" onClick={() => setSelectedTruck(null)} className="rounded-xl p-2.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label="Close trip details">
+                      <X className="h-6 w-6" />
+                    </button>
                   </div>
 
-                  {selectedTruck.actionProblem && (
-                    <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 sm:p-5">
-                      <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-red-700">
-                        <AlertTriangle className="h-4 w-4" />
-                        Action / Problem
-                      </div>
-                      <div className="whitespace-pre-wrap break-words text-sm leading-6 text-red-800 sm:text-base">
-                        {selectedTruck.actionProblem}
-                      </div>
+                  <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+                    <div className="grid gap-4 lg:grid-cols-3">
+                      <section className={`rounded-2xl border p-4 ${selectedRowType === 'PLAN' ? 'border-blue-400 ring-2 ring-blue-100' : 'border-blue-200 bg-blue-50/50'}`}>
+                        <div className="mb-4 text-sm font-black uppercase tracking-wide text-blue-700">PLAN</div>
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between"><span className="font-bold text-slate-500">Plan ETA</span><span className="font-mono text-xl font-black text-blue-700">{selectedTruck.planEta || '-'}</span></div>
+                          <div className="flex items-center justify-between"><span className="font-bold text-slate-500">Plan ETD</span><span className="font-mono text-xl font-black text-blue-700">{selectedTruck.planEtd || '-'}</span></div>
+                          <div className="flex items-center justify-between border-t border-blue-100 pt-3"><span className="font-bold text-slate-500">Duration</span><span className="font-black text-slate-800">{getDurationText(selectedTruck.planEta, selectedTruck.planEtd)}</span></div>
+                        </div>
+                      </section>
+
+                      <section className={`rounded-2xl border p-4 ${selectedRowType === 'ACTUAL' ? 'border-emerald-400 ring-2 ring-emerald-100' : 'border-emerald-200 bg-emerald-50/50'}`}>
+                        <div className="mb-4 text-sm font-black uppercase tracking-wide text-emerald-700">ACTUAL</div>
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between"><span className="font-bold text-slate-500">Actual ETA</span><span className="font-mono text-xl font-black text-emerald-700">{actualEta || '-'}</span></div>
+                          <div className="flex items-center justify-between"><span className="font-bold text-slate-500">Actual ETD</span><span className="font-mono text-xl font-black text-emerald-700">{actualEtd || (actualEta ? 'IN PROGRESS' : '-')}</span></div>
+                          <div className="flex items-center justify-between border-t border-emerald-100 pt-3"><span className="font-bold text-slate-500">Duration</span><span className="font-black text-slate-800">{getDurationText(actualEta, actualEtd)}</span></div>
+                        </div>
+                      </section>
+
+                      <section className={`rounded-2xl border p-4 ${toneClass}`}>
+                        <div className="mb-4 text-sm font-black uppercase tracking-wide">Performance Summary</div>
+                        <div className="text-2xl font-black">{performance.label}</div>
+                        <p className="mt-2 text-sm font-semibold leading-6 opacity-90">{performance.description}</p>
+                      </section>
                     </div>
-                  )}
-                </div>
-              </motion.div>
-            </div>
-          )}
+
+                    <section className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                      <div className="mb-4 text-sm font-black uppercase tracking-wide text-slate-700">Timeline Comparison</div>
+                      <div className="space-y-3">
+                        {(['PLAN', 'ACTUAL'] as const).map(kind => {
+                          const startText = kind === 'PLAN' ? selectedTruck.planEta : actualEta;
+                          const endText = kind === 'PLAN' ? selectedTruck.planEtd || '' : actualEtd || '';
+                          const start = parseTimeToMinutes(startText);
+                          const duration = kind === 'PLAN' ? getPlanDurationMinutes(selectedTruck) : actualEta ? getActualDurationMinutes(selectedTruck, actualEta) : 0;
+                          const position = start === null ? null : getTimelinePosition(start, duration);
+                          return (
+                            <div key={kind} className="grid grid-cols-[68px_1fr] items-center gap-3">
+                              <span className={`text-xs font-black ${kind === 'PLAN' ? 'text-blue-700' : 'text-emerald-700'}`}>{kind}</span>
+                              <div className={`relative h-9 overflow-hidden rounded-lg ${kind === 'PLAN' ? 'bg-blue-50' : 'bg-emerald-50'}`}>
+                                {position ? (
+                                  <div className={`absolute bottom-1 top-1 flex min-w-[92px] items-center justify-center rounded-md px-2 text-xs font-black text-white ${kind === 'PLAN' ? 'bg-blue-600' : 'bg-emerald-600'}`} style={{ left: `${position.left}%`, width: `${position.width}%` }}>
+                                    {startText}-{endText || 'NOW'}
+                                  </div>
+                                ) : (
+                                  <div className="flex h-full items-center px-3 text-xs font-bold text-slate-400">ยังไม่มีข้อมูล</div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </section>
+
+                    <section className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
+                      <div className="mb-4 text-sm font-black uppercase tracking-wide text-slate-700">Trip Information</div>
+                      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+                        {[
+                          ['Supplier', selectedTruck.supplierName || '-'],
+                          ['Project', selectedTruck.project || '-'],
+                          ['Drop Point', selectedTruck.dropPoint || '-'],
+                          ['Truck Type', selectedTruck.truckType || '-'],
+                          ['Driver', selectedTruck.driverName || '-'],
+                          ['Telephone', selectedTruck.phone || '-'],
+                          ['Plan Date', selectedTruck.planDate || '-'],
+                          ['Code Run', selectedTruck.id || '-'],
+                          ['Route', selectedTruck.route || '-'],
+                          ['License Plate', selectedTruck.licensePlate || '-'],
+                        ].map(([label, value]) => (
+                          <div key={label} className="min-w-0 border-l-2 border-slate-200 pl-3">
+                            <div className="text-[10px] font-black uppercase tracking-wide text-slate-400">{label}</div>
+                            <div className="mt-1 break-words text-sm font-bold text-slate-800">{value}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+
+                    <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                      <section className="rounded-2xl border border-amber-200 bg-amber-50/70 p-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="text-sm font-black uppercase tracking-wide text-amber-800">Work Detail</div>
+                          <span className={`rounded-full px-2.5 py-1 text-[10px] font-black ${selectedTruck.workDetailConfirmed ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-200 text-amber-900'}`}>
+                            {selectedTruck.workDetailConfirmed ? 'CONFIRMED' : 'WAITING'}
+                          </span>
+                        </div>
+                        <div className="mt-3 whitespace-pre-wrap text-sm font-semibold leading-6 text-slate-800">{selectedTruck.workDetail || 'No work detail'}</div>
+                      </section>
+
+                      <section className="rounded-2xl border border-red-200 bg-red-50/70 p-4">
+                        <div className="text-sm font-black uppercase tracking-wide text-red-700">Action / Problem</div>
+                        <div className="mt-3 space-y-2 text-sm leading-5 text-slate-700">
+                          <div><span className="font-black text-red-700">Problem:</span> {selectedTruck.actionProblem || '-'}</div>
+                          <div><span className="font-black">Countermeasure:</span> {selectedTruck.actionCountermeasure || '-'}</div>
+                          <div><span className="font-black">Responsible:</span> {selectedTruck.actionResponsible || '-'}</div>
+                          <div><span className="font-black">Status:</span> {selectedTruck.actionStatus || '-'}</div>
+                          <div><span className="font-black">Updated:</span> {selectedTruck.actionUpdatedAt || '-'}</div>
+                        </div>
+                      </section>
+                    </div>
+                  </div>
+
+                  <div className="flex shrink-0 items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-5 py-3 sm:px-7">
+                    <span className="text-xs font-semibold text-slate-500">ข้อมูลล่าสุด {selectedTruck.lastUpdated || '-'}</span>
+                    <div className="flex gap-2">
+                      <button type="button" onClick={() => setSelectedTruck(null)} className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-100">Close</button>
+                      {onOpenMap && (
+                        <button type="button" onClick={() => { onOpenMap(selectedTruck.id); setSelectedTruck(null); }} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700">View Live Map</button>
+                      )}
+                    </div>
+                  </div>
+                </motion.div>
+              </div>
+            );
+          })()}
         </AnimatePresence>
       </div>
     </div>
