@@ -1353,8 +1353,7 @@ export default function App() {
               <main className="min-w-0 flex-1 overflow-hidden bg-white"><PlatformDiagram
                 trucks={filteredTrucks}
                 onOpenMap={(truckId) => {
-                  setSelectedGpsTruckId(truckId);
-                  setCurrentView('map');
+                  openGpsPopup(truckId);
                 }}
               /></main>
             )}
