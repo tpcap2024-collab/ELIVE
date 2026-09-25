@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   Maximize2,
   Minimize2,
+  RefreshCw,
   Search,
 } from 'lucide-react';
 import {
