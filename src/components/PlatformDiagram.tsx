@@ -306,6 +306,7 @@ function formatClockMinutes(value: number): string {
   return `${String(Math.floor(normalized / 60)).padStart(2, '0')}:${String(normalized % 60).padStart(2, '0')}`;
 }
 function getMinuteDifferenceLabel(truck: Truck): string {
+  if (isNonInboundProject(truck)) return '';
   const actualEta = truck.stampEta || truck.actualEta || '';
   const plan = parseClockMinutes(truck.planEta);
   const actual = parseClockMinutes(actualEta);
@@ -341,6 +342,13 @@ function getDurationText(start?: string, end?: string): string {
 }
 
 function getPerformanceSummary(truck: Truck) {
+  if (isNonInboundProject(truck)) {
+    return {
+      label: 'NON-INBOUND',
+      tone: 'slate',
+      description: 'รายการนี้ไม่ใช้เกณฑ์ Early / On-time / Delay ของงาน INBOUND',
+    };
+  }
   const label = getPerformanceLabel(truck);
   const actualEta = truck.stampEta || truck.actualEta || '';
   if (isOverdueAndNotDocked(truck)) {
