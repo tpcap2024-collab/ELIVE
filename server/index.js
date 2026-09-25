@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '44';
+const API_VERSION = '45';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -1471,13 +1471,18 @@ async function createPendingGpsStamp(stampType, state) {
         gpsSnapshot: { gpsId: state.gpsId, gpsTime: state.gpsTime, latitude: state.latitude, longitude: state.longitude, speed: state.speedKmh, geofence: state.lastInsideGeofenceName || state.geofenceName },
       };
   const initial = {
-    pendingSchemaVersion: 43,
+    pendingSchemaVersion: 45,
     operationDate: operation.operationDate,
     cutoffAt: operation.cutoffAt,
     pendingId, stampType: normalizedStampType, codeRun,
     licensePlate: state.licensePlate, normalizedLicensePlate: normalizeLicensePlate(state.licensePlate),
-    gpsId: state.gpsId, gpsTime: state.gpsTime, selectedPlanEta: state.activePlanEta || null,
-    geofence: payload.geofence || null, payload,
+    gpsId: state.gpsId,
+    gpsTime: state.gpsTime,
+    selectedPlanEta: state.activePlanEta || null,
+    selectedPlanEtaMinutes: parsePlanMinutes(state.activePlanEta),
+    selectedShift: getGpsEtaShiftWindow(getBangkokMinuteOfDay(new Date()))?.shift || null,
+    geofence: payload.geofence || null,
+    payload,
     status: 'PENDING', attemptCount: 0, lastAttemptAt: null, lastError: null,
     nextRetryAt: now, createdAt: now, updatedAt: now, completedAt: null,
   };
@@ -1582,9 +1587,41 @@ async function processPendingGpsStamp(pendingId) {
       if (!currentTrip || currentTrip.stampEta || currentTrip.stampEtd || currentTrip.noWorkAction) {
         return await closePendingStamp(record, 'SUPERSEDED', { lastError: currentTrip?.stampEta ? 'DATABASE_ETA_ALREADY_EXISTS' : 'DATABASE_TRIP_NOT_ELIGIBLE' });
       }
+      const currentBangkokMinutes = getBangkokMinuteOfDay(new Date());
+      const activeShiftWindow = getGpsEtaShiftWindow(currentBangkokMinutes);
+      if (!isPlanAllowedForGpsEtaShift(currentTrip.planEtaMinutes, currentBangkokMinutes)) {
+        console.warn(JSON.stringify({
+          logType: 'ELIVE_GPS_STAMP',
+          event: 'PENDING_ETA_SUPERSEDED_OUTSIDE_ACTIVE_SHIFT',
+          pendingId,
+          codeRun: record.codeRun,
+          planEta: currentTrip.planEta,
+          planEtaMinutes: currentTrip.planEtaMinutes,
+          currentBangkokMinutes,
+          activeShift: activeShiftWindow?.shift || null,
+          allowedPlanStartMinutes: activeShiftWindow?.planStartMinutes ?? null,
+          allowedPlanEndMinutes: activeShiftWindow?.planEndMinutes ?? null,
+          pendingSelectedShift: record.selectedShift || null,
+          pendingSchemaVersion: record.pendingSchemaVersion || null,
+        }));
+        return await closePendingStamp(record, 'SUPERSEDED', {
+          lastError: 'PLAN_OUTSIDE_ACTIVE_SHIFT',
+          terminalReason: 'SHIFT_REVALIDATION_FAILED',
+        });
+      }
       const pendingGeofenceId = GPS_GEOFENCES.find(g => g.name === record.geofence || g.id === record.geofence)?.id || null;
       if (!pendingGeofenceId || getGeofenceIdForDropPoint(currentTrip.dropPoint) !== pendingGeofenceId) {
         return await closePendingStamp(record, 'SUPERSEDED', { lastError: 'PLAN_GEOFENCE_DOES_NOT_MATCH_DETECTED_GEOFENCE' });
+      }
+    }
+    if (record.stampType === 'ETA') {
+      const finalTrip = findTripByCodeRun(latestData, record.codeRun);
+      const finalBangkokMinutes = getBangkokMinuteOfDay(new Date());
+      if (!isPlanAllowedForGpsEtaShift(finalTrip.planEtaMinutes, finalBangkokMinutes)) {
+        return await closePendingStamp(record, 'SUPERSEDED', {
+          lastError: 'PLAN_OUTSIDE_ACTIVE_SHIFT',
+          terminalReason: 'FINAL_PRE_SEND_SHIFT_GUARD',
+        });
       }
     }
     console.log(JSON.stringify({ logType: 'ELIVE_GPS_STAMP', event: 'STAMP_REQUEST_SENT', pendingId, codeRun: record.codeRun, stampType: record.stampType, attemptCount }));
@@ -3647,6 +3684,9 @@ app.get(['/health', '/api/health'], (req, res) => {
       etaFiltersRemoved: ['GPS_FRESHNESS', 'DUPLICATE', 'OUT_OF_ORDER', 'PLAN_WINDOW', 'ARRIVAL_GROUP_30_MINUTES'],
       etaShiftGuardEnabled: true,
       etaShiftSelectionUsesCurrentBangkokTime: true,
+      pendingEtaShiftRevalidationEnabled: true,
+      finalPreSendEtaShiftGuardEnabled: true,
+      legacyPendingOutsideCurrentShiftBecomesSuperseded: true,
       gpsFreshnessPolicy: 'IGNORE_AGE_WITHIN_CURRENT_BANGKOK_DATE',
       historicalGpsPolicy: 'SKIP_WHEN_GPS_DATE_IS_NOT_CURRENT_BANGKOK_DATE',
       sameDayGpsRequired: true,
@@ -3671,7 +3711,7 @@ app.get(['/health', '/api/health'], (req, res) => {
       lspArrivalGroupWindowMinutes: GPS_LSP_ARRIVAL_GROUP_WINDOW_MINUTES,
       dropPointGeofenceMapping: { L1: 'TPCAP-LSP', L2: 'TPCAP-LSP', L3: 'TPCAP-LSP', M1: 'TPCAP-LSP', R1: 'TPCAP-R1', R2: 'TPCAP-R2' },
       pendingStampRetryQueueEnabled: true,
-      pendingStampSchemaVersion: 43,
+      pendingStampSchemaVersion: 45,
       legacyEtaPendingAutoSuperseded: false,
       terminalPendingRecordCanBeRecreated: true,
       newlyCreatedPendingProcessedInSameWorkerCycle: true,
