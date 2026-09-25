@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '46';
+const API_VERSION = '47';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -84,6 +84,8 @@ const GPS_PENDING_STAMP_LOCK_COOLDOWN_SECONDS = 60;
 const GPS_AUTO_STAMP_ETA_ENABLED = cleanText(process.env.GPS_AUTO_STAMP_ETA_ENABLED || 'true').toLowerCase() === 'true';
 const GPS_AUTO_STAMP_ETD_ENABLED = cleanText(process.env.GPS_AUTO_STAMP_ETD_ENABLED || 'false').toLowerCase() === 'true';
 const GPS_ETD_RECONCILIATION_ENABLED = cleanText(process.env.GPS_ETD_RECONCILIATION_ENABLED || 'true').toLowerCase() === 'true';
+const GPS_R_DOCK_NO_WORK_ENABLED = cleanText(process.env.GPS_R_DOCK_NO_WORK_ENABLED || 'true').toLowerCase() === 'true';
+const GPS_R_DOCK_NO_WORK_DISTANCE_METERS = Math.max(1000, Number(process.env.GPS_R_DOCK_NO_WORK_DISTANCE_METERS || 1000));
 const GPS_BACKGROUND_WORKER_ENABLED = cleanText(process.env.GPS_BACKGROUND_WORKER_ENABLED || 'false').toLowerCase() === 'true';
 const GPS_BACKGROUND_WORKER_INTERVAL_MS = Math.max(15000, Number(process.env.GPS_BACKGROUND_WORKER_INTERVAL_MS || 60000));
 const GPS_WORKER_LOCK_KEY = 'elive:gps-worker:leader';
@@ -1073,12 +1075,28 @@ function isPlanAllowedForGpsEtaShift(planEtaMinutes, nowMinutes) {
 
 function getEligibleEtaTripsForVehicle(trips, geofenceId, nowMinutes) {
   if (!geofenceId) return [];
-  return trips.filter(trip =>
-    !trip.stampEta && !trip.stampEtd && !trip.noWorkAction &&
-    Number.isFinite(trip.planEtaMinutes) &&
-    isPlanAllowedForGpsEtaShift(trip.planEtaMinutes, nowMinutes) &&
-    getGeofenceIdForDropPoint(trip.dropPoint) === geofenceId
-  ).sort(compareTripsByPlanTime);
+  const sortedTrips = [...trips].sort(compareTripsByPlanTime);
+  return sortedTrips.filter((trip, tripIndex) => {
+    if (
+      trip.stampEta ||
+      trip.stampEtd ||
+      trip.noWorkAction ||
+      !Number.isFinite(trip.planEtaMinutes) ||
+      !isPlanAllowedForGpsEtaShift(trip.planEtaMinutes, nowMinutes) ||
+      getGeofenceIdForDropPoint(trip.dropPoint) !== geofenceId
+    ) {
+      return false;
+    }
+    const previousSameDockTripUnfinished = sortedTrips
+      .slice(0, tripIndex)
+      .some(previousTrip =>
+        !previousTrip.noWorkAction &&
+        previousTrip.dropPoint === trip.dropPoint &&
+        previousTrip.planEtaMinutes <= trip.planEtaMinutes &&
+        !previousTrip.stampEtd
+      );
+    return !previousSameDockTripUnfinished;
+  });
 }
 function selectGpsEtaArrivalGroup(trips, activeTrip, geofenceId, nowMinutes) {
   return getEligibleEtaTripsForVehicle(trips, geofenceId, nowMinutes).slice(0, 1);
@@ -1463,7 +1481,7 @@ async function createPendingGpsStamp(stampType, state) {
         gpsSnapshot: { gpsId: state.gpsId, gpsTime: state.gpsTime, latitude: state.latitude, longitude: state.longitude, speed: state.speedKmh, geofence: state.lastInsideGeofenceName || state.geofenceName },
       };
   const initial = {
-    pendingSchemaVersion: 46,
+    pendingSchemaVersion: 47,
     operationDate: operation.operationDate,
     cutoffAt: operation.cutoffAt,
     pendingId, stampType: normalizedStampType, codeRun,
@@ -1749,6 +1767,90 @@ async function executeGpsAutoStampEtd(state, activeTrip) {
   return { ...pending, queued: isActivePendingStamp(pending), detectionMode: state.etdDetectionMode };
 }
 
+function isLspDropPoint(dropPoint) {
+  return /^(?:L1|L2|L3|M1)(?:-|\b)/.test(cleanText(dropPoint).toUpperCase());
+}
+function isRDockDropPoint(dropPoint) {
+  return /^(?:R1|R2)(?:-|\b)/.test(cleanText(dropPoint).toUpperCase());
+}
+function updateLocalNoWorkActual(data, codeRun, actionProblem) {
+  const row = (Array.isArray(data?.actual) ? data.actual : [])
+    .slice(1)
+    .find(item => Array.isArray(item) && cleanText(item[0]).toUpperCase() === codeRun);
+  if (row) row[6] = actionProblem;
+}
+async function reconcileSkippedRDockAfterLsp(input, data) {
+  if (!GPS_R_DOCK_NO_WORK_ENABLED) return [];
+  const operationDate = getBangkokDateText(new Date());
+  const trips = buildTripsForPlate(data, input.licensePlate, operationDate)
+    .sort(compareTripsByPlanTime);
+  const results = [];
+  for (let targetIndex = 0; targetIndex < trips.length; targetIndex += 1) {
+    const targetTrip = trips[targetIndex];
+    if (
+      !isRDockDropPoint(targetTrip.dropPoint) ||
+      targetTrip.stampEta ||
+      targetTrip.stampEtd ||
+      targetTrip.noWorkAction
+    ) {
+      continue;
+    }
+    const previousLspTrip = trips
+      .slice(0, targetIndex)
+      .filter(trip => isLspDropPoint(trip.dropPoint) && Boolean(trip.stampEtd))
+      .sort(compareTripsByPlanTime)
+      .pop();
+    if (!previousLspTrip) continue;
+    const earlierUnfinishedRDockTrip = trips
+      .slice(0, targetIndex)
+      .some(trip =>
+        isRDockDropPoint(trip.dropPoint) &&
+        !trip.noWorkAction &&
+        !trip.stampEtd
+      );
+    if (earlierUnfinishedRDockTrip) continue;
+    const targetGeofenceId = getGeofenceIdForDropPoint(targetTrip.dropPoint);
+    const targetGeofence = findGpsGeofenceById(
+      targetGeofenceId,
+      input.latitude,
+      input.longitude
+    );
+    if (
+      !targetGeofence ||
+      targetGeofence.distanceMeters <= GPS_R_DOCK_NO_WORK_DISTANCE_METERS
+    ) {
+      continue;
+    }
+    const response = await requestAppsScriptPost('setGpsNoWork', {
+      codeRun: targetTrip.codeRun,
+      licensePlate: targetTrip.planLicensePlate,
+      sourceCodeRun: previousLspTrip.codeRun,
+      sourceStampEtd: previousLspTrip.stampEtd,
+      targetDropPoint: targetTrip.dropPoint,
+      targetGeofenceId,
+      distanceMeters: Number(targetGeofence.distanceMeters.toFixed(2)),
+      thresholdMeters: GPS_R_DOCK_NO_WORK_DISTANCE_METERS,
+      gpsTime: input.gpsTime.toISOString(),
+      stampedBy: 'GPS SYSTEM',
+    });
+    const actionProblem = 'ไม่มีงานลง (GPS AUTO: หลัง LSP ETD รถห่าง R1/R2 มากกว่า 1 กม.)';
+    updateLocalNoWorkActual(data, targetTrip.codeRun, actionProblem);
+    console.warn(JSON.stringify({
+      logType: 'ELIVE_GPS_NO_WORK',
+      event: 'R_DOCK_AUTO_NO_WORK_CONFIRMED',
+      codeRun: targetTrip.codeRun,
+      sourceCodeRun: previousLspTrip.codeRun,
+      licensePlate: input.licensePlate,
+      targetDropPoint: targetTrip.dropPoint,
+      targetGeofenceId,
+      distanceMeters: Number(targetGeofence.distanceMeters.toFixed(2)),
+    }));
+    results.push(response?.result || response);
+    break;
+  }
+  return results;
+}
+
 async function evaluateGpsDock(payload, dataOverride = null) {
   const input = validateGpsDockPayload(payload);
   const nowMs = Date.now();
@@ -1760,6 +1862,9 @@ async function evaluateGpsDock(payload, dataOverride = null) {
   const nearestIsInside = nearestGeofence.distanceMeters <= nearestGeofence.radiusMeters;
   const detectedGeofenceId = nearestIsInside ? nearestGeofence.id : null;
   const isParked = input.speedKmh === GPS_PARKING_SPEED_THRESHOLD_KMH;
+  const autoNoWorkResults = dataOverride
+    ? await reconcileSkippedRDockAfterLsp(input, dataOverride)
+    : [];
   const tripResolution = await resolveVehicleTrip(input, nearestIsInside, dataOverride, detectedGeofenceId);
   const vehicleCycle = tripResolution.state;
   const activeTrip = tripResolution.activeTrip;
@@ -1859,6 +1964,7 @@ async function evaluateGpsDock(payload, dataOverride = null) {
     nearestGeofenceId: nearestGeofence.id,
     nearestGeofenceDistanceMeters: Number(nearestGeofence.distanceMeters.toFixed(2)),
     eligibleEtaCodeRuns: eligibleEtaTrips.map(trip => trip.codeRun),
+    autoNoWorkResults,
     eligibleEtaTripCount: eligibleEtaTrips.length,
     gpsId: input.gpsId,
     latitude: input.latitude,
@@ -3703,14 +3809,19 @@ app.get(['/health', '/api/health'], (req, res) => {
       noWorkActionAutoStampBlocked: true,
       tripTieBreaker: 'EARLIEST_PLAN_ETA_THEN_CODE_RUN_NUMERIC',
       pendingEtaEarliestPlanRevalidationEnabled: true,
+      previousSameDockEtdRequired: true,
+      actualLicensePlateColumnEnabled: true,
+      rDockAutoNoWorkEnabled: GPS_R_DOCK_NO_WORK_ENABLED,
+      rDockAutoNoWorkDistanceMeters: GPS_R_DOCK_NO_WORK_DISTANCE_METERS,
+      rDockAutoNoWorkRequiresPreviousLspEtd: true,
       sheetsTimeOnlyIsoUsesFixedBangkokOffset: true,
       exitRequiredBeforeNextTrip: true,
-      etaRule: 'STAMP_ONE_EARLIEST_UNSTAMPED_PLAN_IN_MATCHING_GEOFENCE_AND_ACTIVE_SHIFT',
+      etaRule: 'STAMP_ONE_EARLIEST_UNSTAMPED_PLAN_AFTER_PREVIOUS_SAME_DOCK_ETD',
       multiDropSameGeofenceEtaEnabled: false,
       lspArrivalGroupWindowMinutes: GPS_LSP_ARRIVAL_GROUP_WINDOW_MINUTES,
       dropPointGeofenceMapping: { L1: 'TPCAP-LSP', L2: 'TPCAP-LSP', L3: 'TPCAP-LSP', M1: 'TPCAP-LSP', R1: 'TPCAP-R1', R2: 'TPCAP-R2' },
       pendingStampRetryQueueEnabled: true,
-      pendingStampSchemaVersion: 46,
+      pendingStampSchemaVersion: 47,
       legacyEtaPendingAutoSuperseded: false,
       terminalPendingRecordCanBeRecreated: true,
       newlyCreatedPendingProcessedInSameWorkerCycle: true,
