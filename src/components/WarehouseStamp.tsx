@@ -422,7 +422,8 @@ export function WarehouseStamp({
                         disabled={saveState === 'saving'}
                         className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-blue-700 active:scale-95"
                       >
-                        Stamp ETA
+                        {saveState === 'saving' && <RefreshCw className="h-3.5 w-3.5 animate-spin" />}
+                        {saveState === 'saving' ? 'กำลังบันทึก ETA...' : 'Stamp ETA'}
                       </button>
                     )}
                   </td>
@@ -439,7 +440,8 @@ export function WarehouseStamp({
                         disabled={!hasStampEta || saveState === 'saving'}
                         className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-blue-700 active:scale-95 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 disabled:active:scale-100"
                       >
-                        Stamp ETD
+                        {saveState === 'saving' && <RefreshCw className="h-3.5 w-3.5 animate-spin" />}
+                        {saveState === 'saving' ? 'กำลังบันทึก ETD...' : 'Stamp ETD'}
                       </button>
                     )}
                   </td>
