@@ -549,8 +549,8 @@ async function fetchApiRequest(
   return data;
 }
 
-async function fetchEliveApiData(date?: string): Promise<any> {
-  const query = new URLSearchParams({ t: String(Date.now()) });
+async function fetchEliveApiData(date?: string, forceRefresh = false): Promise<any> {
+  const query = new URLSearchParams({ t: String(Date.now()), refresh: forceRefresh ? 'true' : 'false' });
   const requestedDate = String(date || '').trim();
   if (requestedDate) {
     query.set('date', validateDateText(requestedDate, 'Date'));
@@ -1480,7 +1480,7 @@ export async function updateTruckInSheets(
   truckId: string,
   updates: Partial<Truck>,
   currentTruck: Truck
-): Promise<void> {
+): Promise<Truck> {
   if (!truckId) throw new Error('Truck ID is required.');
 
   const stampEta =
@@ -1536,6 +1536,21 @@ export async function updateTruckInSheets(
   if (result.success !== true) {
     throw new Error('The server did not confirm the update.');
   }
+  const confirmedRow = Array.isArray(result.confirmedActualRow) ? result.confirmedActualRow : null;
+  const confirmed = confirmedRow ? {
+    status: mapTruckStatus(String(confirmedRow[1] || currentTruck.status)),
+    performanceStatus: mapPerformanceStatus(String(confirmedRow[2] || currentTruck.performanceStatus)),
+    stampEta: parseGoogleSheetsTime(confirmedRow[4]),
+    stampEtd: parseGoogleSheetsTime(confirmedRow[5]),
+    actionProblem: String(confirmedRow[6] || ''),
+    actionCountermeasure: String(confirmedRow[7] || ''),
+    actionResponsible: String(confirmedRow[8] || ''),
+    actionStatus: String(confirmedRow[9] || ''),
+    actionUpdatedAt: String(confirmedRow[11] || ''),
+  } : null;
+  return confirmed
+    ? { ...currentTruck, ...updates, ...confirmed, mutationConfirmedAt: String(result.timestamp || new Date().toISOString()) }
+    : { ...currentTruck, ...updates, mutationConfirmedAt: String(result.timestamp || new Date().toISOString()) };
 }
 
 export function normalizeLicensePlate(value: unknown): string {
@@ -1963,9 +1978,10 @@ export function isEliveForbiddenError(error: unknown): boolean {
 }
 
 export async function fetchEliveDashboardData(
-  date?: string
+  date?: string,
+  forceRefresh = false
 ): Promise<EliveDashboardData> {
-  const sourceData = await fetchEliveApiData(date);
+  const sourceData = await fetchEliveApiData(date, forceRefresh);
   const trucks = await fetchTrucksFromSheets(sourceData);
   const gpsLocations = await fetchGpsLocations(sourceData);
 
