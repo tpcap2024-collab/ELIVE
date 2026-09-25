@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '45';
+const API_VERSION = '46';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -727,7 +727,10 @@ function parsePlanMinutes(value) {
     const date = new Date(text);
     if (!Number.isNaN(date.getTime())) {
       const sheetsTimeValue = date.getUTCFullYear() === 1899 || date.getUTCFullYear() === 1900;
-      if (sheetsTimeValue) return date.getUTCHours() * 60 + date.getUTCMinutes();
+      if (sheetsTimeValue) {
+        const bangkokMinutes = date.getUTCHours() * 60 + date.getUTCMinutes() + 7 * 60;
+        return bangkokMinutes % (24 * 60);
+      }
       const parts = new Intl.DateTimeFormat('en-GB', {
         timeZone: 'Asia/Bangkok',
         hour: '2-digit',
@@ -1068,43 +1071,32 @@ function isPlanAllowedForGpsEtaShift(planEtaMinutes, nowMinutes) {
   return Boolean(Number.isFinite(planEtaMinutes) && window && planEtaMinutes >= window.planStartMinutes && planEtaMinutes <= window.planEndMinutes);
 }
 
-function selectGpsEtaArrivalGroup(trips, activeTrip, geofenceId, nowMinutes) {
+function getEligibleEtaTripsForVehicle(trips, geofenceId, nowMinutes) {
   if (!geofenceId) return [];
-  const candidates = trips
-    .filter(trip =>
-      !trip.stampEta &&
-      !trip.stampEtd &&
-      !trip.noWorkAction &&
-      isPlanAllowedForGpsEtaShift(trip.planEtaMinutes, nowMinutes) &&
-      getGeofenceIdForDropPoint(trip.dropPoint) === geofenceId
-    )
-    .sort((first, second) => {
-      const firstDistance = first.planEtaMinutes === null
-        ? Number.MAX_SAFE_INTEGER
-        : Math.abs(first.planEtaMinutes - nowMinutes);
-      const secondDistance = second.planEtaMinutes === null
-        ? Number.MAX_SAFE_INTEGER
-        : Math.abs(second.planEtaMinutes - nowMinutes);
-      if (firstDistance !== secondDistance) return firstDistance - secondDistance;
-      return compareTripsByPlanTime(first, second);
-    });
-  return candidates.slice(0, 1);
+  return trips.filter(trip =>
+    !trip.stampEta && !trip.stampEtd && !trip.noWorkAction &&
+    Number.isFinite(trip.planEtaMinutes) &&
+    isPlanAllowedForGpsEtaShift(trip.planEtaMinutes, nowMinutes) &&
+    getGeofenceIdForDropPoint(trip.dropPoint) === geofenceId
+  ).sort(compareTripsByPlanTime);
+}
+function selectGpsEtaArrivalGroup(trips, activeTrip, geofenceId, nowMinutes) {
+  return getEligibleEtaTripsForVehicle(trips, geofenceId, nowMinutes).slice(0, 1);
 }
 
 function selectTripForVehicle(trips, nowMinutes, previousCycle = null, detectedGeofenceId = null) {
-  const inProgress = trips.filter(t => t.stampEta && !t.stampEtd && !t.noWorkAction).sort(compareTripsByPlanTime);
+  const inProgress = trips.filter(trip => trip.stampEta && !trip.stampEtd && !trip.noWorkAction).sort(compareTripsByPlanTime);
   if (inProgress.length) {
-    const locked = inProgress.find(t => t.codeRun === previousCycle?.activeCodeRun);
+    const locked = inProgress.find(trip => trip.codeRun === previousCycle?.activeCodeRun);
     return { activeTrip: locked || inProgress[0], selectionReason: locked ? 'LOCKED_ACTIVE_TRIP' : 'ETA_WITHOUT_ETD', planEtaDifferenceMinutes: null };
   }
-  const candidates = trips.filter(t => !t.stampEta && !t.stampEtd && !t.noWorkAction && detectedGeofenceId && isPlanAllowedForGpsEtaShift(t.planEtaMinutes, nowMinutes) && getGeofenceIdForDropPoint(t.dropPoint) === detectedGeofenceId)
-    .sort((a,b) => {
-      const ad=a.planEtaMinutes===null?Number.MAX_SAFE_INTEGER:Math.abs(a.planEtaMinutes-nowMinutes);
-      const bd=b.planEtaMinutes===null?Number.MAX_SAFE_INTEGER:Math.abs(b.planEtaMinutes-nowMinutes);
-      return ad-bd || compareTripsByPlanTime(a,b);
-    });
-  const activeTrip=candidates[0]||null;
-  return { activeTrip, selectionReason: activeTrip?'PERMISSIVE_INSIDE_GEOFENCE_NEAREST_PLAN':'NO_PENDING_TRIP_FOR_DETECTED_GEOFENCE', planEtaDifferenceMinutes: activeTrip?.planEtaMinutes==null?null:Math.abs(activeTrip.planEtaMinutes-nowMinutes) };
+  const candidates = getEligibleEtaTripsForVehicle(trips, detectedGeofenceId, nowMinutes);
+  const activeTrip = candidates[0] || null;
+  return {
+    activeTrip,
+    selectionReason: activeTrip ? 'EARLIEST_UNSTAMPED_PLAN_IN_ACTIVE_SHIFT' : (getGpsEtaShiftWindow(nowMinutes) ? 'NO_ELIGIBLE_PLAN_IN_ACTIVE_SHIFT' : 'OUTSIDE_ETA_SHIFT_WINDOW'),
+    planEtaDifferenceMinutes: activeTrip?.planEtaMinutes == null ? null : activeTrip.planEtaMinutes - nowMinutes,
+  };
 }
 
 async function resolveVehicleTrip(input, isInside, dataOverride = null, detectedGeofenceId = null) {
@@ -1471,7 +1463,7 @@ async function createPendingGpsStamp(stampType, state) {
         gpsSnapshot: { gpsId: state.gpsId, gpsTime: state.gpsTime, latitude: state.latitude, longitude: state.longitude, speed: state.speedKmh, geofence: state.lastInsideGeofenceName || state.geofenceName },
       };
   const initial = {
-    pendingSchemaVersion: 45,
+    pendingSchemaVersion: 46,
     operationDate: operation.operationDate,
     cutoffAt: operation.cutoffAt,
     pendingId, stampType: normalizedStampType, codeRun,
@@ -1612,6 +1604,11 @@ async function processPendingGpsStamp(pendingId) {
       const pendingGeofenceId = GPS_GEOFENCES.find(g => g.name === record.geofence || g.id === record.geofence)?.id || null;
       if (!pendingGeofenceId || getGeofenceIdForDropPoint(currentTrip.dropPoint) !== pendingGeofenceId) {
         return await closePendingStamp(record, 'SUPERSEDED', { lastError: 'PLAN_GEOFENCE_DOES_NOT_MATCH_DETECTED_GEOFENCE' });
+      }
+      const earliestEligibleTrip = getEligibleEtaTripsForVehicle(currentTrips, pendingGeofenceId, currentBangkokMinutes)[0] || null;
+      if (!earliestEligibleTrip || earliestEligibleTrip.codeRun !== currentTrip.codeRun) {
+        console.warn(JSON.stringify({ logType: 'ELIVE_GPS_STAMP', event: 'PENDING_ETA_SUPERSEDED_NOT_EARLIEST_PLAN', pendingId, codeRun: record.codeRun, earliestEligibleCodeRun: earliestEligibleTrip?.codeRun || null, earliestEligiblePlanEta: earliestEligibleTrip?.planEta || null, queuedPlanEta: currentTrip.planEta }));
+        return await closePendingStamp(record, 'SUPERSEDED', { lastError: 'NOT_EARLIEST_ELIGIBLE_PLAN', terminalReason: 'PLAN_SEQUENCE_REVALIDATION_FAILED' });
       }
     }
     if (record.stampType === 'ETA') {
@@ -3673,7 +3670,7 @@ app.get(['/health', '/api/health'], (req, res) => {
       gpsStaleThresholdSeconds: Math.floor(GPS_STALE_THRESHOLD_MS / 1000),
       movementGraceSeconds: Math.floor(GPS_MOVEMENT_GRACE_MS / 1000),
       multipleTripsPerVehiclePerDay: true,
-      tripSelectionPolicy: 'IN_PROGRESS_THEN_ACTIVE_SHIFT_THEN_MATCHING_GEOFENCE_NEAREST_PLAN_ETA_SINGLE_CANDIDATE',
+      tripSelectionPolicy: 'IN_PROGRESS_THEN_ACTIVE_SHIFT_THEN_MATCHING_GEOFENCE_EARLIEST_UNSTAMPED_PLAN_SINGLE_CANDIDATE',
       activeTripLockEnabled: true,
       singleEtaCandidatePerVehicleCycle: true,
       lspStampCopyToM1Enabled: true,
@@ -3704,14 +3701,16 @@ app.get(['/health', '/api/health'], (req, res) => {
       outsideShiftEtaSelectionDisabled: true,
       noWorkActionKeyword: 'ไม่มีงาน',
       noWorkActionAutoStampBlocked: true,
-      tripTieBreaker: 'EARLIER_PLAN_ETA_THEN_CODE_RUN_NUMERIC',
+      tripTieBreaker: 'EARLIEST_PLAN_ETA_THEN_CODE_RUN_NUMERIC',
+      pendingEtaEarliestPlanRevalidationEnabled: true,
+      sheetsTimeOnlyIsoUsesFixedBangkokOffset: true,
       exitRequiredBeforeNextTrip: true,
-      etaRule: 'STAMP_ONE_NEAREST_PLAN_IN_MATCHING_GEOFENCE',
+      etaRule: 'STAMP_ONE_EARLIEST_UNSTAMPED_PLAN_IN_MATCHING_GEOFENCE_AND_ACTIVE_SHIFT',
       multiDropSameGeofenceEtaEnabled: false,
       lspArrivalGroupWindowMinutes: GPS_LSP_ARRIVAL_GROUP_WINDOW_MINUTES,
       dropPointGeofenceMapping: { L1: 'TPCAP-LSP', L2: 'TPCAP-LSP', L3: 'TPCAP-LSP', M1: 'TPCAP-LSP', R1: 'TPCAP-R1', R2: 'TPCAP-R2' },
       pendingStampRetryQueueEnabled: true,
-      pendingStampSchemaVersion: 45,
+      pendingStampSchemaVersion: 46,
       legacyEtaPendingAutoSuperseded: false,
       terminalPendingRecordCanBeRecreated: true,
       newlyCreatedPendingProcessedInSameWorkerCycle: true,
