@@ -222,6 +222,8 @@ export default function App() {
   const lastActivitySignalAtRef = useRef(0);
   const activityRequestRunningRef = useRef(false);
   const authenticationGenerationRef = useRef(0);
+  const pendingMutationIdsRef = useRef(new Set<string>());
+  const [isSavingAction, setIsSavingAction] = useState(false);
 
   useEffect(() => {
     trucksRef.current = trucks;
@@ -348,7 +350,7 @@ export default function App() {
     setIsRefreshing(true);
 
     try {
-      const data = await fetchEliveDashboardData(selectedDate);
+      const data = await fetchEliveDashboardData(selectedDate, false);
       if (authenticationGeneration !== authenticationGenerationRef.current) return;
 
       if (data.trucks.length > 0) {
@@ -361,8 +363,12 @@ export default function App() {
               }
             : truck
         );
-        setTrucks(normalizedTrucks);
-        trucksRef.current = normalizedTrucks;
+        const guardedTrucks = normalizedTrucks.map(incoming => {
+          if (!pendingMutationIdsRef.current.has(incoming.id)) return incoming;
+          return trucksRef.current.find(local => local.id === incoming.id) || incoming;
+        });
+        setTrucks(guardedTrucks);
+        trucksRef.current = guardedTrucks;
       }
 
       setGpsLocations(data.gpsLocations);
@@ -469,9 +475,14 @@ export default function App() {
 
     const queuedUpdate = updateQueueRef.current.then(async () => {
       try {
-        await updateTruckInSheets(id, updates, currentTruck);
+        pendingMutationIdsRef.current.add(id);
+        const confirmedTruck = await updateTruckInSheets(id, updates, currentTruck);
+        trucksRef.current = trucksRef.current.map(truck => truck.id === id ? confirmedTruck : truck);
+        setTrucks(trucksRef.current);
+        pendingMutationIdsRef.current.delete(id);
         setSheetError(null);
       } catch (error) {
+        pendingMutationIdsRef.current.delete(id);
         console.error('Failed to update sheet:', error);
         setSheetError(
           error instanceof Error ? error.message : 'Failed to update truck data'
@@ -1133,8 +1144,9 @@ export default function App() {
                 <p className="text-xs text-slate-400">Last Update</p>
                 <p className="font-mono text-sm text-slate-600">{lastUpdate}</p>
               </div>
-              <button type="button" onClick={() => void loadData()} disabled={isRefreshing || isClearingPlanCache} className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-slate-600 hover:bg-slate-200 disabled:opacity-50" title="โหลดข้อมูลใหม่">
-                <RefreshCw className={`h-5 w-5 ${isRefreshing ? 'animate-spin' : ''}`} />
+              <button type="button" onClick={() => void loadData()} disabled={isRefreshing || isClearingPlanCache} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-slate-100 px-3 text-xs font-bold text-slate-600 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-50" title="โหลดข้อมูลใหม่">
+                <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+                {isRefreshing ? 'กำลังโหลด...' : 'Refresh'}
               </button>
               {authenticatedUser.role === 'ADMIN' && currentView !== 'plan-management' && (
                 <button
@@ -1543,20 +1555,23 @@ export default function App() {
               </div>
               <form
                 className="overflow-y-auto p-6"
-                onSubmit={event => {
+                onSubmit={async event => {
                   event.preventDefault();
+                  if (isSavingAction) return;
                   const formData = new FormData(event.currentTarget);
                   const reason = String(formData.get('reason') || '').trim();
                   const detail = String(formData.get('detail') || '').trim();
                   const problem = [reason, detail].filter(Boolean).join(' : ');
                   const selectedTruck = actionDialog.truck;
                   if (selectedTruck && problem) {
-                    void handleUpdateTruck(selectedTruck.id, {
-                      actionProblem: problem,
-                      actionStatus: 'OPEN',
-                    });
+                    setIsSavingAction(true);
+                    try {
+                      await handleUpdateTruck(selectedTruck.id, { actionProblem: problem, actionStatus: 'OPEN' });
+                      setActionDialog({ isOpen: false, truck: null });
+                    } finally {
+                      setIsSavingAction(false);
+                    }
                   }
-                  setActionDialog({ isOpen: false, truck: null });
                 }}
               >
                 <div className="grid gap-4 sm:grid-cols-3">
@@ -1601,15 +1616,18 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() => setActionDialog({ isOpen: false, truck: null })}
+                    disabled={isSavingAction}
                     className="rounded-xl bg-slate-100 px-6 py-3 font-bold text-slate-700 hover:bg-slate-200"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
-                    className="rounded-xl bg-amber-600 px-6 py-3 font-bold text-white hover:bg-amber-700"
+                    disabled={isSavingAction}
+                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-600 px-6 py-3 font-bold text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    Save Problem
+                    {isSavingAction && <RefreshCw className="h-4 w-4 animate-spin" />}
+                    {isSavingAction ? 'กำลังบันทึก Action...' : 'Save Problem'}
                   </button>
                 </div>
               </form>
