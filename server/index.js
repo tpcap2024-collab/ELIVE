@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '47';
+const API_VERSION = '48';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -972,6 +972,21 @@ async function synchronizeGpsWorkerRealtime() {
   }
   throw new Error('GPS_REALTIME_SYNCHRONIZER_WAIT_TIMEOUT');
 }
+async function refreshRealtimeAfterMutation() {
+  clearTruckCache();
+  await requireRedisClient().del(GPS_REALTIME_CACHE_KEY);
+  const synchronized = await synchronizeGpsWorkerRealtime();
+  return {
+    snapshotRefreshed: synchronized.synchronized === true,
+    realtimeSource: synchronized.source,
+    refreshedAt: synchronized.realtime?.cachedAt || new Date().toISOString(),
+    realtime: synchronized.realtime,
+  };
+}
+function findActualRowByCodeRun(actualRows, codeRun) {
+  return (Array.isArray(actualRows) ? actualRows : []).slice(1).find(row => Array.isArray(row) && cleanText(row[0]).toUpperCase() === cleanText(codeRun).toUpperCase()) || null;
+}
+
 async function getSharedGpsWorkerRealtime(maximumAgeMs = GPS_REALTIME_FALLBACK_MAX_AGE_MS) {
   const snapshot = await readGpsWorkerRealtimeSnapshot(maximumAgeMs);
   if (!snapshot) throw new Error('GPS_REALTIME_SNAPSHOT_UNAVAILABLE');
@@ -4304,13 +4319,16 @@ app.post('/api/plans/:codeRun/stamp', requireAuthentication, requireMinimumRole(
       stampedBy: req.auth.username,
       overrideReason: override ? cleanText(req.body?.overrideReason) : '',
     });
+    const refresh = await refreshRealtimeAfterMutation();
+    const confirmedActualRow = findActualRowByCodeRun(refresh.realtime?.actual, codeRun);
     req.auditDetails = {
       stampType,
       stampSource,
       written: result?.result?.written !== false,
       reason: result?.result?.reason || null,
+      snapshotRefreshed: refresh.snapshotRefreshed,
     };
-    return res.status(200).json(result);
+    return res.status(200).json({ ...result, confirmedActualRow, snapshotRefreshed: refresh.snapshotRefreshed, realtimeSource: refresh.realtimeSource, timestamp: refresh.refreshedAt });
   } catch (error) {
     return sendRouteError(res, error, 'Unable to Stamp Actual data.');
   }
@@ -4373,8 +4391,9 @@ app.post('/api/trucks/update', requireAuthentication, requireMinimumRole('OPERAT
       newRow,
     });
 
-    clearTruckCache();
-    return res.status(200).json(result);
+    const refresh = await refreshRealtimeAfterMutation();
+    const confirmedActualRow = findActualRowByCodeRun(refresh.realtime?.actual, truckId);
+    return res.status(200).json({ ...result, confirmedActualRow, snapshotRefreshed: refresh.snapshotRefreshed, realtimeSource: refresh.realtimeSource, timestamp: refresh.refreshedAt });
   } catch (error) {
     return sendRouteError(res, error, 'Unable to update truck data.');
   }
