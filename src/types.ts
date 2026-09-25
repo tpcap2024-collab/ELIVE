@@ -61,6 +61,7 @@ export interface Truck {
   actionStatus?: string;
   actionResponsible?: string;
   actionUpdatedAt?: string;
+  mutationConfirmedAt?: string;
 }
 
 export type Priority =
