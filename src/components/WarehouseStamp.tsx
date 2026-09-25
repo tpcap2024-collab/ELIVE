@@ -101,6 +101,7 @@ export function WarehouseStamp({
   const [saveStates, setSaveStates] = useState<
     Record<string, 'saving' | 'saved' | 'error'>
   >({});
+  const [saveTypes, setSaveTypes] = useState<Record<string, 'ETA' | 'ETD'>>({});
 
   const inboundTrucks = useMemo(
     () => trucks.filter(isInboundProject),
@@ -224,8 +225,10 @@ export function WarehouseStamp({
 
   const runBackgroundSave = (
     truckId: string,
+    saveType: 'ETA' | 'ETD',
     updates: Partial<Truck>
   ) => {
+    setSaveTypes(current => ({ ...current, [truckId]: saveType }));
     updateSaveState(truckId, 'saving');
 
     void Promise.resolve(onUpdateTruck(truckId, updates))
@@ -250,7 +253,7 @@ export function WarehouseStamp({
       getCurrentBangkokDateString()
     );
 
-    runBackgroundSave(truck.id, {
+    runBackgroundSave(truck.id, 'ETA', {
       stampEta: time,
       status: 'UNLOADING_AT_TPCAP',
       performanceStatus,
@@ -261,7 +264,7 @@ export function WarehouseStamp({
     const hasStampEta = Boolean(truck.stampEta || truck.actualEta);
     if (!hasStampEta || truck.stampEtd) return;
 
-    runBackgroundSave(truck.id, {
+    runBackgroundSave(truck.id, 'ETD', {
       stampEtd: getCurrentTimeString(),
       status: 'COMPLETED',
     });
@@ -391,60 +394,59 @@ export function WarehouseStamp({
                   </td>
 
                   <td className="p-4">
-                    <div className="flex flex-col items-start gap-1">
-                      <StatusBadge status={truck.status} />
-                      {saveState === 'saving' && (
-                        <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-600">
-                          กำลังบันทึก
-                        </span>
+                    <StatusBadge status={truck.status} />
+                  </td>
+
+                  <td className="p-4">
+                    <div className="flex items-center gap-2">
+                      {hasStampEta ? (
+                        <span className="font-mono font-bold text-slate-900">{displayedStampEta}</span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleStampEta(truck)}
+                          disabled={saveState === 'saving'}
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-blue-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          Stamp ETA
+                        </button>
                       )}
-                      {saveState === 'saved' && (
-                        <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-600">
-                          บันทึกแล้ว
-                        </span>
+                      {saveTypes[truck.id] === 'ETA' && saveState === 'saving' && (
+                        <span className="inline-flex items-center gap-1 whitespace-nowrap text-[10px] font-bold text-blue-600"><RefreshCw className="h-3.5 w-3.5 animate-spin" />กำลังบันทึก</span>
                       )}
-                      {saveState === 'error' && (
-                        <span className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-600">
-                          บันทึกไม่สำเร็จ
-                        </span>
+                      {saveTypes[truck.id] === 'ETA' && saveState === 'saved' && (
+                        <span className="whitespace-nowrap text-[10px] font-bold text-emerald-600">บันทึกแล้ว</span>
+                      )}
+                      {saveTypes[truck.id] === 'ETA' && saveState === 'error' && (
+                        <span className="whitespace-nowrap text-[10px] font-bold text-red-600">ไม่สำเร็จ</span>
                       )}
                     </div>
                   </td>
 
                   <td className="p-4">
-                    {hasStampEta ? (
-                      <span className="font-mono font-bold text-slate-900">
-                        {displayedStampEta}
-                      </span>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => handleStampEta(truck)}
-                        disabled={saveState === 'saving'}
-                        className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-blue-700 active:scale-95"
-                      >
-                        {saveState === 'saving' && <RefreshCw className="h-3.5 w-3.5 animate-spin" />}
-                        {saveState === 'saving' ? 'กำลังบันทึก ETA...' : 'Stamp ETA'}
-                      </button>
-                    )}
-                  </td>
-
-                  <td className="p-4">
-                    {truck.stampEtd ? (
-                      <span className="font-mono font-bold text-slate-900">
-                        {truck.stampEtd}
-                      </span>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => handleStampEtd(truck)}
-                        disabled={!hasStampEta || saveState === 'saving'}
-                        className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-blue-700 active:scale-95 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 disabled:active:scale-100"
-                      >
-                        {saveState === 'saving' && <RefreshCw className="h-3.5 w-3.5 animate-spin" />}
-                        {saveState === 'saving' ? 'กำลังบันทึก ETD...' : 'Stamp ETD'}
-                      </button>
-                    )}
+                    <div className="flex items-center gap-2">
+                      {truck.stampEtd ? (
+                        <span className="font-mono font-bold text-slate-900">{truck.stampEtd}</span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleStampEtd(truck)}
+                          disabled={!hasStampEta || saveState === 'saving'}
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-blue-700 active:scale-95 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 disabled:active:scale-100"
+                        >
+                          Stamp ETD
+                        </button>
+                      )}
+                      {saveTypes[truck.id] === 'ETD' && saveState === 'saving' && (
+                        <span className="inline-flex items-center gap-1 whitespace-nowrap text-[10px] font-bold text-blue-600"><RefreshCw className="h-3.5 w-3.5 animate-spin" />กำลังบันทึก</span>
+                      )}
+                      {saveTypes[truck.id] === 'ETD' && saveState === 'saved' && (
+                        <span className="whitespace-nowrap text-[10px] font-bold text-emerald-600">บันทึกแล้ว</span>
+                      )}
+                      {saveTypes[truck.id] === 'ETD' && saveState === 'error' && (
+                        <span className="whitespace-nowrap text-[10px] font-bold text-red-600">ไม่สำเร็จ</span>
+                      )}
+                    </div>
                   </td>
                 </tr>
               );
