@@ -294,6 +294,45 @@ function getPerformanceLabel(truck: Truck): string {
   return 'ON-TIME';
 }
 
+function parseClockMinutes(value?: string): number | null {
+  const match = String(value || '').trim().match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  return hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59 ? hour * 60 + minute : null;
+}
+function formatClockMinutes(value: number): string {
+  const normalized = ((value % 1440) + 1440) % 1440;
+  return `${String(Math.floor(normalized / 60)).padStart(2, '0')}:${String(normalized % 60).padStart(2, '0')}`;
+}
+function getMinuteDifferenceLabel(truck: Truck): string {
+  const actualEta = truck.stampEta || truck.actualEta || '';
+  const plan = parseClockMinutes(truck.planEta);
+  const actual = parseClockMinutes(actualEta);
+  if (plan !== null && actual !== null) return `${Math.abs(actual - plan)} MIN`;
+  if (isOverdueAndNotDocked(truck) && plan !== null) {
+    const now = getBangkokCurrentMinutes() + START_HOUR * 60;
+    return `${Math.max(0, now - plan)} MIN`;
+  }
+  return '';
+}
+function buildLocalTimeline(truck: Truck, actualEta: string, actualEtd: string) {
+  const planStart = parseClockMinutes(truck.planEta);
+  const planEnd = parseClockMinutes(truck.planEtd);
+  const actualStart = parseClockMinutes(actualEta);
+  const actualEnd = actualEtd ? parseClockMinutes(actualEtd) : actualStart === null ? null : getBangkokCurrentMinutes() + START_HOUR * 60;
+  const values = [planStart, planEnd, actualStart, actualEnd].filter((value): value is number => value !== null);
+  if (!values.length) return null;
+  const start = Math.floor((Math.min(...values) - 15) / 15) * 15;
+  const end = Math.ceil((Math.max(...values) + 15) / 15) * 15;
+  const duration = Math.max(30, end - start);
+  const ticks = Array.from({ length: Math.floor(duration / 15) + 1 }, (_, index) => start + index * 15);
+  const position = (rangeStart: number | null, rangeEnd: number | null) => rangeStart === null || rangeEnd === null
+    ? null
+    : { left: ((rangeStart - start) / duration) * 100, width: Math.max(1, ((rangeEnd - rangeStart) / duration) * 100) };
+  return { start, end, ticks, plan: position(planStart, planEnd), actual: position(actualStart, actualEnd) };
+}
+
 function getDurationText(start?: string, end?: string): string {
   if (!start || !end) return '-';
   const minutes = calculateMinutesDifference(start, end);
@@ -741,8 +780,8 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
                                                 {startText}-{endText}
                                               </div>
                                             )}
-                                            <div className="w-full truncate text-[6px] font-black leading-[7px]">
-                                              {getPerformanceLabel(truck)}
+                                            <div className={`w-full truncate text-[6px] font-black leading-[7px] ${rowType === 'PLAN' ? 'mt-1.5' : 'mt-0.5'}`}>
+                                              {getMinuteDifferenceLabel(truck)}
                                             </div>
                                             {!isNonInboundProject(truck) && truck.performanceStatus === 'DELAY' && (
                                               <AlertTriangle className="absolute right-0.5 top-0.5 h-2.5 w-2.5 text-white" />
@@ -775,6 +814,7 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
             const actualEta = selectedTruck.stampEta || selectedTruck.actualEta || '';
             const actualEtd = selectedTruck.stampEtd || '';
             const performance = getPerformanceSummary(selectedTruck);
+            const localTimeline = buildLocalTimeline(selectedTruck, actualEta, actualEtd);
             const toneClass = performance.tone === 'red'
               ? 'border-red-200 bg-red-50 text-red-700'
               : performance.tone === 'amber'
@@ -850,32 +890,34 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
                     </div>
 
                     <section className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                      <div className="mb-4 text-sm font-black uppercase tracking-wide text-slate-700">Timeline Comparison</div>
-                      <div className="space-y-3">
-                        {(['PLAN', 'ACTUAL'] as const).map(kind => {
-                          const startText = kind === 'PLAN' ? selectedTruck.planEta : actualEta;
-                          const endText = kind === 'PLAN' ? selectedTruck.planEtd || '' : actualEtd || '';
-                          const start = parseTimeToMinutes(startText);
-                          const duration = kind === 'PLAN' ? getPlanDurationMinutes(selectedTruck) : actualEta ? getActualDurationMinutes(selectedTruck, actualEta) : 0;
-                          const position = start === null ? null : getTimelinePosition(start, duration);
-                          return (
-                            <div key={kind} className="grid grid-cols-[68px_1fr] items-center gap-3">
-                              <span className={`text-xs font-black ${kind === 'PLAN' ? 'text-blue-700' : 'text-emerald-700'}`}>{kind}</span>
-                              <div className={`relative h-9 overflow-hidden rounded-lg ${kind === 'PLAN' ? 'bg-blue-50' : 'bg-emerald-50'}`}>
-                                {position ? (
-                                  <div className={`absolute bottom-1 top-1 flex min-w-[92px] items-center justify-center rounded-md px-2 text-xs font-black text-white ${kind === 'PLAN' ? 'bg-blue-600' : 'bg-emerald-600'}`} style={{ left: `${position.left}%`, width: `${position.width}%` }}>
-                                    {startText}-{endText || 'NOW'}
-                                  </div>
-                                ) : (
-                                  <div className="flex h-full items-center px-3 text-xs font-bold text-slate-400">ยังไม่มีข้อมูล</div>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
+                      <div className="mb-3 flex items-center justify-between">
+                        <div className="text-sm font-black uppercase tracking-wide text-slate-700">Timeline Comparison</div>
+                        <div className="text-xs font-bold text-slate-500">{localTimeline ? `${formatClockMinutes(localTimeline.start)}-${formatClockMinutes(localTimeline.end)}` : '-'}</div>
                       </div>
+                      {localTimeline ? (
+                        <div>
+                          <div className="relative ml-[68px] h-5 border-b border-slate-300">
+                            {localTimeline.ticks.map(tick => (
+                              <div key={tick} className="absolute bottom-0 top-0 border-l border-slate-300" style={{ left: `${((tick - localTimeline.start) / (localTimeline.end - localTimeline.start)) * 100}%` }}>
+                                <span className="absolute -left-4 -top-1 text-[9px] font-bold text-slate-500">{formatClockMinutes(tick)}</span>
+                              </div>
+                            ))}
+                          </div>
+                          {(['PLAN', 'ACTUAL'] as const).map(kind => {
+                            const position = kind === 'PLAN' ? localTimeline.plan : localTimeline.actual;
+                            const startText = kind === 'PLAN' ? selectedTruck.planEta : actualEta;
+                            const endText = kind === 'PLAN' ? selectedTruck.planEtd || '' : actualEtd || '';
+                            return <div key={kind} className="mt-2 grid grid-cols-[68px_1fr] items-center gap-3">
+                              <span className={`text-xs font-black ${kind === 'PLAN' ? 'text-blue-700' : 'text-emerald-700'}`}>{kind}</span>
+                              <div className={`relative h-10 overflow-hidden rounded-lg ${kind === 'PLAN' ? 'bg-blue-50' : 'bg-emerald-50'}`}>
+                                {localTimeline.ticks.map(tick => <div key={tick} className="absolute bottom-0 top-0 border-l border-slate-200" style={{ left: `${((tick - localTimeline.start) / (localTimeline.end - localTimeline.start)) * 100}%` }} />)}
+                                {position ? <div className={`absolute bottom-1 top-1 flex min-w-[72px] items-center justify-center rounded-md px-2 text-xs font-black text-white ${kind === 'PLAN' ? 'bg-blue-600' : 'bg-emerald-600'}`} style={{ left: `${position.left}%`, width: `${position.width}%` }}>{startText}-{endText || 'NOW'}</div> : <div className="flex h-full items-center px-3 text-xs font-bold text-slate-400">NOT STARTED</div>}
+                              </div>
+                            </div>;
+                          })}
+                        </div>
+                      ) : <div className="text-sm text-slate-400">ยังไม่มีข้อมูลเวลา</div>}
                     </section>
-
                     <section className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
                       <div className="mb-4 text-sm font-black uppercase tracking-wide text-slate-700">Trip Information</div>
                       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
