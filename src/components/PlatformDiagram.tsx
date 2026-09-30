@@ -153,7 +153,18 @@ function isNonInboundProject(truck: Truck): boolean {
   return project !== 'INBOUND';
 }
 function hasNoWorkAction(truck: Truck): boolean {
-  return String(truck.actionProblem || '').includes('ไม่มีงาน');
+  const status = String(truck.status || '').trim().toUpperCase();
+  const performanceStatus = String(truck.performanceStatus || '').trim().toUpperCase();
+  return (
+    status === 'NO_WORK' ||
+    performanceStatus === 'NO_DROP' ||
+    String(truck.actionProblem || '').includes('ไม่มีงาน')
+  );
+}
+function getDisplayStatus(truck: Truck): string {
+  return hasNoWorkAction(truck)
+    ? 'NO WORK'
+    : String(truck.status || 'PLANNED').replaceAll('_', ' ');
 }
 
 function getHourBackgroundClass(hour: number): string {
@@ -162,7 +173,7 @@ function getHourBackgroundClass(hour: number): string {
 
 function getTruckColor(truck: Truck): string {
   if (hasNoWorkAction(truck)) {
-    return 'bg-black border-black text-white shadow-sm shadow-slate-500/50';
+    return 'bg-slate-700 border-slate-950 text-white shadow-sm shadow-slate-500/50';
   }
   if (isNonInboundProject(truck)) {
     return 'bg-pink-500 border-pink-700 text-white shadow-sm shadow-pink-300/60';
@@ -380,6 +391,7 @@ function getPerformanceSummary(truck: Truck) {
 }
 
 function getStatusBadgeClass(status: Truck['status']): string {
+  if (String(status || '').toUpperCase() === 'NO_WORK') return 'border-slate-300 bg-slate-700 text-white';
   if (status === 'COMPLETED' || status === 'TRUCK_OUT') return 'border-emerald-200 bg-emerald-50 text-emerald-700';
   if (status === 'DOCK_IN' || status === 'UNLOADING' || status === 'UNLOADING_AT_TPCAP') return 'border-amber-200 bg-amber-50 text-amber-800';
   if (status === 'WAITING_AREA') return 'border-slate-200 bg-slate-100 text-slate-700';
@@ -793,7 +805,7 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
                                               </div>
                                             )}
                                             <div className={`w-full truncate text-[6px] font-black leading-[7px] ${rowType === 'PLAN' ? 'mt-1.5' : 'mt-0.5'}`}>
-                                              {getMinuteDifferenceLabel(truck)}
+                                              {hasNoWorkAction(truck) ? 'NO WORK · NO DROP' : getMinuteDifferenceLabel(truck)}
                                             </div>
                                             {!isNonInboundProject(truck) && truck.performanceStatus === 'DELAY' && (
                                               <AlertTriangle className="absolute right-0.5 top-0.5 h-2.5 w-2.5 text-white" />
@@ -861,7 +873,7 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
                             <span className="rounded-full border border-red-300 bg-red-50 px-2.5 py-1 text-xs font-black text-red-700">+ EXTRA</span>
                           )}
                           <span className={`rounded-full border px-2.5 py-1 text-xs font-black ${getStatusBadgeClass(selectedTruck.status)}`}>
-                            {selectedTruck.status.replaceAll('_', ' ')}
+                            {getDisplayStatus(selectedTruck)}
                           </span>
                         </div>
                         <p className="mt-1 truncate text-sm font-semibold text-slate-500">
@@ -901,6 +913,17 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
                       </section>
                     </div>
 
+                    {hasNoWorkAction(selectedTruck) && (
+                      <section className="mt-4 rounded-2xl border border-slate-300 bg-slate-100 p-4">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="rounded-full bg-slate-800 px-3 py-1 text-xs font-black text-white">NO WORK</span>
+                          <span className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-black text-slate-700">NO DROP</span>
+                        </div>
+                        <p className="mt-3 text-sm font-semibold leading-6 text-slate-700">
+                          {selectedTruck.actionProblem || 'ระบบระบุว่าไม่มีงานลงสำหรับเที่ยวนี้'}
+                        </p>
+                      </section>
+                    )}
                     <section className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
                       <div className="mb-3 flex items-center justify-between">
                         <div className="text-sm font-black uppercase tracking-wide text-slate-700">Timeline Comparison</div>
@@ -923,7 +946,7 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
                               <span className={`text-xs font-black ${kind === 'PLAN' ? 'text-blue-700' : 'text-emerald-700'}`}>{kind}</span>
                               <div className={`relative h-10 overflow-hidden rounded-lg ${kind === 'PLAN' ? 'bg-blue-50' : 'bg-emerald-50'}`}>
                                 {localTimeline.ticks.map(tick => <div key={tick} className="absolute bottom-0 top-0 border-l border-slate-200" style={{ left: `${((tick - localTimeline.start) / (localTimeline.end - localTimeline.start)) * 100}%` }} />)}
-                                {position ? <div className={`absolute bottom-1 top-1 flex min-w-[72px] items-center justify-center rounded-md px-2 text-xs font-black text-white ${kind === 'PLAN' ? 'bg-blue-600' : 'bg-emerald-600'}`} style={{ left: `${position.left}%`, width: `${position.width}%` }}>{startText}-{endText || 'NOW'}</div> : <div className="flex h-full items-center px-3 text-xs font-bold text-slate-400">NOT STARTED</div>}
+                                {position ? <div className={`absolute bottom-1 top-1 flex min-w-[72px] items-center justify-center rounded-md px-2 text-xs font-black text-white ${kind === 'PLAN' ? 'bg-blue-600' : 'bg-emerald-600'}`} style={{ left: `${position.left}%`, width: `${position.width}%` }}>{startText}-{endText || 'NOW'}</div> : <div className={`flex h-full items-center px-3 text-xs font-bold ${hasNoWorkAction(selectedTruck) && kind === 'ACTUAL' ? 'text-slate-700' : 'text-slate-400'}`}>{hasNoWorkAction(selectedTruck) && kind === 'ACTUAL' ? 'NO WORK · NO DROP' : 'NOT STARTED'}</div>}
                               </div>
                             </div>;
                           })}
