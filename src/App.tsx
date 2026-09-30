@@ -115,8 +115,19 @@ function isInboundProject(truck: Truck): boolean {
   return String(truck.project || '').trim().toUpperCase() === 'INBOUND';
 }
 function hasNoWorkAction(truck: Truck): boolean {
+  const status = String(truck.status || '').trim().toUpperCase();
+  const performanceStatus = String(truck.performanceStatus || '').trim().toUpperCase();
   const text = String(truck.actionProblem || '');
-  return text.includes('ไม่มีงาน') || text.includes('GPS มีปัญหา');
+  return (
+    status === 'NO_WORK' ||
+    performanceStatus === 'NO_DROP' ||
+    text.includes('ไม่มีงาน') ||
+    text.includes('GPS มีปัญหา')
+  );
+}
+function getTruckStatusLabel(truck: Truck): string {
+  if (hasNoWorkAction(truck)) return 'NO WORK';
+  return String(truck.status || 'PLANNED').replaceAll('_', ' ');
 }
 
 function shouldSendToActionCenter(truck: Truck): boolean {
@@ -358,7 +369,7 @@ export default function App() {
           hasNoWorkAction(truck)
             ? {
                 ...truck,
-                status: 'COMPLETED' as const,
+                status: 'NO_WORK' as Truck['status'],
                 performanceStatus: 'NO_DROP' as const,
               }
             : truck
@@ -460,7 +471,7 @@ export default function App() {
       ...updates,
       ...(willBeNoDrop
         ? {
-            status: 'COMPLETED' as const,
+            status: 'NO_WORK' as Truck['status'],
             performanceStatus: 'NO_DROP' as const,
           }
         : {}),
@@ -692,7 +703,7 @@ export default function App() {
 
   const getRowClass = (truck: Truck): string => {
     if (hasNoWorkAction(truck)) {
-      return 'bg-slate-300 hover:bg-slate-400 transition-colors';
+      return 'border-l-4 border-slate-700 bg-slate-200 hover:bg-slate-300 transition-colors';
     }
     if (truck.status === 'COMPLETED' || truck.status === 'TRUCK_OUT') {
       return 'row-complete';
@@ -757,6 +768,9 @@ export default function App() {
           truck.supplierName,
           truck.dropPoint,
           truck.workDetail,
+          truck.status,
+          truck.performanceStatus,
+          truck.actionProblem,
         ]
           .join(' ')
           .toLowerCase()
@@ -1343,9 +1357,16 @@ export default function App() {
                               )}
                             </td>
                             <td className="whitespace-nowrap px-3 py-1.5">
-                              <StatusBadge
-                                status={hasNoWorkAction(truck) ? 'COMPLETED' : truck.status}
-                              />
+                              {hasNoWorkAction(truck) ? (
+                                <span
+                                  className="inline-flex rounded-md border border-slate-800 bg-slate-700 px-2 py-1 text-[10px] font-black text-white"
+                                  title={truck.actionProblem || 'ไม่มีงานลง'}
+                                >
+                                  {getTruckStatusLabel(truck)}
+                                </span>
+                              ) : (
+                                <StatusBadge status={truck.status} />
+                              )}
                             </td>
                             <td className="px-3 py-1.5 text-center">
                               <button type="button" onClick={() => handleOpenGps(truck.id)} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border-2 border-red-800 bg-red-700 text-white shadow-sm transition hover:bg-red-800 active:scale-95">
@@ -1354,7 +1375,12 @@ export default function App() {
                             </td>
                             <td className="px-3 py-1.5 text-center">
                               {canOperate ? (
-                                <button type="button" onClick={() => setActionDialog({ isOpen: true, truck })} className={`inline-flex h-9 w-9 items-center justify-center rounded-lg border-2 text-white shadow-sm transition active:scale-95 ${truck.actionProblem ? 'border-red-900 bg-red-700 hover:bg-red-800' : 'border-amber-700 bg-amber-500 hover:bg-amber-600'}`}>
+                                <button
+                                  type="button"
+                                  onClick={() => setActionDialog({ isOpen: true, truck })}
+                                  title={truck.actionProblem || 'เพิ่ม Action / Problem'}
+                                  className={`inline-flex h-9 w-9 items-center justify-center rounded-lg border-2 text-white shadow-sm transition active:scale-95 ${truck.actionProblem ? 'border-red-900 bg-red-700 hover:bg-red-800' : 'border-amber-700 bg-amber-500 hover:bg-amber-600'}`}
+                                >
                                   <MessageSquare className="h-5 w-5" />
                                 </button>
                               ) : (
