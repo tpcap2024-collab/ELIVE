@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '48';
+const API_VERSION = '49';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -1496,7 +1496,7 @@ async function createPendingGpsStamp(stampType, state) {
         gpsSnapshot: { gpsId: state.gpsId, gpsTime: state.gpsTime, latitude: state.latitude, longitude: state.longitude, speed: state.speedKmh, geofence: state.lastInsideGeofenceName || state.geofenceName },
       };
   const initial = {
-    pendingSchemaVersion: 47,
+    pendingSchemaVersion: 49,
     operationDate: operation.operationDate,
     cutoffAt: operation.cutoffAt,
     pendingId, stampType: normalizedStampType, codeRun,
@@ -1774,7 +1774,8 @@ async function executeGpsAutoStampEtd(state, activeTrip) {
   if (state?.noWorkAction || activeTrip?.noWorkAction) return { status:'BLOCKED_NO_WORK', reason:'NO_WORK_ACTION' };
   const recovery = state?.etdDetectionMode === 'ETA_OPEN_TRIP_OUTSIDE_RECONCILIATION';
   if (!(GPS_AUTO_STAMP_ETD_ENABLED || (GPS_ETD_RECONCILIATION_ENABLED && recovery)) || !state?.readyForGpsStampEtd) return null;
-  if (!activeTrip?.stampEta || activeTrip?.stampEtd || state.isInside || state.status !== 'OUTSIDE_GEOFENCE') return null;
+  if (!activeTrip?.stampEta || activeTrip?.stampEtd || state.isInside) return null;
+  if (!state.isCurrentGpsOperationDate) return null;
   if (!state.wasInsideBeforeExit && !recovery) return null;
   if (!state.activeCodeRun || state.activeCodeRun !== state.codeRun) return null;
   console.log(JSON.stringify({logType:'ELIVE_GPS_STAMP',event:recovery?'ETD_RECONCILIATION_OUTSIDE_DETECTED':'ETD_EXIT_DETECTED',codeRun:state.activeCodeRun,licensePlate:state.licensePlate,gpsTime:state.gpsTime,targetGeofenceId:state.targetGeofenceId,distanceMeters:state.distanceMeters,radiusMeters:state.radiusMeters,detectionMode:state.etdDetectionMode}));
@@ -1873,6 +1874,9 @@ async function evaluateGpsDock(payload, dataOverride = null) {
   const receivedAtMs = input.receivedAt.getTime();
   const eventTimeMs = Math.min(receivedAtMs, nowMs);
   const gpsAgeMs = Math.max(0, nowMs - gpsTimeMs);
+  const currentOperationDate = getBangkokDateText(new Date(nowMs));
+  const gpsOperationDate = getBangkokDateText(input.gpsTime);
+  const isCurrentGpsOperationDate = gpsOperationDate === currentOperationDate;
   const nearestGeofence = findNearestGpsGeofence(input.latitude, input.longitude);
   const nearestIsInside = nearestGeofence.distanceMeters <= nearestGeofence.radiusMeters;
   const detectedGeofenceId = nearestIsInside ? nearestGeofence.id : null;
@@ -2003,6 +2007,9 @@ async function evaluateGpsDock(payload, dataOverride = null) {
     receivedAt: input.receivedAt.toISOString(),
     evaluatedAt: new Date(nowMs).toISOString(),
     gpsAgeSeconds: Math.floor(gpsAgeMs / 1000),
+    currentOperationDate,
+    gpsOperationDate,
+    isCurrentGpsOperationDate,
     status,
     parkingStartedAtMs,
     parkingStartedAt: parkingStartedAtMs ? new Date(parkingStartedAtMs).toISOString() : null,
@@ -2016,7 +2023,19 @@ async function evaluateGpsDock(payload, dataOverride = null) {
     readyForGpsStampEta: isInside && !vehicleCycle.waitingForExit && eligibleEtaTrips.length > 0,
     etdDetectionMode,
     etdReconciliationEnabled: GPS_ETD_RECONCILIATION_ENABLED,
-    readyForGpsStampEtd: getGpsOperationDecision(new Date()).open && gpsAgeMs <= GPS_AUTO_STAMP_FRESH_THRESHOLD_MS && status === 'OUTSIDE_GEOFENCE' && isOpenEtaTrip && !activeTrip?.noWorkAction && ((GPS_AUTO_STAMP_ETD_ENABLED && wasInsideBeforeExit) || (GPS_ETD_RECONCILIATION_ENABLED && etdDetectionMode === 'ETA_OPEN_TRIP_OUTSIDE_RECONCILIATION')),
+    readyForGpsStampEtd:
+      getGpsOperationDecision(new Date()).open &&
+      isCurrentGpsOperationDate &&
+      !isInside &&
+      isOpenEtaTrip &&
+      !activeTrip?.noWorkAction &&
+      (
+        (GPS_AUTO_STAMP_ETD_ENABLED && wasInsideBeforeExit) ||
+        (
+          GPS_ETD_RECONCILIATION_ENABLED &&
+          etdDetectionMode === 'ETA_OPEN_TRIP_OUTSIDE_RECONCILIATION'
+        )
+      ),
     autoStampExecuted: false,
     autoStampEtaResult: null,
     autoStampEtaResults: [],
@@ -3754,7 +3773,11 @@ app.get(['/health', '/api/health'], (req, res) => {
       autoStampEtaEnabled: GPS_AUTO_STAMP_ETA_ENABLED,
       autoStampEtdEnabled: GPS_AUTO_STAMP_ETD_ENABLED,
       etdReconciliationEnabled: GPS_ETD_RECONCILIATION_ENABLED,
-      etdReconciliationPolicy: 'STAMP_OPEN_ETA_TRIP_ON_FIRST_FRESH_GPS_OUTSIDE_TARGET_GEOFENCE',
+      etdReconciliationPolicy: 'STAMP_OPEN_ETA_TRIP_ON_ANY_SAME_DAY_GPS_OUTSIDE_TARGET_GEOFENCE',
+      etdGpsFreshnessRequired: false,
+      etdSameDayGpsRequired: true,
+      etdDuplicateGpsAllowed: true,
+      etdOutOfOrderGpsAllowedWithinSameDay: true,
       backgroundWorkerEnabled: GPS_BACKGROUND_WORKER_ENABLED,
       backgroundWorkerIntervalMs: GPS_BACKGROUND_WORKER_INTERVAL_MS,
       workerTruckSnapshotCacheSeconds: Math.floor(FRESH_CACHE_DURATION_MS / 1000),
@@ -3836,7 +3859,7 @@ app.get(['/health', '/api/health'], (req, res) => {
       lspArrivalGroupWindowMinutes: GPS_LSP_ARRIVAL_GROUP_WINDOW_MINUTES,
       dropPointGeofenceMapping: { L1: 'TPCAP-LSP', L2: 'TPCAP-LSP', L3: 'TPCAP-LSP', M1: 'TPCAP-LSP', R1: 'TPCAP-R1', R2: 'TPCAP-R2' },
       pendingStampRetryQueueEnabled: true,
-      pendingStampSchemaVersion: 47,
+      pendingStampSchemaVersion: 49,
       legacyEtaPendingAutoSuperseded: false,
       terminalPendingRecordCanBeRecreated: true,
       newlyCreatedPendingProcessedInSameWorkerCycle: true,
@@ -3847,7 +3870,7 @@ app.get(['/health', '/api/health'], (req, res) => {
       etaEarlyWindowGuardLayers: ['MANUAL_ROUTE_ONLY'],
       pendingStampRetryBaseSeconds: Math.floor(GPS_PENDING_STAMP_BASE_RETRY_MS / 1000),
       pendingStampRetryMaximumSeconds: Math.floor(GPS_PENDING_STAMP_MAX_RETRY_MS / 1000),
-      etdRule: 'NORMAL_EXIT_AFTER_INSIDE_OR_OPEN_ETA_RECONCILIATION_ON_FRESH_GPS_OUTSIDE_TARGET_GEOFENCE',
+      etdRule: 'NORMAL_EXIT_AFTER_INSIDE_OR_OPEN_ETA_RECONCILIATION_ON_ANY_SAME_DAY_GPS_OUTSIDE_TARGET_GEOFENCE',
       geofenceSelectionPolicy: 'ACTIVE_TRIP_DROP_POINT_TARGET_WITH_NEAREST_DEBUG_ONLY',
       dwellStateIsolation: 'CODE_RUN_AND_TARGET_GEOFENCE',
       dwellStateTtlSeconds: GPS_DWELL_STATE_TTL_SECONDS,
