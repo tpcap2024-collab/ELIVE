@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '49';
+const API_VERSION = '50';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -86,6 +86,7 @@ const GPS_AUTO_STAMP_ETD_ENABLED = cleanText(process.env.GPS_AUTO_STAMP_ETD_ENAB
 const GPS_ETD_RECONCILIATION_ENABLED = cleanText(process.env.GPS_ETD_RECONCILIATION_ENABLED || 'true').toLowerCase() === 'true';
 const GPS_R_DOCK_NO_WORK_ENABLED = cleanText(process.env.GPS_R_DOCK_NO_WORK_ENABLED || 'true').toLowerCase() === 'true';
 const GPS_R_DOCK_NO_WORK_DISTANCE_METERS = Math.max(1000, Number(process.env.GPS_R_DOCK_NO_WORK_DISTANCE_METERS || 1000));
+const GPS_R_DOCK_NO_WORK_GRACE_MINUTES = Math.max(0, Number(process.env.GPS_R_DOCK_NO_WORK_GRACE_MINUTES || 30));
 const GPS_BACKGROUND_WORKER_ENABLED = cleanText(process.env.GPS_BACKGROUND_WORKER_ENABLED || 'false').toLowerCase() === 'true';
 const GPS_BACKGROUND_WORKER_INTERVAL_MS = Math.max(15000, Number(process.env.GPS_BACKGROUND_WORKER_INTERVAL_MS || 60000));
 const GPS_WORKER_LOCK_KEY = 'elive:gps-worker:leader';
@@ -1496,7 +1497,7 @@ async function createPendingGpsStamp(stampType, state) {
         gpsSnapshot: { gpsId: state.gpsId, gpsTime: state.gpsTime, latitude: state.latitude, longitude: state.longitude, speed: state.speedKmh, geofence: state.lastInsideGeofenceName || state.geofenceName },
       };
   const initial = {
-    pendingSchemaVersion: 49,
+    pendingSchemaVersion: 50,
     operationDate: operation.operationDate,
     cutoffAt: operation.cutoffAt,
     pendingId, stampType: normalizedStampType, codeRun,
@@ -1825,6 +1826,27 @@ async function reconcileSkippedRDockAfterLsp(input, data) {
         !trip.stampEtd
       );
     if (earlierUnfinishedRDockTrip) continue;
+    const currentBangkokMinutes = getBangkokMinuteOfDay(new Date());
+    const noWorkEligibleAtMinutes = Number.isFinite(targetTrip.planEtaMinutes)
+      ? targetTrip.planEtaMinutes + GPS_R_DOCK_NO_WORK_GRACE_MINUTES
+      : null;
+    if (
+      noWorkEligibleAtMinutes === null ||
+      currentBangkokMinutes < noWorkEligibleAtMinutes
+    ) {
+      console.log(JSON.stringify({
+        logType: 'ELIVE_GPS_NO_WORK',
+        event: 'R_DOCK_AUTO_NO_WORK_WAITING_PLAN_GRACE',
+        codeRun: targetTrip.codeRun,
+        sourceCodeRun: previousLspTrip.codeRun,
+        planEta: targetTrip.planEta,
+        planEtaMinutes: targetTrip.planEtaMinutes,
+        graceMinutes: GPS_R_DOCK_NO_WORK_GRACE_MINUTES,
+        eligibleAtMinutes: noWorkEligibleAtMinutes,
+        currentBangkokMinutes,
+      }));
+      continue;
+    }
     const targetGeofenceId = getGeofenceIdForDropPoint(targetTrip.dropPoint);
     const targetGeofence = findGpsGeofenceById(
       targetGeofenceId,
@@ -1846,10 +1868,27 @@ async function reconcileSkippedRDockAfterLsp(input, data) {
       targetGeofenceId,
       distanceMeters: Number(targetGeofence.distanceMeters.toFixed(2)),
       thresholdMeters: GPS_R_DOCK_NO_WORK_DISTANCE_METERS,
+      planEta: targetTrip.planEta,
+      graceMinutes: GPS_R_DOCK_NO_WORK_GRACE_MINUTES,
       gpsTime: input.gpsTime.toISOString(),
       stampedBy: 'GPS SYSTEM',
     });
-    const actionProblem = 'ไม่มีงานลง (GPS AUTO: หลัง LSP ETD รถห่าง R1/R2 มากกว่า 1 กม.)';
+    const result = response?.result || response;
+    results.push(result);
+    if (result?.written !== true) {
+      console.warn(JSON.stringify({
+        logType: 'ELIVE_GPS_NO_WORK',
+        event: 'R_DOCK_AUTO_NO_WORK_NOT_WRITTEN',
+        codeRun: targetTrip.codeRun,
+        sourceCodeRun: previousLspTrip.codeRun,
+        licensePlate: input.licensePlate,
+        targetDropPoint: targetTrip.dropPoint,
+        reason: result?.reason || 'UNKNOWN',
+        written: result?.written ?? null,
+      }));
+      break;
+    }
+    const actionProblem = 'ไม่มีงานลง (GPS AUTO: หลัง LSP ETD รถห่าง R1/R2 มากกว่า 1 กม. และเกิน Plan ETA +' + GPS_R_DOCK_NO_WORK_GRACE_MINUTES + ' นาที)';
     updateLocalNoWorkActual(data, targetTrip.codeRun, actionProblem);
     console.warn(JSON.stringify({
       logType: 'ELIVE_GPS_NO_WORK',
@@ -1860,8 +1899,10 @@ async function reconcileSkippedRDockAfterLsp(input, data) {
       targetDropPoint: targetTrip.dropPoint,
       targetGeofenceId,
       distanceMeters: Number(targetGeofence.distanceMeters.toFixed(2)),
+      planEta: targetTrip.planEta,
+      graceMinutes: GPS_R_DOCK_NO_WORK_GRACE_MINUTES,
+      written: true,
     }));
-    results.push(response?.result || response);
     break;
   }
   return results;
@@ -3851,6 +3892,9 @@ app.get(['/health', '/api/health'], (req, res) => {
       actualLicensePlateColumnEnabled: true,
       rDockAutoNoWorkEnabled: GPS_R_DOCK_NO_WORK_ENABLED,
       rDockAutoNoWorkDistanceMeters: GPS_R_DOCK_NO_WORK_DISTANCE_METERS,
+      rDockAutoNoWorkGraceMinutes: GPS_R_DOCK_NO_WORK_GRACE_MINUTES,
+      rDockAutoNoWorkRequiresPlanEtaGrace: true,
+      rDockAutoNoWorkRequiresWrittenTrueConfirmation: true,
       rDockAutoNoWorkRequiresPreviousLspEtd: true,
       sheetsTimeOnlyIsoUsesFixedBangkokOffset: true,
       exitRequiredBeforeNextTrip: true,
@@ -3859,7 +3903,7 @@ app.get(['/health', '/api/health'], (req, res) => {
       lspArrivalGroupWindowMinutes: GPS_LSP_ARRIVAL_GROUP_WINDOW_MINUTES,
       dropPointGeofenceMapping: { L1: 'TPCAP-LSP', L2: 'TPCAP-LSP', L3: 'TPCAP-LSP', M1: 'TPCAP-LSP', R1: 'TPCAP-R1', R2: 'TPCAP-R2' },
       pendingStampRetryQueueEnabled: true,
-      pendingStampSchemaVersion: 49,
+      pendingStampSchemaVersion: 50,
       legacyEtaPendingAutoSuperseded: false,
       terminalPendingRecordCanBeRecreated: true,
       newlyCreatedPendingProcessedInSameWorkerCycle: true,
