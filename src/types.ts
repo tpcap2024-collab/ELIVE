@@ -5,14 +5,16 @@ export type TruckStatus =
   | 'DOCK_IN'
   | 'UNLOADING'
   | 'COMPLETED'
-  | 'TRUCK_OUT';
+  | 'TRUCK_OUT'
+  | 'GPS_LOST';
 
 export type PerformanceStatus =
   | 'EARLY'
   | 'ON_PLAN'
   | 'DELAY'
   | 'WARNING'
-  | 'NO_DROP';
+  | 'NO_DROP'
+  | 'GPS_LOST';
 
 export interface GpsLocation {
   gpsId: string;
