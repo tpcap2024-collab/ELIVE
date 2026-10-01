@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '52';
+const API_VERSION = '53';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -87,6 +87,7 @@ const GPS_ETD_RECONCILIATION_ENABLED = cleanText(process.env.GPS_ETD_RECONCILIAT
 const GPS_R_DOCK_NO_WORK_ENABLED = cleanText(process.env.GPS_R_DOCK_NO_WORK_ENABLED || 'true').toLowerCase() === 'true';
 const GPS_R_DOCK_NO_WORK_DISTANCE_METERS = Math.max(1000, Number(process.env.GPS_R_DOCK_NO_WORK_DISTANCE_METERS || 1000));
 const GPS_R_DOCK_NO_WORK_GRACE_MINUTES = Math.max(0, Number(process.env.GPS_R_DOCK_NO_WORK_GRACE_MINUTES || 30));
+const GPS_R_DOCK_NO_WORK_BATCH_SIZE = Math.max(1, Math.min(50, Number(process.env.GPS_R_DOCK_NO_WORK_BATCH_SIZE || 25)));
 const GPS_BACKGROUND_WORKER_ENABLED = cleanText(process.env.GPS_BACKGROUND_WORKER_ENABLED || 'false').toLowerCase() === 'true';
 const GPS_BACKGROUND_WORKER_INTERVAL_MS = Math.max(15000, Number(process.env.GPS_BACKGROUND_WORKER_INTERVAL_MS || 60000));
 const GPS_WORKER_LOCK_KEY = 'elive:gps-worker:leader';
@@ -1873,7 +1874,7 @@ function updateLocalNoWorkActual(data, codeRun, actionProblem) {
     .find(item => Array.isArray(item) && cleanText(item[0]).toUpperCase() === codeRun);
   if (row) row[6] = actionProblem;
 }
-async function reconcileSkippedRDockAfterLsp(input, data) {
+async function reconcileSkippedRDockAfterLsp(input, data, noWorkCollector = null) {
   if (!GPS_R_DOCK_NO_WORK_ENABLED) return [];
   const operationDate = getBangkokDateText(new Date());
   const trips = buildTripsForPlate(data, input.licensePlate, operationDate)
@@ -1886,31 +1887,25 @@ async function reconcileSkippedRDockAfterLsp(input, data) {
       targetTrip.stampEta ||
       targetTrip.stampEtd ||
       targetTrip.noWorkAction
-    ) {
-      continue;
-    }
+    ) continue;
+
     const previousLspTrip = trips
       .slice(0, targetIndex)
       .filter(trip => isLspDropPoint(trip.dropPoint) && Boolean(trip.stampEtd))
       .sort(compareTripsByPlanTime)
       .pop();
     if (!previousLspTrip) continue;
+
     const earlierUnfinishedRDockTrip = trips
       .slice(0, targetIndex)
-      .some(trip =>
-        isRDockDropPoint(trip.dropPoint) &&
-        !trip.noWorkAction &&
-        !trip.stampEtd
-      );
+      .some(trip => isRDockDropPoint(trip.dropPoint) && !trip.noWorkAction && !trip.stampEtd);
     if (earlierUnfinishedRDockTrip) continue;
+
     const currentBangkokMinutes = getBangkokMinuteOfDay(new Date());
     const noWorkEligibleAtMinutes = Number.isFinite(targetTrip.planEtaMinutes)
       ? targetTrip.planEtaMinutes + GPS_R_DOCK_NO_WORK_GRACE_MINUTES
       : null;
-    if (
-      noWorkEligibleAtMinutes === null ||
-      currentBangkokMinutes < noWorkEligibleAtMinutes
-    ) {
+    if (noWorkEligibleAtMinutes === null || currentBangkokMinutes < noWorkEligibleAtMinutes) {
       console.log(JSON.stringify({
         logType: 'ELIVE_GPS_NO_WORK',
         event: 'R_DOCK_AUTO_NO_WORK_WAITING_PLAN_GRACE',
@@ -1924,19 +1919,12 @@ async function reconcileSkippedRDockAfterLsp(input, data) {
       }));
       continue;
     }
+
     const targetGeofenceId = getGeofenceIdForDropPoint(targetTrip.dropPoint);
-    const targetGeofence = findGpsGeofenceById(
-      targetGeofenceId,
-      input.latitude,
-      input.longitude
-    );
-    if (
-      !targetGeofence ||
-      targetGeofence.distanceMeters <= GPS_R_DOCK_NO_WORK_DISTANCE_METERS
-    ) {
-      continue;
-    }
-    const response = await requestAppsScriptPost('setGpsNoWork', {
+    const targetGeofence = findGpsGeofenceById(targetGeofenceId, input.latitude, input.longitude);
+    if (!targetGeofence || targetGeofence.distanceMeters <= GPS_R_DOCK_NO_WORK_DISTANCE_METERS) continue;
+
+    const item = {
       codeRun: targetTrip.codeRun,
       licensePlate: targetTrip.planLicensePlate,
       sourceCodeRun: previousLspTrip.codeRun,
@@ -1949,35 +1937,42 @@ async function reconcileSkippedRDockAfterLsp(input, data) {
       graceMinutes: GPS_R_DOCK_NO_WORK_GRACE_MINUTES,
       gpsTime: input.gpsTime.toISOString(),
       stampedBy: 'GPS SYSTEM',
-    });
-    const result = response?.result || response;
-    results.push(result);
-    if (result?.written !== true) {
-      console.warn(JSON.stringify({
-        logType: 'ELIVE_GPS_NO_WORK',
-        event: 'R_DOCK_AUTO_NO_WORK_NOT_WRITTEN',
-        codeRun: targetTrip.codeRun,
-        sourceCodeRun: previousLspTrip.codeRun,
-        licensePlate: input.licensePlate,
-        targetDropPoint: targetTrip.dropPoint,
-        reason: result?.reason || 'UNKNOWN',
-        written: result?.written ?? null,
-      }));
+    };
+
+    if (noWorkCollector instanceof Map) {
+      if (!noWorkCollector.has(item.codeRun)) {
+        noWorkCollector.set(item.codeRun, item);
+        updateLocalNoWorkActual(
+          data,
+          item.codeRun,
+          'ไม่มีงานลง (GPS AUTO: รอเขียนแบบ Batch)'
+        );
+        console.log(JSON.stringify({
+          logType: 'ELIVE_GPS_NO_WORK',
+          event: 'R_DOCK_AUTO_NO_WORK_BATCH_QUEUED',
+          codeRun: item.codeRun,
+          sourceCodeRun: item.sourceCodeRun,
+          licensePlate: input.licensePlate,
+          targetDropPoint: item.targetDropPoint,
+          queueSize: noWorkCollector.size,
+        }));
+      }
+      results.push({ ...item, queued: true, written: false });
       break;
     }
+
+    const response = await requestAppsScriptPost('setGpsNoWork', item);
+    const result = response?.result || response;
+    results.push(result);
+    if (result?.written !== true) break;
     const actionProblem = 'ไม่มีงานลง (GPS AUTO: หลัง LSP ETD รถห่าง R1/R2 มากกว่า 1 กม. และเกิน Plan ETA +' + GPS_R_DOCK_NO_WORK_GRACE_MINUTES + ' นาที)';
     updateLocalNoWorkActual(data, targetTrip.codeRun, actionProblem);
     console.warn(JSON.stringify({
-      logType: 'ELIVE_GPS_NO_WORK',
-      event: 'R_DOCK_AUTO_NO_WORK_CONFIRMED',
-      codeRun: targetTrip.codeRun,
-      sourceCodeRun: previousLspTrip.codeRun,
-      licensePlate: input.licensePlate,
-      targetDropPoint: targetTrip.dropPoint,
-      targetGeofenceId,
-      distanceMeters: Number(targetGeofence.distanceMeters.toFixed(2)),
-      planEta: targetTrip.planEta,
-      graceMinutes: GPS_R_DOCK_NO_WORK_GRACE_MINUTES,
+      logType: 'ELIVE_GPS_NO_WORK', event: 'R_DOCK_AUTO_NO_WORK_CONFIRMED',
+      codeRun: targetTrip.codeRun, sourceCodeRun: previousLspTrip.codeRun,
+      licensePlate: input.licensePlate, targetDropPoint: targetTrip.dropPoint,
+      targetGeofenceId, distanceMeters: item.distanceMeters,
+      planEta: targetTrip.planEta, graceMinutes: GPS_R_DOCK_NO_WORK_GRACE_MINUTES,
       written: true,
     }));
     break;
@@ -1985,7 +1980,39 @@ async function reconcileSkippedRDockAfterLsp(input, data) {
   return results;
 }
 
-async function evaluateGpsDock(payload, dataOverride = null) {
+async function flushGpsNoWorkBatch(noWorkCollector, data) {
+  const items = [...noWorkCollector.values()];
+  if (!items.length) return { requested: 0, processed: 0, written: 0, alreadyFinal: 0, failed: 0, batches: 0 };
+  const summary = { requested: items.length, processed: 0, written: 0, alreadyFinal: 0, failed: 0, batches: 0 };
+  for (let offset = 0; offset < items.length; offset += GPS_R_DOCK_NO_WORK_BATCH_SIZE) {
+    const batchItems = items.slice(offset, offset + GPS_R_DOCK_NO_WORK_BATCH_SIZE);
+    const response = await requestAppsScriptPost('setGpsNoWorkBatch', { items: batchItems });
+    const result = response?.result || response;
+    const records = Array.isArray(result?.results) ? result.results : [];
+    summary.batches += 1;
+    summary.processed += records.length;
+    summary.written += Number(result?.writtenCount || 0);
+    summary.alreadyFinal += Number(result?.alreadyFinalCount || 0);
+    summary.failed += Number(result?.failedCount || 0);
+    for (const record of records) {
+      if (record?.written === true || record?.alreadyFinal === true) {
+        updateLocalNoWorkActual(data, cleanText(record.codeRun).toUpperCase(), record.actionProblem || 'ไม่มีงานลง (GPS AUTO)');
+      }
+    }
+    console.warn(JSON.stringify({
+      logType: 'ELIVE_GPS_NO_WORK',
+      event: 'R_DOCK_AUTO_NO_WORK_BATCH_CONFIRMED',
+      batchNumber: summary.batches,
+      requestedCount: batchItems.length,
+      writtenCount: Number(result?.writtenCount || 0),
+      alreadyFinalCount: Number(result?.alreadyFinalCount || 0),
+      failedCount: Number(result?.failedCount || 0),
+    }));
+  }
+  return summary;
+}
+
+async function evaluateGpsDock(payload, dataOverride = null, noWorkCollector = null) {
   const input = validateGpsDockPayload(payload);
   const nowMs = Date.now();
   const gpsTimeMs = input.gpsTime.getTime();
@@ -2000,7 +2027,7 @@ async function evaluateGpsDock(payload, dataOverride = null) {
   const detectedGeofenceId = nearestIsInside ? nearestGeofence.id : null;
   const isParked = input.speedKmh === GPS_PARKING_SPEED_THRESHOLD_KMH;
   const autoNoWorkResults = dataOverride
-    ? await reconcileSkippedRDockAfterLsp(input, dataOverride)
+    ? await reconcileSkippedRDockAfterLsp(input, dataOverride, noWorkCollector)
     : [];
   const tripResolution = await resolveVehicleTrip(input, nearestIsInside, dataOverride, detectedGeofenceId);
   const vehicleCycle = tripResolution.state;
@@ -2334,6 +2361,7 @@ async function runGpsBackgroundCycle() {
       actual: Array.isArray(realtime?.actual) ? realtime.actual : [],
       gps: Array.isArray(realtime?.gps) ? realtime.gps : [],
     };
+    const noWorkCollector = new Map();
     summary.dailyPlanSource = dailyPlanResult.source;
     summary.realtimeSource = realtimeSynchronization.source;
     summary.realtimeFallbackUsed = false;
@@ -2372,7 +2400,7 @@ async function runGpsBackgroundCycle() {
         if (classified.classification === 'OUT_OF_ORDER') summary.outOfOrderGpsCount += 1;
         if (gpsAgeSeconds > Math.floor(GPS_STALE_THRESHOLD_MS / 1000)) summary.staleGpsCount += 1;
         else summary.freshGpsCount += 1;
-        const result = await evaluateGpsDock(input, workerData);
+        const result = await evaluateGpsDock(input, workerData, noWorkCollector);
         await writeGpsLastProcessedState(parsedInput, 'PROCESSED');
         summary.processed += 1;
         if (result.status === 'DOCK_IN_CONFIRMED') summary.confirmed += 1;
@@ -2387,6 +2415,13 @@ async function runGpsBackgroundCycle() {
         summary.failed += 1;
         summary.failures.push({ gpsIdHash: hashAuditValue(input.gpsId), error: getErrorMessage(error) });
       }
+    }
+    const autoNoWorkBatch = await flushGpsNoWorkBatch(noWorkCollector, workerData);
+    summary.autoNoWorkBatch = autoNoWorkBatch;
+    if (autoNoWorkBatch.written > 0 || autoNoWorkBatch.alreadyFinal > 0) {
+      const refreshedRealtime = await synchronizeGpsWorkerRealtime();
+      summary.postNoWorkRealtimeSource = refreshedRealtime.source;
+      summary.postNoWorkRealtimeSynchronized = refreshedRealtime.synchronized;
     }
     const postEvaluationPendingRetry = await processDuePendingGpsStamps();
     summary.postEvaluationPendingRetry = postEvaluationPendingRetry;
@@ -3976,6 +4011,9 @@ app.get(['/health', '/api/health'], (req, res) => {
       rDockAutoNoWorkRequiresPlanEtaGrace: true,
       rDockAutoNoWorkRequiresWrittenTrueConfirmation: true,
       rDockAutoNoWorkRequiresPreviousLspEtd: true,
+      rDockAutoNoWorkBatchEnabled: true,
+      rDockAutoNoWorkBatchSize: GPS_R_DOCK_NO_WORK_BATCH_SIZE,
+      rDockAutoNoWorkPostAction: 'setGpsNoWorkBatch',
       sheetsTimeOnlyIsoUsesFixedBangkokOffset: true,
       exitRequiredBeforeNextTrip: true,
       etaRule: 'STAMP_ONE_EARLIEST_UNSTAMPED_PLAN_AFTER_PREVIOUS_SAME_DOCK_ETD',
