@@ -750,7 +750,13 @@ export default function App() {
 
   const shouldShowTruck = (truck: Truck): boolean => {
     if (showHiddenRows) return true;
-    if (hasNoWorkAction(truck)) return shouldKeepNoWorkVisible(truck);
+
+    // NO DROP / NO WORK is treated as a completed operational outcome.
+    if (hasNoWorkAction(truck)) return false;
+
+    // GPS LOST remains visible because the issue still requires follow-up.
+    if (hasGpsLostAction(truck)) return true;
+
     if (truck.status !== 'COMPLETED' && truck.status !== 'TRUCK_OUT') return true;
     if (!truck.stampEtd) return true;
 
