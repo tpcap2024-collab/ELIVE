@@ -1324,6 +1324,7 @@ export async function confirmWorkDetail(
 
 function mapTruckStatus(currentStatus: string): TruckStatus {
   const value = String(currentStatus || '').trim().toLowerCase();
+  if (value.includes('gps_lost') || value.includes('gps lost')) return 'GPS_LOST';
 
   if (
     value.includes('complete') ||
@@ -1362,6 +1363,8 @@ function mapTruckStatus(currentStatus: string): TruckStatus {
 
 function mapPerformanceStatus(value: string): PerformanceStatus {
   const status = String(value || '').trim().toLowerCase();
+  if (status.includes('gps_lost') || status.includes('gps lost')) return 'GPS_LOST';
+  if (status.includes('no_drop') || status.includes('no drop')) return 'NO_DROP';
 
   if (
     status.includes('delay') ||
@@ -1431,10 +1434,20 @@ export async function fetchTrucksFromSheets(
       actionUpdatedAt = String(actualRow[11] || '').trim();
     }
 
-    const mappedStatus = mapTruckStatus(currentStatus);
-    let performanceStatus = mapPerformanceStatus(efficiencyStatus);
+    const hasGpsLostProblem = actionProblem.includes('GPS มีปัญหา');
+    const hasNoWorkProblem = actionProblem.includes('ไม่มีงาน');
+    const mappedStatus: TruckStatus = hasGpsLostProblem
+      ? 'GPS_LOST'
+      : hasNoWorkProblem
+        ? 'COMPLETED'
+        : mapTruckStatus(currentStatus);
+    let performanceStatus: PerformanceStatus = hasGpsLostProblem
+      ? 'GPS_LOST'
+      : hasNoWorkProblem
+        ? 'NO_DROP'
+        : mapPerformanceStatus(efficiencyStatus);
 
-    if (stampEta && planEta && planEtd) {
+    if (!hasGpsLostProblem && !hasNoWorkProblem && stampEta && planEta && planEtd) {
       performanceStatus = calculatePerformanceStatus(planEta, planEtd, stampEta);
     }
 
@@ -1488,12 +1501,22 @@ export async function updateTruckInSheets(
   const stampEtd =
     updates.stampEtd !== undefined ? updates.stampEtd : currentTruck.stampEtd;
 
-  let efficiencyStatus: PerformanceStatus =
-    updates.performanceStatus !== undefined
-      ? updates.performanceStatus
-      : currentTruck.performanceStatus;
+  const actionProblem = String(
+    updates.actionProblem !== undefined
+      ? updates.actionProblem
+      : currentTruck.actionProblem || ''
+  );
+  const hasGpsLostProblem = actionProblem.includes('GPS มีปัญหา');
+  const hasNoWorkProblem = actionProblem.includes('ไม่มีงาน');
+  let efficiencyStatus: PerformanceStatus = hasGpsLostProblem
+    ? 'GPS_LOST'
+    : hasNoWorkProblem
+      ? 'NO_DROP'
+      : updates.performanceStatus !== undefined
+        ? updates.performanceStatus
+        : currentTruck.performanceStatus;
 
-  if (stampEta && currentTruck.planEta && currentTruck.planEtd) {
+  if (!hasGpsLostProblem && !hasNoWorkProblem && stampEta && currentTruck.planEta && currentTruck.planEtd) {
     efficiencyStatus = calculatePerformanceStatus(
       currentTruck.planEta,
       currentTruck.planEtd,
@@ -1501,16 +1524,22 @@ export async function updateTruckInSheets(
     );
   }
 
+  const effectiveStatus: TruckStatus = hasGpsLostProblem
+    ? 'GPS_LOST'
+    : hasNoWorkProblem
+      ? 'COMPLETED'
+      : updates.status !== undefined
+        ? updates.status
+        : currentTruck.status;
+
   const newRow = [
     truckId,
-    updates.status !== undefined ? updates.status : currentTruck.status,
+    effectiveStatus,
     efficiencyStatus || '',
     currentTruck.planEta || '',
     stampEta || '',
     stampEtd || '',
-    updates.actionProblem !== undefined
-      ? updates.actionProblem
-      : currentTruck.actionProblem || '',
+    actionProblem,
     updates.actionCountermeasure !== undefined
       ? updates.actionCountermeasure
       : currentTruck.actionCountermeasure || '',
