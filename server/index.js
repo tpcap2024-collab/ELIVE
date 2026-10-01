@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '51';
+const API_VERSION = '52';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -100,8 +100,10 @@ const GPS_REALTIME_CACHE_TTL_SECONDS = 10 * 60;
 const GPS_REALTIME_FALLBACK_MAX_AGE_MS = 5 * 60 * 1000;
 const GPS_REALTIME_SYNCHRONIZER_LOCK_KEY = 'elive:gps-worker:realtime-synchronizer-lock';
 const GPS_REALTIME_SYNCHRONIZER_LOCK_SECONDS = 90;
+const GPS_REALTIME_SYNCHRONIZER_LOCK_RENEW_MS = 30000;
 const GPS_REALTIME_SYNCHRONIZER_WAIT_MS = 95000;
 const GPS_REALTIME_SYNCHRONIZER_POLL_MS = 250;
+const GPS_REALTIME_STALE_FALLBACK_MAX_AGE_MS = GPS_REALTIME_CACHE_TTL_SECONDS * 1000;
 const SERVICE_MODE = cleanText(process.env.SERVICE_MODE || 'web').toLowerCase();
 const GPS_GEOFENCES = Object.freeze([
   Object.freeze({
@@ -897,6 +899,16 @@ async function readGpsWorkerRealtimeSnapshot(maximumAgeMs = GPS_REALTIME_FALLBAC
     return null;
   }
 }
+async function renewGpsRealtimeSynchronizerLock(client, lockValue) {
+  return Number(await client.eval(
+    "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('EXPIRE', KEYS[1], ARGV[2]) else return 0 end",
+    {
+      keys: [GPS_REALTIME_SYNCHRONIZER_LOCK_KEY],
+      arguments: [lockValue, String(GPS_REALTIME_SYNCHRONIZER_LOCK_SECONDS)],
+    }
+  )) === 1;
+}
+
 async function synchronizeGpsWorkerRealtime() {
   const client = requireRedisClient();
   const deadline = Date.now() + GPS_REALTIME_SYNCHRONIZER_WAIT_MS;
@@ -912,12 +924,14 @@ async function synchronizeGpsWorkerRealtime() {
       { NX: true, EX: GPS_REALTIME_SYNCHRONIZER_LOCK_SECONDS }
     );
     if (!acquired) {
-      const sharedSnapshot = await readGpsWorkerRealtimeSnapshot();
+      const sharedSnapshot = await readGpsWorkerRealtimeSnapshot(
+        GPS_REALTIME_STALE_FALLBACK_MAX_AGE_MS
+      );
       if (sharedSnapshot) {
         return {
           realtime: sharedSnapshot,
           source: 'redis-realtime-shared',
-          fallbackUsed: false,
+          fallbackUsed: sharedSnapshot.ageMs > GPS_REALTIME_FALLBACK_MAX_AGE_MS,
           fallbackAgeMs: sharedSnapshot.ageMs,
           synchronized: false,
         };
@@ -925,7 +939,29 @@ async function synchronizeGpsWorkerRealtime() {
       await wait(GPS_REALTIME_SYNCHRONIZER_POLL_MS);
       continue;
     }
+
+    let leaseTimer = null;
     try {
+      leaseTimer = setInterval(() => {
+        void renewGpsRealtimeSynchronizerLock(client, lockValue)
+          .then(renewed => {
+            if (!renewed) {
+              console.warn(JSON.stringify({
+                logType: 'ELIVE_GPS_REALTIME_SYNCHRONIZER',
+                event: 'SYNC_LOCK_LEASE_LOST',
+              }));
+            }
+          })
+          .catch(error => {
+            console.error(JSON.stringify({
+              logType: 'ELIVE_GPS_REALTIME_SYNCHRONIZER',
+              event: 'SYNC_LOCK_RENEW_FAILED',
+              error: getErrorMessage(error),
+            }));
+          });
+      }, GPS_REALTIME_SYNCHRONIZER_LOCK_RENEW_MS);
+      leaseTimer.unref?.();
+
       console.log(JSON.stringify({
         logType: 'ELIVE_GPS_REALTIME_SYNCHRONIZER',
         event: 'SYNC_STARTED',
@@ -947,8 +983,18 @@ async function synchronizeGpsWorkerRealtime() {
         synchronized: true,
       };
     } catch (error) {
-      const fallback = await readGpsWorkerRealtimeSnapshot();
-      if (!fallback) throw error;
+      const fallback = await readGpsWorkerRealtimeSnapshot(
+        GPS_REALTIME_STALE_FALLBACK_MAX_AGE_MS
+      );
+      if (!fallback) {
+        console.error(JSON.stringify({
+          logType: 'ELIVE_GPS_REALTIME_SYNCHRONIZER',
+          event: 'SYNC_FAILED',
+          reason: getErrorMessage(error),
+          fallbackAvailable: false,
+        }));
+        throw error;
+      }
       console.warn(JSON.stringify({
         logType: 'ELIVE_GPS_REALTIME_SYNCHRONIZER',
         event: 'SYNC_FALLBACK_USED',
@@ -964,18 +1010,48 @@ async function synchronizeGpsWorkerRealtime() {
         synchronized: false,
       };
     } finally {
-      await releaseRedisLock(
+      if (leaseTimer) clearInterval(leaseTimer);
+      const released = await releaseRedisLock(
         client,
         GPS_REALTIME_SYNCHRONIZER_LOCK_KEY,
         lockValue
-      ).catch(() => {});
+      ).then(() => true).catch(() => false);
+      console.log(JSON.stringify({
+        logType: 'ELIVE_GPS_REALTIME_SYNCHRONIZER',
+        event: 'SYNC_FINISHED',
+        lockReleaseAttempted: true,
+        lockReleaseSucceeded: released,
+      }));
     }
+  }
+
+  const fallback = await readGpsWorkerRealtimeSnapshot(
+    GPS_REALTIME_STALE_FALLBACK_MAX_AGE_MS
+  );
+  if (fallback) {
+    console.warn(JSON.stringify({
+      logType: 'ELIVE_GPS_REALTIME_SYNCHRONIZER',
+      event: 'SYNC_WAIT_TIMEOUT_FALLBACK_USED',
+      fallbackAgeMs: fallback.ageMs,
+      cachedAt: fallback.cachedAt,
+    }));
+    return {
+      realtime: fallback,
+      source: 'redis-realtime-wait-timeout-fallback',
+      fallbackUsed: true,
+      fallbackAgeMs: fallback.ageMs,
+      synchronized: false,
+    };
   }
   throw new Error('GPS_REALTIME_SYNCHRONIZER_WAIT_TIMEOUT');
 }
+
 async function refreshRealtimeAfterMutation() {
   clearTruckCache();
-  await requireRedisClient().del(GPS_REALTIME_CACHE_KEY);
+
+  // Keep the last confirmed Redis snapshot available while a fresh sync runs.
+  // Deleting it here previously left Dashboard requests with no fallback and
+  // caused GPS_REALTIME_SYNCHRONIZER_WAIT_TIMEOUT during concurrent Worker sync.
   const synchronized = await synchronizeGpsWorkerRealtime();
   return {
     snapshotRefreshed: synchronized.synchronized === true,
@@ -984,11 +1060,12 @@ async function refreshRealtimeAfterMutation() {
     realtime: synchronized.realtime,
   };
 }
+
 function findActualRowByCodeRun(actualRows, codeRun) {
   return (Array.isArray(actualRows) ? actualRows : []).slice(1).find(row => Array.isArray(row) && cleanText(row[0]).toUpperCase() === cleanText(codeRun).toUpperCase()) || null;
 }
 
-async function getSharedGpsWorkerRealtime(maximumAgeMs = GPS_REALTIME_FALLBACK_MAX_AGE_MS) {
+async function getSharedGpsWorkerRealtime(maximumAgeMs = GPS_REALTIME_STALE_FALLBACK_MAX_AGE_MS) {
   const snapshot = await readGpsWorkerRealtimeSnapshot(maximumAgeMs);
   if (!snapshot) throw new Error('GPS_REALTIME_SNAPSHOT_UNAVAILABLE');
   return {
@@ -3836,6 +3913,9 @@ app.get(['/health', '/api/health'], (req, res) => {
       realtimeSynchronizerPolicy: 'ONE_FETCH_WRITES_REDIS_WORKER_AND_ELIVE_SHARE',
       realtimeSynchronizerIntervalSeconds: Math.floor(GPS_BACKGROUND_WORKER_INTERVAL_MS / 1000),
       realtimeSynchronizerLockSeconds: GPS_REALTIME_SYNCHRONIZER_LOCK_SECONDS,
+      realtimeSynchronizerLockRenewSeconds: Math.floor(GPS_REALTIME_SYNCHRONIZER_LOCK_RENEW_MS / 1000),
+      realtimeStaleFallbackMaximumAgeSeconds: Math.floor(GPS_REALTIME_STALE_FALLBACK_MAX_AGE_MS / 1000),
+      realtimeSnapshotPreservedDuringMutationRefresh: true,
       eliveReadsSharedRealtimeSnapshot: true,
       gpsWorkerReadsSharedRealtimeSnapshot: false,
       gpsWorkerInputMode: 'FRESH_APPS_SCRIPT_RESPONSE',
