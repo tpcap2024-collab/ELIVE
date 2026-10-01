@@ -706,7 +706,7 @@ export default function App() {
 
   const getRowClass = (truck: Truck): string => {
     if (hasGpsLostAction(truck)) {
-      return 'border-l-4 border-orange-500 bg-slate-200 hover:bg-slate-300 transition-colors';
+      return 'border-2 border-orange-500 bg-slate-200 hover:bg-slate-300 transition-colors';
     }
     if (hasNoWorkAction(truck)) {
       return 'border-l-4 border-slate-700 bg-slate-200 hover:bg-slate-300 transition-colors';
