@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '50';
+const API_VERSION = '51';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -4449,15 +4449,18 @@ app.post('/api/trucks/update', requireAuthentication, requireMinimumRole('OPERAT
   try {
     const truckId = cleanText(req.body?.truckId);
     const newRow = req.body?.newRow;
-
     if (!truckId) throw new Error('truckId is required.');
     if (!Array.isArray(newRow)) throw new Error('newRow must be an array.');
-
-    const result = await requestAppsScriptPost('updateTruck', {
-      truckId,
-      newRow,
-    });
-
+    const normalizedRow = [...newRow];
+    const actionProblem = cleanText(normalizedRow[6]);
+    if (actionProblem.includes('GPS มีปัญหา')) {
+      normalizedRow[1] = 'GPS_LOST';
+      normalizedRow[2] = 'GPS_LOST';
+    } else if (actionProblem.includes('ไม่มีงาน')) {
+      normalizedRow[1] = 'NO_WORK';
+      normalizedRow[2] = 'NO_DROP';
+    }
+    const result = await requestAppsScriptPost('updateTruck', { truckId, newRow: normalizedRow });
     const refresh = await refreshRealtimeAfterMutation();
     const confirmedActualRow = findActualRowByCodeRun(refresh.realtime?.actual, truckId);
     return res.status(200).json({ ...result, confirmedActualRow, snapshotRefreshed: refresh.snapshotRefreshed, realtimeSource: refresh.realtimeSource, timestamp: refresh.refreshedAt });
