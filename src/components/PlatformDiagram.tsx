@@ -152,16 +152,23 @@ function isNonInboundProject(truck: Truck): boolean {
   const project = String(truck.project || '').trim().toUpperCase();
   return project !== 'INBOUND';
 }
+function hasGpsLostAction(truck: Truck): boolean {
+  const status = String(truck.status || '').trim().toUpperCase();
+  const performanceStatus = String(truck.performanceStatus || '').trim().toUpperCase();
+  const problem = String(truck.actionProblem || '');
+  return status === 'GPS_LOST' || performanceStatus === 'GPS_LOST' || problem.includes('GPS มีปัญหา');
+}
 function hasNoWorkAction(truck: Truck): boolean {
   const status = String(truck.status || '').trim().toUpperCase();
   const performanceStatus = String(truck.performanceStatus || '').trim().toUpperCase();
-  return (
+  return !hasGpsLostAction(truck) && (
     status === 'NO_WORK' ||
     performanceStatus === 'NO_DROP' ||
     String(truck.actionProblem || '').includes('ไม่มีงาน')
   );
 }
 function getDisplayStatus(truck: Truck): string {
+  if (hasGpsLostAction(truck)) return 'GPS LOST';
   return hasNoWorkAction(truck)
     ? 'NO WORK'
     : String(truck.status || 'PLANNED').replaceAll('_', ' ');
@@ -172,6 +179,9 @@ function getHourBackgroundClass(hour: number): string {
 }
 
 function getTruckColor(truck: Truck): string {
+  if (hasGpsLostAction(truck)) {
+    return 'bg-slate-300 border-slate-500 text-orange-600 shadow-sm shadow-slate-400/50';
+  }
   if (hasNoWorkAction(truck)) {
     return 'bg-slate-700 border-slate-950 text-white shadow-sm shadow-slate-500/50';
   }
@@ -263,6 +273,7 @@ function getTimelineCardColor(truck: Truck, rowType: 'PLAN' | 'ACTUAL'): string 
 }
 
 function getPerformanceLabel(truck: Truck): string {
+  if (hasGpsLostAction(truck)) return 'GPS LOST';
   if (hasNoWorkAction(truck)) return 'NO DROP';
   if (isOverdueAndNotDocked(truck)) {
     const planMinutes = parseTimeToMinutes(truck.planEta);
@@ -317,7 +328,7 @@ function formatClockMinutes(value: number): string {
   return `${String(Math.floor(normalized / 60)).padStart(2, '0')}:${String(normalized % 60).padStart(2, '0')}`;
 }
 function getMinuteDifferenceLabel(truck: Truck): string {
-  if (isNonInboundProject(truck)) return '';
+  if (hasGpsLostAction(truck) || isNonInboundProject(truck)) return '';
   const actualEta = truck.stampEta || truck.actualEta || '';
   const plan = parseClockMinutes(truck.planEta);
   const actual = parseClockMinutes(actualEta);
@@ -353,6 +364,9 @@ function getDurationText(start?: string, end?: string): string {
 }
 
 function getPerformanceSummary(truck: Truck) {
+  if (hasGpsLostAction(truck)) {
+    return { label: 'GPS LOST', tone: 'amber', description: truck.actionProblem || 'GPS มีปัญหา' };
+  }
   if (isNonInboundProject(truck)) {
     return {
       label: 'NON-INBOUND',
@@ -391,6 +405,7 @@ function getPerformanceSummary(truck: Truck) {
 }
 
 function getStatusBadgeClass(status: Truck['status']): string {
+  if (String(status || '').toUpperCase() === 'GPS_LOST') return 'border-orange-300 bg-slate-700 text-orange-400';
   if (String(status || '').toUpperCase() === 'NO_WORK') return 'border-slate-300 bg-slate-700 text-white';
   if (status === 'COMPLETED' || status === 'TRUCK_OUT') return 'border-emerald-200 bg-emerald-50 text-emerald-700';
   if (status === 'DOCK_IN' || status === 'UNLOADING' || status === 'UNLOADING_AT_TPCAP') return 'border-amber-200 bg-amber-50 text-amber-800';
@@ -805,9 +820,9 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
                                               </div>
                                             )}
                                             <div className={`w-full truncate text-[6px] font-black leading-[7px] ${rowType === 'PLAN' ? 'mt-1.5' : 'mt-0.5'}`}>
-                                              {hasNoWorkAction(truck) ? 'NO WORK · NO DROP' : getMinuteDifferenceLabel(truck)}
+                                              {hasGpsLostAction(truck) ? 'GPS LOST' : hasNoWorkAction(truck) ? 'NO WORK · NO DROP' : getMinuteDifferenceLabel(truck)}
                                             </div>
-                                            {!isNonInboundProject(truck) && truck.performanceStatus === 'DELAY' && (
+                                            {!hasGpsLostAction(truck) && !isNonInboundProject(truck) && truck.performanceStatus === 'DELAY' && (
                                               <AlertTriangle className="absolute right-0.5 top-0.5 h-2.5 w-2.5 text-white" />
                                             )}
                                           </motion.div>
@@ -913,6 +928,12 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
                       </section>
                     </div>
 
+                    {hasGpsLostAction(selectedTruck) && (
+                      <section className="mt-4 rounded-2xl border border-orange-300 bg-slate-100 p-4">
+                        <span className="rounded-full border border-orange-300 bg-slate-700 px-3 py-1 text-xs font-black text-orange-400">GPS LOST</span>
+                        <p className="mt-3 text-sm font-semibold leading-6 text-orange-600">{selectedTruck.actionProblem || 'GPS มีปัญหา'}</p>
+                      </section>
+                    )}
                     {hasNoWorkAction(selectedTruck) && (
                       <section className="mt-4 rounded-2xl border border-slate-300 bg-slate-100 p-4">
                         <div className="flex flex-wrap items-center gap-2">
