@@ -706,10 +706,10 @@ export default function App() {
 
   const getRowClass = (truck: Truck): string => {
     if (hasGpsLostAction(truck)) {
-      return 'border-2 border-orange-500 bg-slate-200 hover:bg-slate-300 transition-colors';
+      return 'bg-slate-200 hover:bg-slate-300 transition-colors';
     }
     if (hasNoWorkAction(truck)) {
-      return 'border-l-4 border-slate-700 bg-slate-200 hover:bg-slate-300 transition-colors';
+      return 'bg-slate-200 hover:bg-slate-300 transition-colors';
     }
     if (truck.status === 'COMPLETED' || truck.status === 'TRUCK_OUT') {
       return 'row-complete';
@@ -1332,7 +1332,7 @@ export default function App() {
                         {paginatedTrucks.length === 0 ? (
                           <tr><td colSpan={12} className="px-6 py-8 text-center text-slate-500">No trucks found matching your criteria.</td></tr>
                         ) : paginatedTrucks.map((truck) => (
-                          <tr key={truck.id} className={`${getRowClass(truck)} border-b border-slate-100/50`}>
+                          <tr key={truck.id} className={`${getRowClass(truck)} border-b border-slate-300`}>
                             <td className="whitespace-nowrap px-3 py-1.5 font-mono font-bold text-slate-800">{truck.route}</td>
                             <td className="whitespace-nowrap px-3 py-1.5 font-medium text-slate-700">{truck.supplierName || '-'}</td>
                             <td className="whitespace-nowrap px-3 py-1.5 font-bold text-slate-800">{truck.licensePlate}</td>
