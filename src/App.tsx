@@ -114,22 +114,27 @@ function getDockGroup(value?: string): Exclude<DockFilter, 'ALL'> | '' {
 function isInboundProject(truck: Truck): boolean {
   return String(truck.project || '').trim().toUpperCase() === 'INBOUND';
 }
+function hasGpsLostAction(truck: Truck): boolean {
+  const status = String(truck.status || '').trim().toUpperCase();
+  const performanceStatus = String(truck.performanceStatus || '').trim().toUpperCase();
+  const text = String(truck.actionProblem || '');
+  return status === 'GPS_LOST' || performanceStatus === 'GPS_LOST' || text.includes('GPS มีปัญหา');
+}
 function hasNoWorkAction(truck: Truck): boolean {
   const status = String(truck.status || '').trim().toUpperCase();
   const performanceStatus = String(truck.performanceStatus || '').trim().toUpperCase();
   const text = String(truck.actionProblem || '');
-  return (
+  return !hasGpsLostAction(truck) && (
     status === 'NO_WORK' ||
     performanceStatus === 'NO_DROP' ||
-    text.includes('ไม่มีงาน') ||
-    text.includes('GPS มีปัญหา')
+    text.includes('ไม่มีงาน')
   );
 }
 function getTruckStatusLabel(truck: Truck): string {
+  if (hasGpsLostAction(truck)) return 'GPS LOST';
   if (hasNoWorkAction(truck)) return 'NO WORK';
   return String(truck.status || 'PLANNED').replaceAll('_', ' ');
 }
-
 function shouldSendToActionCenter(truck: Truck): boolean {
   const actionProblem = String(truck.actionProblem || '').trim();
   if (!actionProblem) return true;
@@ -365,15 +370,15 @@ export default function App() {
       if (authenticationGeneration !== authenticationGenerationRef.current) return;
 
       if (data.trucks.length > 0) {
-        const normalizedTrucks = data.trucks.map(truck =>
-          hasNoWorkAction(truck)
-            ? {
-                ...truck,
-                status: 'NO_WORK' as Truck['status'],
-                performanceStatus: 'NO_DROP' as const,
-              }
-            : truck
-        );
+        const normalizedTrucks = data.trucks.map(truck => {
+          if (hasGpsLostAction(truck)) {
+            return { ...truck, status: 'GPS_LOST' as Truck['status'], performanceStatus: 'GPS_LOST' as const };
+          }
+          if (hasNoWorkAction(truck)) {
+            return { ...truck, status: 'COMPLETED' as Truck['status'], performanceStatus: 'NO_DROP' as const };
+          }
+          return truck;
+        });
         const guardedTrucks = normalizedTrucks.map(incoming => {
           if (!pendingMutationIdsRef.current.has(incoming.id)) return incoming;
           return trucksRef.current.find(local => local.id === incoming.id) || incoming;
@@ -463,18 +468,16 @@ export default function App() {
         ? updates.actionProblem
         : currentTruck.actionProblem || ''
     );
-    const willBeNoDrop =
-      noDropActionText.includes('ไม่มีงาน') ||
-      noDropActionText.includes('GPS มีปัญหา');
+    const willBeGpsLost = noDropActionText.includes('GPS มีปัญหา');
+    const willBeNoDrop = !willBeGpsLost && noDropActionText.includes('ไม่มีงาน');
     const optimisticTruck = {
       ...currentTruck,
       ...updates,
-      ...(willBeNoDrop
-        ? {
-            status: 'NO_WORK' as Truck['status'],
-            performanceStatus: 'NO_DROP' as const,
-          }
-        : {}),
+      ...(willBeGpsLost
+        ? { status: 'GPS_LOST' as Truck['status'], performanceStatus: 'GPS_LOST' as const }
+        : willBeNoDrop
+          ? { status: 'COMPLETED' as Truck['status'], performanceStatus: 'NO_DROP' as const }
+          : {}),
       ...(updates.actionProblem !== undefined || updates.actionStatus !== undefined
         ? { actionUpdatedAt: new Date().toISOString() }
         : {}),
@@ -702,6 +705,9 @@ export default function App() {
   };
 
   const getRowClass = (truck: Truck): string => {
+    if (hasGpsLostAction(truck)) {
+      return 'border-l-4 border-orange-500 bg-slate-200 hover:bg-slate-300 transition-colors';
+    }
     if (hasNoWorkAction(truck)) {
       return 'border-l-4 border-slate-700 bg-slate-200 hover:bg-slate-300 transition-colors';
     }
@@ -723,6 +729,7 @@ export default function App() {
       DELAY: 'animate-pulse bg-red-100 text-red-700',
       WARNING: 'bg-amber-100 text-amber-700',
       NO_DROP: 'bg-slate-700 text-white',
+      GPS_LOST: 'border border-orange-300 bg-slate-700 text-orange-400',
     };
 
     const labels: Record<PerformanceStatus, string> = {
@@ -731,6 +738,7 @@ export default function App() {
       DELAY: 'DELAY',
       WARNING: 'WARNING',
       NO_DROP: 'NO DROP',
+      GPS_LOST: 'GPS LOST',
     };
 
     return (
@@ -1353,11 +1361,18 @@ export default function App() {
                             <td className="whitespace-nowrap px-3 py-1.5 font-mono text-slate-600">{truck.stampEtd || '-'}</td>
                             <td className="whitespace-nowrap px-3 py-1.5">
                               {getPerformanceBadge(
-                                hasNoWorkAction(truck) ? 'NO_DROP' : truck.performanceStatus
+                                hasGpsLostAction(truck) ? 'GPS_LOST' : hasNoWorkAction(truck) ? 'NO_DROP' : truck.performanceStatus
                               )}
                             </td>
                             <td className="whitespace-nowrap px-3 py-1.5">
-                              {hasNoWorkAction(truck) ? (
+                              {hasGpsLostAction(truck) ? (
+                                <span
+                                  className="inline-flex rounded-md border border-orange-300 bg-slate-700 px-2 py-1 text-[10px] font-black text-orange-400"
+                                  title={truck.actionProblem || 'GPS มีปัญหา'}
+                                >
+                                  GPS LOST
+                                </span>
+                              ) : hasNoWorkAction(truck) ? (
                                 <span
                                   className="inline-flex rounded-md border border-slate-800 bg-slate-700 px-2 py-1 text-[10px] font-black text-white"
                                   title={truck.actionProblem || 'ไม่มีงานลง'}
