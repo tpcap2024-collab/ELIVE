@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '56';
+const API_VERSION = '58';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -65,9 +65,6 @@ const GPS_LAST_PROCESSED_TTL_SECONDS = 36 * 60 * 60;
 const GPS_AUTO_STAMP_FRESH_THRESHOLD_MS = Math.max(30000, Number(process.env.GPS_AUTO_STAMP_FRESH_THRESHOLD_MS || 120000));
 const GPS_VEHICLE_CYCLE_KEY_PREFIX = 'elive:gps-vehicle-cycle:';
 const GPS_VEHICLE_CYCLE_TTL_SECONDS = 36 * 60 * 60;
-const GPS_AUTO_STAMP_KEY_PREFIX = 'elive:gps-auto-stamp:';
-const GPS_AUTO_STAMP_LOCK_SECONDS = 90;
-const GPS_AUTO_STAMP_RESULT_TTL_SECONDS = 36 * 60 * 60;
 const GPS_PENDING_STAMP_KEY_PREFIX = 'elive:gps-pending-stamp:';
 const GPS_PENDING_STAMP_LOCK_PREFIX = 'elive:gps-pending-stamp-lock:';
 const GPS_PENDING_STAMP_SCHEDULE_KEY = 'elive:gps-pending-stamp:schedule';
@@ -81,8 +78,8 @@ const GPS_PENDING_STAMP_LOCK_BUSY_BASE_RETRY_MS = 60 * 1000;
 const GPS_PENDING_STAMP_LOCK_BUSY_MAX_RETRY_MS = 15 * 60 * 1000;
 const GPS_PENDING_STAMP_LOCK_COOLDOWN_KEY = 'elive:gps-pending-stamp:apps-script-lock-cooldown';
 const GPS_PENDING_STAMP_LOCK_COOLDOWN_SECONDS = 60;
-const GPS_PENDING_STAMP_RECONCILE_SCAN_COUNT = 200;
 const GPS_PENDING_STAMP_PROCESSING_RECOVERY_MS = (GPS_PENDING_STAMP_LOCK_SECONDS + 30) * 1000;
+const GPS_PENDING_STAMP_MAINTENANCE_INTERVAL_MS = 10 * 60 * 1000;
 const GPS_AUTO_STAMP_ETA_ENABLED = cleanText(process.env.GPS_AUTO_STAMP_ETA_ENABLED || 'true').toLowerCase() === 'true';
 const GPS_AUTO_STAMP_ETD_ENABLED = cleanText(process.env.GPS_AUTO_STAMP_ETD_ENABLED || 'false').toLowerCase() === 'true';
 const GPS_ETD_RECONCILIATION_ENABLED = cleanText(process.env.GPS_ETD_RECONCILIATION_ENABLED || 'true').toLowerCase() === 'true';
@@ -228,6 +225,7 @@ let lastAppsScriptError = null;
 let gpsWorkerTimer = null;
 let gpsWorkerStopping = false;
 let gpsWorkerCycleRunning = false;
+let lastPendingStampMaintenanceAtMs = 0;
 
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
@@ -780,10 +778,6 @@ function getGpsOperationDecision(date = new Date()) {
     cutoffMinutes: GPS_OPERATION_CUTOFF_MINUTES,
     cutoffAt: getGpsOperationCutoffDate(operationDate).toISOString(),
   };
-}
-function isSameGpsOperationDate(firstTime, secondTime) {
-  return getBangkokDateText(parseBangkokDateTime(firstTime, 'firstTime')) ===
-    getBangkokDateText(parseBangkokDateTime(secondTime, 'secondTime'));
 }
 function getVehicleCycleKey(licensePlate) {
   const normalizedPlate = normalizeLicensePlate(licensePlate);
@@ -1415,9 +1409,6 @@ function createGpsDockResult(state) {
     gpsStaleThresholdSeconds: Math.floor(GPS_STALE_THRESHOLD_MS / 1000),
   };
 }
-function getGpsAutoStampKey(stampType, codeRun) {
-  return `${GPS_AUTO_STAMP_KEY_PREFIX}${cleanText(stampType).toUpperCase()}:${normalizeCodeRun(codeRun)}`;
-}
 function normalizeStampType(value) {
   const stampType = cleanText(value).toUpperCase();
   if (stampType !== 'ETA' && stampType !== 'ETD') throw new Error('stampType must be ETA or ETD.');
@@ -1534,7 +1525,6 @@ async function writePendingStamp(record, scheduleAtMs = null) {
   return record;
 }
 function getPendingStampScheduleScore(record, nowMs = Date.now()) {
-  // Only a genuine retry after a processing error is allowed to wait.
   if (record?.status === 'RETRY_WAIT') {
     const retryAtMs = Date.parse(record.nextRetryAt || '');
     return Number.isFinite(retryAtMs) ? retryAtMs : nowMs;
@@ -1542,146 +1532,87 @@ function getPendingStampScheduleScore(record, nowMs = Date.now()) {
   return nowMs;
 }
 
-async function ensureActivePendingStampScheduled(record, reason = 'ACTIVE_RECORD_REPAIR') {
-  if (!isActivePendingStamp(record) || !record?.pendingId) {
+async function repairPendingStampRecord(record, reason = 'ACTIVE_RECORD_REPAIR') {
+  if (!isActivePendingStamp(record) || !record?.pendingId) return { repaired: false, record };
+  const client = requireRedisClient();
+  const nowMs = Date.now();
+
+  if (record.status === 'PROCESSING') {
+    const lockExists = Boolean(await client.exists(getPendingStampLockKey(record.pendingId)));
+    if (!lockExists) {
+      const now = new Date(nowMs).toISOString();
+      const pendingRecord = {
+        ...record,
+        status: 'PENDING',
+        retryReason: null,
+        nextRetryAt: now,
+        updatedAt: now,
+      };
+      await writePendingStamp(pendingRecord, nowMs);
+      console.warn(JSON.stringify({
+        logType: 'ELIVE_GPS_STAMP',
+        event: 'PENDING_STAMP_PROCESSING_RETURNED_TO_PENDING',
+        pendingId: pendingRecord.pendingId,
+        codeRun: pendingRecord.codeRun,
+        stampType: pendingRecord.stampType,
+        reason,
+      }));
+      return { repaired: true, returnedToPending: true, record: pendingRecord };
+    }
     return { repaired: false, record };
   }
 
-  const client = requireRedisClient();
-  const nowMs = Date.now();
-  const lockKey = getPendingStampLockKey(record.pendingId);
-  const hasProcessingLock = record.status === 'PROCESSING'
-    ? Boolean(await client.exists(lockKey))
-    : false;
-  let effectiveRecord = record;
-
-  // PROCESSING without its owner lock is not a retry condition. Return it to
-  // PENDING immediately so the queue can claim it again in the same cycle.
-  if (record.status === 'PROCESSING' && !hasProcessingLock) {
-    const now = new Date(nowMs).toISOString();
-    effectiveRecord = {
-      ...record,
-      status: 'PENDING',
-      retryReason: null,
-      lastError: record.lastError || 'PROCESSING_RECORD_WITHOUT_ACTIVE_LOCK',
-      nextRetryAt: now,
-      updatedAt: now,
-    };
-    await writePendingStamp(effectiveRecord, nowMs);
-    console.warn(JSON.stringify({
-      logType: 'ELIVE_GPS_STAMP',
-      event: 'PENDING_STAMP_PROCESSING_RETURNED_TO_PENDING',
-      pendingId: effectiveRecord.pendingId,
-      codeRun: effectiveRecord.codeRun,
-      stampType: effectiveRecord.stampType,
-      reason,
-    }));
-    return {
-      repaired: true,
-      returnedToPending: true,
-      record: effectiveRecord,
-    };
-  }
-
-  // PENDING always means ready now. Do not preserve or interpret any previous
-  // schedule score. Rewrite it to the current time on every reconciliation.
-  if (effectiveRecord.status === 'PENDING') {
-    await client.zAdd(
-      GPS_PENDING_STAMP_SCHEDULE_KEY,
-      [{ score: nowMs, value: effectiveRecord.pendingId }]
-    );
-    return {
-      repaired: true,
-      pendingForcedDue: true,
-      record: effectiveRecord,
-    };
-  }
-
-  // A live PROCESSING record remains owned by its lock. Keep only a recovery
-  // deadline so a process crash cannot strand the record permanently.
-  if (effectiveRecord.status === 'PROCESSING' && hasProcessingLock) {
-    const recoveryAtMs = nowMs + GPS_PENDING_STAMP_PROCESSING_RECOVERY_MS;
-    await client.zAdd(
-      GPS_PENDING_STAMP_SCHEDULE_KEY,
-      [{ score: recoveryAtMs, value: effectiveRecord.pendingId }]
-    );
-    return {
-      repaired: false,
-      processingProtected: true,
-      record: effectiveRecord,
-    };
-  }
-
-  // RETRY_WAIT is the only status allowed to use a delayed score, and only
-  // after an actual request error or Apps Script lock-busy response.
-  const retryAtMs = getPendingStampScheduleScore(effectiveRecord, nowMs);
-  const existingScoreRaw = await client.zScore(
+  const expectedScore = getPendingStampScheduleScore(record, nowMs);
+  const scoreRaw = await client.zScore(GPS_PENDING_STAMP_SCHEDULE_KEY, record.pendingId);
+  const score = scoreRaw === null || scoreRaw === undefined ? null : Number(scoreRaw);
+  const scoreMissing = score === null || !Number.isFinite(score);
+  const scoreIncorrect = record.status === 'RETRY_WAIT'
+    ? scoreMissing || Math.abs(score - expectedScore) > 1000
+    : scoreMissing;
+  if (!scoreIncorrect) return { repaired: false, record };
+  await client.zAdd(
     GPS_PENDING_STAMP_SCHEDULE_KEY,
-    effectiveRecord.pendingId
+    [{ score: expectedScore, value: record.pendingId }]
   );
-  const existingScore = existingScoreRaw === null || existingScoreRaw === undefined
-    ? null
-    : Number(existingScoreRaw);
-  if (existingScore === null || !Number.isFinite(existingScore) || Math.abs(existingScore - retryAtMs) > 1000) {
-    await client.zAdd(
-      GPS_PENDING_STAMP_SCHEDULE_KEY,
-      [{ score: retryAtMs, value: effectiveRecord.pendingId }]
-    );
-    console.warn(JSON.stringify({
-      logType: 'ELIVE_GPS_STAMP',
-      event: 'PENDING_STAMP_RETRY_SCHEDULE_REPAIRED',
-      pendingId: effectiveRecord.pendingId,
-      codeRun: effectiveRecord.codeRun,
-      stampType: effectiveRecord.stampType,
-      scheduledAt: new Date(retryAtMs).toISOString(),
-      reason,
-    }));
-    return { repaired: true, retryScheduleRepaired: true, record: effectiveRecord };
-  }
-  return { repaired: false, record: effectiveRecord };
+  console.warn(JSON.stringify({
+    logType: 'ELIVE_GPS_STAMP',
+    event: 'PENDING_STAMP_SCHEDULE_REPAIRED',
+    pendingId: record.pendingId,
+    codeRun: record.codeRun,
+    stampType: record.stampType,
+    pendingStatus: record.status,
+    reason,
+  }));
+  return { repaired: true, record };
 }
 
-async function reconcilePendingStampSchedule() {
+async function maintainPendingStampSchedule(force = false) {
+  const nowMs = Date.now();
+  if (!force && nowMs - lastPendingStampMaintenanceAtMs < GPS_PENDING_STAMP_MAINTENANCE_INTERVAL_MS) {
+    return { skipped: true, inspected: 0, repaired: 0, removed: 0 };
+  }
+  lastPendingStampMaintenanceAtMs = nowMs;
   const client = requireRedisClient();
-  let cursor = '0';
-  let scanned = 0;
-  let active = 0;
+  const pendingIds = await client.zRange(GPS_PENDING_STAMP_SCHEDULE_KEY, 0, -1);
+  let inspected = 0;
   let repaired = 0;
-  let pendingForcedDue = 0;
-  let returnedToPending = 0;
-  let invalidRemoved = 0;
-  do {
-    const result = await client.scan(cursor, {
-      MATCH: `${GPS_PENDING_STAMP_KEY_PREFIX}*`,
-      COUNT: GPS_PENDING_STAMP_RECONCILE_SCAN_COUNT,
-    });
-    cursor = String(result.cursor);
-    for (const key of result.keys) {
-      if (key === GPS_PENDING_STAMP_SCHEDULE_KEY) continue;
-      scanned += 1;
-      const pendingId = key.slice(GPS_PENDING_STAMP_KEY_PREFIX.length);
-      const record = await readPendingStamp(pendingId);
-      if (!record) {
-        await client.zRem(GPS_PENDING_STAMP_SCHEDULE_KEY, pendingId);
-        invalidRemoved += 1;
-        continue;
-      }
-      if (!isActivePendingStamp(record)) {
-        await client.zRem(GPS_PENDING_STAMP_SCHEDULE_KEY, pendingId);
-        continue;
-      }
-      active += 1;
-      const resultRepair = await ensureActivePendingStampScheduled(record, 'QUEUE_RECONCILIATION');
-      if (resultRepair.repaired) repaired += 1;
-      if (resultRepair.pendingForcedDue) pendingForcedDue += 1;
-      if (resultRepair.returnedToPending) returnedToPending += 1;
+  let removed = 0;
+  for (const pendingId of pendingIds) {
+    inspected += 1;
+    const record = await readPendingStamp(pendingId);
+    if (!record || !isActivePendingStamp(record)) {
+      await client.zRem(GPS_PENDING_STAMP_SCHEDULE_KEY, pendingId);
+      removed += 1;
+      continue;
     }
-  } while (cursor !== '0');
-  const summary = { scanned, active, repaired, pendingForcedDue, returnedToPending, invalidRemoved };
-  if (repaired || returnedToPending || invalidRemoved) {
+    const result = await repairPendingStampRecord(record, 'SCHEDULE_MAINTENANCE');
+    if (result.repaired) repaired += 1;
+  }
+  const summary = { skipped: false, inspected, repaired, removed };
+  if (repaired || removed) {
     console.warn(JSON.stringify({
       logType: 'ELIVE_GPS_STAMP',
-      event: 'PENDING_QUEUE_RECONCILED',
+      event: 'PENDING_QUEUE_MAINTAINED',
       ...summary,
     }));
   }
@@ -1755,18 +1686,19 @@ async function createPendingGpsStamp(stampType, state) {
   );
   const existing = await readPendingStamp(pendingId);
   if (isActivePendingStamp(existing)) {
-    const repair = await ensureActivePendingStampScheduled(existing, 'GPS_DETECTION_REOBSERVED');
-    console.log(JSON.stringify({
-      logType: 'ELIVE_GPS_STAMP',
-      event: 'PENDING_STAMP_ALREADY_ACTIVE',
-      pendingId,
-      codeRun,
-      stampType: normalizedStampType,
-      pendingStatus: repair.record?.status || existing.status,
-      scheduleRepaired: repair.repaired === true,
-      pendingForcedDue: repair.pendingForcedDue === true,
-      returnedToPending: repair.returnedToPending === true,
-    }));
+    const repair = await repairPendingStampRecord(existing, 'GPS_DETECTION_REOBSERVED');
+    if (repair.repaired || repair.returnedToPending) {
+      console.warn(JSON.stringify({
+        logType: 'ELIVE_GPS_STAMP',
+        event: 'PENDING_STAMP_REPAIRED_ON_REOBSERVATION',
+        pendingId,
+        codeRun,
+        stampType: normalizedStampType,
+        pendingStatus: repair.record?.status || existing.status,
+        scheduleRepaired: repair.repaired === true,
+        returnedToPending: repair.returnedToPending === true,
+      }));
+    }
     return repair.record || existing;
   }
   const recreated = Boolean(existing);
@@ -1946,9 +1878,9 @@ async function processPendingGpsStamp(pendingId) {
 }
 async function processDuePendingGpsStamps() {
   const client = requireRedisClient();
-  const reconciliation = await reconcilePendingStampSchedule();
+  const maintenance = await maintainPendingStampSchedule();
   if (await client.exists(GPS_PENDING_STAMP_LOCK_COOLDOWN_KEY)) {
-    return { due: 0, processed: 0, stamped: 0, alreadyStamped: 0, blockedNoWork: 0, superseded: 0, retryWait: 0, skipped: true, reason: 'APPS_SCRIPT_LOCK_COOLDOWN', reconciliation };
+    return { due: 0, processed: 0, stamped: 0, alreadyStamped: 0, blockedNoWork: 0, superseded: 0, retryWait: 0, skipped: true, reason: 'APPS_SCRIPT_LOCK_COOLDOWN', maintenance };
   }
   const candidateLimit = Math.max(GPS_PENDING_STAMP_BATCH_SIZE * 20, 20);
   const candidateIds = await client.zRangeByScore(
@@ -1962,14 +1894,16 @@ async function processDuePendingGpsStamps() {
     .sort(comparePendingStampRecords);
   const selectedRecords = records.slice(0, GPS_PENDING_STAMP_BATCH_SIZE);
   const pendingIds = selectedRecords.map(record => record.pendingId);
-  console.log(JSON.stringify({
-    logType: 'ELIVE_GPS_STAMP',
-    event: 'PENDING_QUEUE_SORTED',
-    candidateCount: records.length,
-    selectedPendingIds: pendingIds,
-    order: 'GPS_TIME_THEN_CREATED_AT_THEN_CODE_RUN',
-  }));
-  const summary = { due: records.length, selected: pendingIds.length, processed: 0, stamped: 0, alreadyStamped: 0, blockedNoWork: 0, superseded: 0, retryWait: 0, stoppedOnLockBusy: false, reconciliation };
+  if (records.length > 0) {
+    console.log(JSON.stringify({
+      logType: 'ELIVE_GPS_STAMP',
+      event: 'PENDING_QUEUE_SORTED',
+      candidateCount: records.length,
+      selectedPendingIds: pendingIds,
+      order: 'GPS_TIME_THEN_CREATED_AT_THEN_CODE_RUN',
+    }));
+  }
+  const summary = { due: records.length, selected: pendingIds.length, processed: 0, stamped: 0, alreadyStamped: 0, blockedNoWork: 0, superseded: 0, retryWait: 0, stoppedOnLockBusy: false, maintenance };
   for (let index = 0; index < pendingIds.length; index += 1) {
     if (gpsWorkerStopping) break;
     const result = await processPendingGpsStamp(pendingIds[index]);
@@ -2132,21 +2066,7 @@ async function reconcileSkippedRDockAfterLsp(input, data, noWorkCollector = null
       break;
     }
 
-    const response = await requestAppsScriptPost('setGpsNoWork', item);
-    const result = response?.result || response;
-    results.push(result);
-    if (result?.written !== true) break;
-    const actionProblem = 'ไม่มีงานลง (GPS AUTO: หลัง LSP ETD รถห่าง R1/R2 มากกว่า 1 กม. และเกิน Plan ETA +' + GPS_R_DOCK_NO_WORK_GRACE_MINUTES + ' นาที)';
-    updateLocalNoWorkActual(data, targetTrip.codeRun, actionProblem);
-    console.warn(JSON.stringify({
-      logType: 'ELIVE_GPS_NO_WORK', event: 'R_DOCK_AUTO_NO_WORK_CONFIRMED',
-      codeRun: targetTrip.codeRun, sourceCodeRun: previousLspTrip.codeRun,
-      licensePlate: input.licensePlate, targetDropPoint: targetTrip.dropPoint,
-      targetGeofenceId, distanceMeters: item.distanceMeters,
-      planEta: targetTrip.planEta, graceMinutes: GPS_R_DOCK_NO_WORK_GRACE_MINUTES,
-      written: true,
-    }));
-    break;
+    return results;
   }
   return results;
 }
@@ -4193,11 +4113,13 @@ app.get(['/health', '/api/health'], (req, res) => {
       dropPointGeofenceMapping: { L1: 'TPCAP-LSP', L2: 'TPCAP-LSP', L3: 'TPCAP-LSP', M1: 'TPCAP-LSP', R1: 'TPCAP-R1', R2: 'TPCAP-R2' },
       pendingStampRetryQueueEnabled: true,
       pendingStampScheduleSelfHealingEnabled: true,
-      pendingStampPendingPolicy: 'ALWAYS_DUE_IMMEDIATELY',
+      pendingStampMaintenanceIntervalSeconds: Math.floor(GPS_PENDING_STAMP_MAINTENANCE_INTERVAL_MS / 1000),
+      pendingStampMaintenanceScope: 'SCHEDULED_ACTIVE_RECORDS_ONLY',
+      pendingStampFullKeyspaceScanPerCycle: false,
+      legacyAutoStampRedisPathRemoved: true,
+      emptyPendingQueueLoggingEnabled: false,
+      pendingStampOrphanedProcessingPolicy: 'RETURN_TO_PENDING',
       pendingStampDelayedScheduleAllowedStatuses: ['RETRY_WAIT'],
-      pendingStampOrphanedProcessingPolicy: 'RETURN_TO_PENDING_IMMEDIATELY',
-      pendingStampProcessingRecoverySeconds: Math.floor(GPS_PENDING_STAMP_PROCESSING_RECOVERY_MS / 1000),
-      pendingStampReconciliationScanCount: GPS_PENDING_STAMP_RECONCILE_SCAN_COUNT,
       pendingStampSchemaVersion: 50,
       legacyEtaPendingAutoSuperseded: false,
       terminalPendingRecordCanBeRecreated: true,
@@ -5010,6 +4932,7 @@ process.on('SIGTERM', () => { void shutdown('SIGTERM'); });
 process.on('SIGINT', () => { void shutdown('SIGINT'); });
 async function startServer(){
   await initializeRedis();
+  await maintainPendingStampSchedule(true);
   startGpsBackgroundWorker();
   if (SERVICE_MODE === 'worker') {
     if (!GPS_BACKGROUND_WORKER_ENABLED) throw new Error('SERVICE_MODE worker requires GPS_BACKGROUND_WORKER_ENABLED=true.');
