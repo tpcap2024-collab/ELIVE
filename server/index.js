@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '58';
+const API_VERSION = '59';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -72,7 +72,7 @@ const GPS_PENDING_STAMP_TTL_SECONDS = 7 * 24 * 60 * 60;
 const GPS_PENDING_STAMP_LOCK_SECONDS = 90;
 const GPS_PENDING_STAMP_BASE_RETRY_MS = 30 * 1000;
 const GPS_PENDING_STAMP_MAX_RETRY_MS = 15 * 60 * 1000;
-const GPS_PENDING_STAMP_BATCH_SIZE = 1;
+const GPS_PENDING_STAMP_BATCH_SIZE = 2;
 const GPS_PENDING_STAMP_SPACING_MS = 2000;
 const GPS_PENDING_STAMP_LOCK_BUSY_BASE_RETRY_MS = 60 * 1000;
 const GPS_PENDING_STAMP_LOCK_BUSY_MAX_RETRY_MS = 15 * 60 * 1000;
@@ -1460,6 +1460,9 @@ function getEtaWindowDecision(planDate, planEta, eventTime) {
 }
 
 function comparePendingStampRecords(first, second) {
+  const firstPriority = first?.stampType === 'ETD' ? 0 : 1;
+  const secondPriority = second?.stampType === 'ETD' ? 0 : 1;
+  if (firstPriority !== secondPriority) return firstPriority - secondPriority;
   const firstGpsTime = Date.parse(first?.gpsTime || '') || Number.MAX_SAFE_INTEGER;
   const secondGpsTime = Date.parse(second?.gpsTime || '') || Number.MAX_SAFE_INTEGER;
   if (firstGpsTime !== secondGpsTime) return firstGpsTime - secondGpsTime;
@@ -1894,21 +1897,33 @@ async function processDuePendingGpsStamps() {
     .sort(comparePendingStampRecords);
   const selectedRecords = records.slice(0, GPS_PENDING_STAMP_BATCH_SIZE);
   const pendingIds = selectedRecords.map(record => record.pendingId);
+  const dueEtd = records.filter(record => record.stampType === 'ETD').length;
+  const dueEta = records.length - dueEtd;
+  const selectedEtd = selectedRecords.filter(record => record.stampType === 'ETD').length;
+  const selectedEta = selectedRecords.length - selectedEtd;
   if (records.length > 0) {
     console.log(JSON.stringify({
       logType: 'ELIVE_GPS_STAMP',
       event: 'PENDING_QUEUE_SORTED',
       candidateCount: records.length,
+      dueEtd,
+      dueEta,
+      selectedEtd,
+      selectedEta,
       selectedPendingIds: pendingIds,
-      order: 'GPS_TIME_THEN_CREATED_AT_THEN_CODE_RUN',
+      order: 'ETD_FIRST_THEN_GPS_TIME_THEN_CREATED_AT_THEN_CODE_RUN',
     }));
   }
-  const summary = { due: records.length, selected: pendingIds.length, processed: 0, stamped: 0, alreadyStamped: 0, blockedNoWork: 0, superseded: 0, retryWait: 0, stoppedOnLockBusy: false, maintenance };
+  const summary = { due: records.length, dueEtd, dueEta, selected: pendingIds.length, selectedEtd, selectedEta, processed: 0, stamped: 0, stampedEtd: 0, stampedEta: 0, alreadyStamped: 0, blockedNoWork: 0, superseded: 0, retryWait: 0, stoppedOnLockBusy: false, maintenance };
   for (let index = 0; index < pendingIds.length; index += 1) {
     if (gpsWorkerStopping) break;
     const result = await processPendingGpsStamp(pendingIds[index]);
     summary.processed += 1;
-    if (result?.status === 'STAMPED') summary.stamped += 1;
+    if (result?.status === 'STAMPED') {
+      summary.stamped += 1;
+      if (selectedRecords[index]?.stampType === 'ETD') summary.stampedEtd += 1;
+      else summary.stampedEta += 1;
+    }
     if (result?.status === 'ALREADY_STAMPED') summary.alreadyStamped += 1;
     if (result?.status === 'BLOCKED_NO_WORK') summary.blockedNoWork += 1;
     if (result?.status === 'SUPERSEDED') summary.superseded += 1;
@@ -4127,7 +4142,7 @@ app.get(['/health', '/api/health'], (req, res) => {
       pendingStampTerminalValidationErrorsBecomeSuperseded: true,
       pendingStampTerminalValidationReasons: ['IS_CANCELLED', 'ETA_AFTER_ETD'],
       pendingStampBatchSize: GPS_PENDING_STAMP_BATCH_SIZE,
-      pendingStampOrder: 'GPS_TIME_THEN_CREATED_AT_THEN_CODE_RUN',
+      pendingStampOrder: 'ETD_FIRST_THEN_GPS_TIME_THEN_CREATED_AT_THEN_CODE_RUN',
       etaEarlyWindowGuardLayers: ['MANUAL_ROUTE_ONLY'],
       pendingStampRetryBaseSeconds: Math.floor(GPS_PENDING_STAMP_BASE_RETRY_MS / 1000),
       pendingStampRetryMaximumSeconds: Math.floor(GPS_PENDING_STAMP_MAX_RETRY_MS / 1000),
