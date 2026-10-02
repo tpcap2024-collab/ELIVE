@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '54';
+const API_VERSION = '56';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -1534,6 +1534,7 @@ async function writePendingStamp(record, scheduleAtMs = null) {
   return record;
 }
 function getPendingStampScheduleScore(record, nowMs = Date.now()) {
+  // Only a genuine retry after a processing error is allowed to wait.
   if (record?.status === 'RETRY_WAIT') {
     const retryAtMs = Date.parse(record.nextRetryAt || '');
     return Number.isFinite(retryAtMs) ? retryAtMs : nowMs;
@@ -1542,57 +1543,102 @@ function getPendingStampScheduleScore(record, nowMs = Date.now()) {
 }
 
 async function ensureActivePendingStampScheduled(record, reason = 'ACTIVE_RECORD_REPAIR') {
-  if (!isActivePendingStamp(record) || !record?.pendingId) return { repaired: false };
+  if (!isActivePendingStamp(record) || !record?.pendingId) {
+    return { repaired: false, record };
+  }
+
   const client = requireRedisClient();
+  const nowMs = Date.now();
   const lockKey = getPendingStampLockKey(record.pendingId);
-  const processingUpdatedAtMs = Date.parse(record.updatedAt || record.lastAttemptAt || '');
-  const processingStale = record.status === 'PROCESSING' && (
-    !await client.exists(lockKey) ||
-    !Number.isFinite(processingUpdatedAtMs) ||
-    Date.now() - processingUpdatedAtMs > GPS_PENDING_STAMP_PROCESSING_RECOVERY_MS
-  );
+  const hasProcessingLock = record.status === 'PROCESSING'
+    ? Boolean(await client.exists(lockKey))
+    : false;
   let effectiveRecord = record;
-  if (processingStale) {
-    const nextRetryAtMs = Date.now();
+
+  // PROCESSING without its owner lock is not a retry condition. Return it to
+  // PENDING immediately so the queue can claim it again in the same cycle.
+  if (record.status === 'PROCESSING' && !hasProcessingLock) {
+    const now = new Date(nowMs).toISOString();
     effectiveRecord = {
       ...record,
-      status: 'RETRY_WAIT',
-      retryReason: 'ORPHANED_PROCESSING_RECOVERED',
+      status: 'PENDING',
+      retryReason: null,
       lastError: record.lastError || 'PROCESSING_RECORD_WITHOUT_ACTIVE_LOCK',
-      nextRetryAt: new Date(nextRetryAtMs).toISOString(),
-      updatedAt: new Date().toISOString(),
+      nextRetryAt: now,
+      updatedAt: now,
     };
-    await writePendingStamp(effectiveRecord, nextRetryAtMs);
+    await writePendingStamp(effectiveRecord, nowMs);
     console.warn(JSON.stringify({
       logType: 'ELIVE_GPS_STAMP',
-      event: 'PENDING_STAMP_PROCESSING_RECOVERED',
+      event: 'PENDING_STAMP_PROCESSING_RETURNED_TO_PENDING',
       pendingId: effectiveRecord.pendingId,
       codeRun: effectiveRecord.codeRun,
       stampType: effectiveRecord.stampType,
       reason,
     }));
-    return { repaired: true, recoveredProcessing: true, record: effectiveRecord };
+    return {
+      repaired: true,
+      returnedToPending: true,
+      record: effectiveRecord,
+    };
   }
-  const existingScore = await client.zScore(GPS_PENDING_STAMP_SCHEDULE_KEY, record.pendingId);
-  if (existingScore !== null && existingScore !== undefined) {
-    return { repaired: false, record: effectiveRecord };
+
+  // PENDING always means ready now. Do not preserve or interpret any previous
+  // schedule score. Rewrite it to the current time on every reconciliation.
+  if (effectiveRecord.status === 'PENDING') {
+    await client.zAdd(
+      GPS_PENDING_STAMP_SCHEDULE_KEY,
+      [{ score: nowMs, value: effectiveRecord.pendingId }]
+    );
+    return {
+      repaired: true,
+      pendingForcedDue: true,
+      record: effectiveRecord,
+    };
   }
-  const scheduleAtMs = getPendingStampScheduleScore(effectiveRecord);
-  await client.zAdd(
+
+  // A live PROCESSING record remains owned by its lock. Keep only a recovery
+  // deadline so a process crash cannot strand the record permanently.
+  if (effectiveRecord.status === 'PROCESSING' && hasProcessingLock) {
+    const recoveryAtMs = nowMs + GPS_PENDING_STAMP_PROCESSING_RECOVERY_MS;
+    await client.zAdd(
+      GPS_PENDING_STAMP_SCHEDULE_KEY,
+      [{ score: recoveryAtMs, value: effectiveRecord.pendingId }]
+    );
+    return {
+      repaired: false,
+      processingProtected: true,
+      record: effectiveRecord,
+    };
+  }
+
+  // RETRY_WAIT is the only status allowed to use a delayed score, and only
+  // after an actual request error or Apps Script lock-busy response.
+  const retryAtMs = getPendingStampScheduleScore(effectiveRecord, nowMs);
+  const existingScoreRaw = await client.zScore(
     GPS_PENDING_STAMP_SCHEDULE_KEY,
-    [{ score: scheduleAtMs, value: effectiveRecord.pendingId }]
+    effectiveRecord.pendingId
   );
-  console.warn(JSON.stringify({
-    logType: 'ELIVE_GPS_STAMP',
-    event: 'PENDING_STAMP_SCHEDULE_REPAIRED',
-    pendingId: effectiveRecord.pendingId,
-    codeRun: effectiveRecord.codeRun,
-    stampType: effectiveRecord.stampType,
-    pendingStatus: effectiveRecord.status,
-    scheduledAt: new Date(scheduleAtMs).toISOString(),
-    reason,
-  }));
-  return { repaired: true, recoveredProcessing: false, record: effectiveRecord };
+  const existingScore = existingScoreRaw === null || existingScoreRaw === undefined
+    ? null
+    : Number(existingScoreRaw);
+  if (existingScore === null || !Number.isFinite(existingScore) || Math.abs(existingScore - retryAtMs) > 1000) {
+    await client.zAdd(
+      GPS_PENDING_STAMP_SCHEDULE_KEY,
+      [{ score: retryAtMs, value: effectiveRecord.pendingId }]
+    );
+    console.warn(JSON.stringify({
+      logType: 'ELIVE_GPS_STAMP',
+      event: 'PENDING_STAMP_RETRY_SCHEDULE_REPAIRED',
+      pendingId: effectiveRecord.pendingId,
+      codeRun: effectiveRecord.codeRun,
+      stampType: effectiveRecord.stampType,
+      scheduledAt: new Date(retryAtMs).toISOString(),
+      reason,
+    }));
+    return { repaired: true, retryScheduleRepaired: true, record: effectiveRecord };
+  }
+  return { repaired: false, record: effectiveRecord };
 }
 
 async function reconcilePendingStampSchedule() {
@@ -1601,7 +1647,8 @@ async function reconcilePendingStampSchedule() {
   let scanned = 0;
   let active = 0;
   let repaired = 0;
-  let recoveredProcessing = 0;
+  let pendingForcedDue = 0;
+  let returnedToPending = 0;
   let invalidRemoved = 0;
   do {
     const result = await client.scan(cursor, {
@@ -1626,11 +1673,12 @@ async function reconcilePendingStampSchedule() {
       active += 1;
       const resultRepair = await ensureActivePendingStampScheduled(record, 'QUEUE_RECONCILIATION');
       if (resultRepair.repaired) repaired += 1;
-      if (resultRepair.recoveredProcessing) recoveredProcessing += 1;
+      if (resultRepair.pendingForcedDue) pendingForcedDue += 1;
+      if (resultRepair.returnedToPending) returnedToPending += 1;
     }
   } while (cursor !== '0');
-  const summary = { scanned, active, repaired, recoveredProcessing, invalidRemoved };
-  if (repaired || recoveredProcessing || invalidRemoved) {
+  const summary = { scanned, active, repaired, pendingForcedDue, returnedToPending, invalidRemoved };
+  if (repaired || returnedToPending || invalidRemoved) {
     console.warn(JSON.stringify({
       logType: 'ELIVE_GPS_STAMP',
       event: 'PENDING_QUEUE_RECONCILED',
@@ -1716,7 +1764,8 @@ async function createPendingGpsStamp(stampType, state) {
       stampType: normalizedStampType,
       pendingStatus: repair.record?.status || existing.status,
       scheduleRepaired: repair.repaired === true,
-      processingRecovered: repair.recoveredProcessing === true,
+      pendingForcedDue: repair.pendingForcedDue === true,
+      returnedToPending: repair.returnedToPending === true,
     }));
     return repair.record || existing;
   }
@@ -4144,6 +4193,9 @@ app.get(['/health', '/api/health'], (req, res) => {
       dropPointGeofenceMapping: { L1: 'TPCAP-LSP', L2: 'TPCAP-LSP', L3: 'TPCAP-LSP', M1: 'TPCAP-LSP', R1: 'TPCAP-R1', R2: 'TPCAP-R2' },
       pendingStampRetryQueueEnabled: true,
       pendingStampScheduleSelfHealingEnabled: true,
+      pendingStampPendingPolicy: 'ALWAYS_DUE_IMMEDIATELY',
+      pendingStampDelayedScheduleAllowedStatuses: ['RETRY_WAIT'],
+      pendingStampOrphanedProcessingPolicy: 'RETURN_TO_PENDING_IMMEDIATELY',
       pendingStampProcessingRecoverySeconds: Math.floor(GPS_PENDING_STAMP_PROCESSING_RECOVERY_MS / 1000),
       pendingStampReconciliationScanCount: GPS_PENDING_STAMP_RECONCILE_SCAN_COUNT,
       pendingStampSchemaVersion: 50,
