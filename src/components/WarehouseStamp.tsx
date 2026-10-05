@@ -43,9 +43,22 @@ function getPlatformGroup(
 function isInboundProject(truck: Truck): boolean {
   return String(truck.project || '').trim().toUpperCase() === 'INBOUND';
 }
-function hasNoWorkAction(truck: Truck): boolean {
+function hasGpsLostAction(truck: Truck): boolean {
+  const status = String(truck.status || '').trim().toUpperCase();
+  const performanceStatus = String(truck.performanceStatus || '').trim().toUpperCase();
   const text = String(truck.actionProblem || '');
-  return text.includes('ไม่มีงาน') || text.includes('GPS มีปัญหา');
+  return status === 'GPS_LOST' || performanceStatus === 'GPS_LOST' || text.includes('GPS มีปัญหา');
+}
+
+function hasNoWorkAction(truck: Truck): boolean {
+  const status = String(truck.status || '').trim().toUpperCase();
+  const performanceStatus = String(truck.performanceStatus || '').trim().toUpperCase();
+  const text = String(truck.actionProblem || '');
+  return !hasGpsLostAction(truck) && (
+    status === 'NO_WORK' ||
+    performanceStatus === 'NO_DROP' ||
+    text.includes('ไม่มีงาน')
+  );
 }
 
 function getPlanEtaSortValue(value?: string): number {
@@ -169,7 +182,8 @@ export function WarehouseStamp({
   };
   const activeTrucks = useMemo(() => {
     return inboundTrucks.filter(truck => {
-      if (hasNoWorkAction(truck)) return false;
+      const isNoWork = hasNoWorkAction(truck);
+      if (isNoWork && !showCompleted) return false;
       const hasBothStamps =
         Boolean(truck.stampEta) &&
         Boolean(truck.stampEtd);
@@ -242,7 +256,7 @@ export function WarehouseStamp({
   };
 
   const handleStampEta = (truck: Truck) => {
-    if (truck.stampEta || truck.actualEta) return;
+    if (hasNoWorkAction(truck) || truck.stampEta || truck.actualEta) return;
 
     const time = getCurrentTimeString();
     const performanceStatus = calculatePerformanceStatus(
@@ -262,7 +276,7 @@ export function WarehouseStamp({
 
   const handleStampEtd = (truck: Truck) => {
     const hasStampEta = Boolean(truck.stampEta || truck.actualEta);
-    if (!hasStampEta || truck.stampEtd) return;
+    if (hasNoWorkAction(truck) || !hasStampEta || truck.stampEtd) return;
 
     runBackgroundSave(truck.id, 'ETD', {
       stampEtd: getCurrentTimeString(),
@@ -431,10 +445,11 @@ export function WarehouseStamp({
                         <button
                           type="button"
                           onClick={() => handleStampEta(truck)}
-                          disabled={saveState === 'saving'}
+                          disabled={isNoWork || saveState === 'saving'}
+                          title={isNoWork ? 'รายการนี้ไม่มีงาน จึงไม่สามารถ Stamp ได้' : 'Stamp ETA'}
                           className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-blue-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-60"
                         >
-                          Stamp ETA
+                          {isNoWork ? 'ไม่มีงาน' : 'Stamp ETA'}
                         </button>
                       )}
                       {saveTypes[truck.id] === 'ETA' && saveState === 'saving' && (
@@ -457,10 +472,11 @@ export function WarehouseStamp({
                         <button
                           type="button"
                           onClick={() => handleStampEtd(truck)}
-                          disabled={!hasStampEta || saveState === 'saving'}
+                          disabled={isNoWork || !hasStampEta || saveState === 'saving'}
+                          title={isNoWork ? 'รายการนี้ไม่มีงาน จึงไม่สามารถ Stamp ได้' : 'Stamp ETD'}
                           className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-blue-700 active:scale-95 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 disabled:active:scale-100"
                         >
-                          Stamp ETD
+                          {isNoWork ? 'ไม่มีงาน' : 'Stamp ETD'}
                         </button>
                       )}
                       {saveTypes[truck.id] === 'ETD' && saveState === 'saving' && (
