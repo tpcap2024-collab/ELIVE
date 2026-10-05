@@ -407,6 +407,7 @@ export function WarehouseStamp({
                 );
 
               const saveState = saveStates[truck.id];
+              const isNoWork = hasNoWorkAction(truck);
               return (
                 <tr
                   key={truck.id}
