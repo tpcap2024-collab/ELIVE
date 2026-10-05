@@ -463,6 +463,13 @@ export default function App() {
     const currentTruck = trucksRef.current.find(truck => truck.id === id);
     if (!currentTruck) return Promise.resolve();
 
+    const isStampMutation = updates.stampEta !== undefined || updates.stampEtd !== undefined;
+    if (isStampMutation && hasNoWorkAction(currentTruck)) {
+      const error = new Error('รายการนี้ถูกระบุว่าไม่มีงาน จึงไม่สามารถ Stamp ได้');
+      setSheetError(error.message);
+      return Promise.reject(error);
+    }
+
     const noDropActionText = String(
       updates.actionProblem !== undefined
         ? updates.actionProblem
