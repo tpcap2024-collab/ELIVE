@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '60';
+const API_VERSION = '61';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -4594,6 +4594,17 @@ app.post('/api/plans/:codeRun/stamp', requireAuthentication, requireMinimumRole(
       actual: realtimeResult.realtime.actual,
       gps: realtimeResult.realtime.gps,
     }, codeRun);
+    if (trip.noWorkAction) {
+      req.auditDetails = {
+        stampType,
+        reason: 'STAMP_BLOCKED_NO_WORK',
+      };
+      return res.status(409).json({
+        success: false,
+        error: 'รายการนี้ถูกระบุว่าไม่มีงาน จึงไม่สามารถ Stamp ได้',
+        reason: 'STAMP_BLOCKED_NO_WORK',
+      });
+    }
     if (stampType === 'ETA' && trip.stampEtd) throw new Error('Cannot Stamp ETA because this trip already has Stamp ETD.');
     if (stampType === 'ETD' && !trip.stampEta) throw new Error('Stamp ETA is required before Stamp ETD.');
     const stampSource = override ? 'SUPERVISOR_OVERRIDE' : 'MANUAL';
