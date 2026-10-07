@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '62';
+const API_VERSION = '63';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -87,6 +87,10 @@ const GPS_R_DOCK_NO_WORK_ENABLED = cleanText(process.env.GPS_R_DOCK_NO_WORK_ENAB
 const GPS_R_DOCK_NO_WORK_DISTANCE_METERS = Math.max(1000, Number(process.env.GPS_R_DOCK_NO_WORK_DISTANCE_METERS || 1000));
 const GPS_R_DOCK_NO_WORK_GRACE_MINUTES = Math.max(0, Number(process.env.GPS_R_DOCK_NO_WORK_GRACE_MINUTES || 30));
 const GPS_R_DOCK_NO_WORK_BATCH_SIZE = Math.max(1, Math.min(50, Number(process.env.GPS_R_DOCK_NO_WORK_BATCH_SIZE || 25)));
+const GPS_DAILY_CLOSEOUT_ENABLED = cleanText(process.env.GPS_DAILY_CLOSEOUT_ENABLED || 'true').toLowerCase() === 'true';
+const GPS_DAILY_CLOSEOUT_START_MINUTES = 18 * 60;
+const GPS_DAILY_CLOSEOUT_KEY_PREFIX = 'elive:gps-daily-closeout:';
+const GPS_DAILY_CLOSEOUT_TTL_SECONDS = 36 * 60 * 60;
 const GPS_BACKGROUND_WORKER_ENABLED = cleanText(process.env.GPS_BACKGROUND_WORKER_ENABLED || 'false').toLowerCase() === 'true';
 const GPS_BACKGROUND_WORKER_INTERVAL_MS = Math.max(15000, Number(process.env.GPS_BACKGROUND_WORKER_INTERVAL_MS || 60000));
 const GPS_WORKER_LOCK_KEY = 'elive:gps-worker:leader';
@@ -2140,6 +2144,88 @@ async function flushGpsNoWorkBatch(noWorkCollector, data) {
   return summary;
 }
 
+function getGpsDailyCloseoutKey(operationDate) {
+  return `${GPS_DAILY_CLOSEOUT_KEY_PREFIX}${operationDate}`;
+}
+function buildGpsDailyCloseoutCandidates(data, operationDate) {
+  const planRows = Array.isArray(data?.plan) ? data.plan : [];
+  const actualRows = Array.isArray(data?.actual) ? data.actual : [];
+  const actualByCodeRun = new Map();
+  for (const row of actualRows.slice(1)) {
+    if (!Array.isArray(row)) continue;
+    const codeRun = cleanText(row[0]).toUpperCase();
+    if (codeRun) actualByCodeRun.set(codeRun, row);
+  }
+  const candidates = [];
+  for (const row of planRows.slice(1)) {
+    if (!Array.isArray(row)) continue;
+    const codeRun = cleanText(row[0]).toUpperCase();
+    if (!/^A\d+$/.test(codeRun)) continue;
+    if (parseSheetDateText(row[1]) !== operationDate) continue;
+    if (cleanText(row[8]).toUpperCase() !== 'INBOUND') continue;
+    if (cleanText(row[12]).toUpperCase() === 'CANCEL') continue;
+    const actual = actualByCodeRun.get(codeRun) || [];
+    if (cleanText(actual[4]) || cleanText(actual[5])) continue;
+    const actionProblem = cleanText(actual[6]);
+    const currentStatus = cleanText(actual[1]).toUpperCase();
+    if (currentStatus === 'NO_WORK' || actionProblem.includes('ไม่มีงาน')) continue;
+    candidates.push({
+      codeRun,
+      sourceCodeRun: '',
+      targetDropPoint: cleanText(row[9]).toUpperCase(),
+      planEta: cleanText(row[10]),
+      planDate: operationDate,
+      mode: 'DAILY_CLOSEOUT',
+      stampedBy: 'GPS DAILY CLOSEOUT',
+    });
+  }
+  return candidates;
+}
+async function runGpsDailyCloseout(data, operationDate, minuteOfDay) {
+  const empty = {
+    enabled: GPS_DAILY_CLOSEOUT_ENABLED,
+    operationDate,
+    eligible: 0,
+    deferredPendingEta: 0,
+    requested: 0,
+    written: 0,
+    alreadyFinal: 0,
+    failed: 0,
+    batches: 0,
+    completed: false,
+  };
+  if (!GPS_DAILY_CLOSEOUT_ENABLED || minuteOfDay < GPS_DAILY_CLOSEOUT_START_MINUTES) return empty;
+  const client = requireRedisClient();
+  const completionKey = getGpsDailyCloseoutKey(operationDate);
+  if (await client.exists(completionKey)) return { ...empty, completed: true, alreadyCompleted: true };
+  const selected = [];
+  let deferredPendingEta = 0;
+  for (const item of buildGpsDailyCloseoutCandidates(data, operationDate)) {
+    const pendingEta = await readPendingStamp(getPendingStampId('ETA', item.codeRun));
+    if (isActivePendingStamp(pendingEta)) {
+      deferredPendingEta += 1;
+      continue;
+    }
+    selected.push(item);
+  }
+  const summary = { ...empty, eligible: selected.length + deferredPendingEta, deferredPendingEta, requested: selected.length };
+  for (let offset = 0; offset < selected.length; offset += GPS_R_DOCK_NO_WORK_BATCH_SIZE) {
+    const items = selected.slice(offset, offset + GPS_R_DOCK_NO_WORK_BATCH_SIZE);
+    const response = await requestAppsScriptPost('setGpsNoWorkBatch', { items });
+    const result = response?.result || response;
+    summary.batches += 1;
+    summary.written += Number(result?.writtenCount || 0);
+    summary.alreadyFinal += Number(result?.alreadyFinalCount || 0);
+    summary.failed += Number(result?.failedCount || 0);
+  }
+  if (summary.failed === 0 && summary.deferredPendingEta === 0) {
+    summary.completed = true;
+    await client.set(completionKey, JSON.stringify({ ...summary, completedAt: new Date().toISOString() }), { EX: GPS_DAILY_CLOSEOUT_TTL_SECONDS });
+  }
+  console.log(JSON.stringify({ logType: 'ELIVE_GPS_DAILY_CLOSEOUT', event: summary.completed ? 'GPS_DAILY_CLOSEOUT_COMPLETED' : 'GPS_DAILY_CLOSEOUT_DEFERRED', ...summary }));
+  return summary;
+}
+
 async function evaluateGpsDock(payload, dataOverride = null, noWorkCollector = null) {
   const input = validateGpsDockPayload(payload);
   const nowMs = Date.now();
@@ -2498,6 +2584,16 @@ async function runGpsBackgroundCycle() {
     summary.snapshotWrittenAt = realtime.cachedAt || null;
     const pendingRetrySummary = await processDuePendingGpsStamps();
     summary.pendingRetry = pendingRetrySummary;
+    const closeoutMinuteOfDay = getBangkokMinuteOfDay(new Date());
+    summary.dailyCloseout = await runGpsDailyCloseout(workerData, workerDate, closeoutMinuteOfDay);
+    if (summary.dailyCloseout.written > 0 || summary.dailyCloseout.alreadyFinal > 0) {
+      const closeoutRealtime = await synchronizeGpsWorkerRealtime();
+      summary.postCloseoutRealtimeSource = closeoutRealtime.source;
+      summary.postCloseoutRealtimeSynchronized = closeoutRealtime.synchronized;
+      if (closeoutRealtime.synchronized && closeoutRealtime.realtime) {
+        workerData.actual = Array.isArray(closeoutRealtime.realtime.actual) ? closeoutRealtime.realtime.actual : workerData.actual;
+      }
+    }
     const inputs = buildBackgroundGpsInputs(workerData);
     for (const input of inputs) {
       if (gpsWorkerStopping) break;
@@ -4141,6 +4237,10 @@ app.get(['/health', '/api/health'], (req, res) => {
       rDockAutoNoWorkRequiresPreviousLspEtd: true,
       rDockAutoNoWorkBatchEnabled: true,
       rDockAutoNoWorkBatchSize: GPS_R_DOCK_NO_WORK_BATCH_SIZE,
+      dailyCloseoutEnabled: GPS_DAILY_CLOSEOUT_ENABLED,
+      dailyCloseoutStartTime: '18:00',
+      dailyCloseoutScope: 'TODAY_INBOUND_WITHOUT_ETA',
+      dailyCloseoutPendingEtaPolicy: 'DEFER_UNTIL_NEXT_CYCLE',
       rDockAutoNoWorkPostAction: 'setGpsNoWorkBatch',
       sheetsTimeOnlyIsoUsesFixedBangkokOffset: true,
       exitRequiredBeforeNextTrip: true,
