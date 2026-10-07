@@ -1436,18 +1436,22 @@ export async function fetchTrucksFromSheets(
 
     const hasGpsLostProblem = actionProblem.includes('GPS มีปัญหา');
     const hasNoWorkProblem = actionProblem.includes('ไม่มีงาน');
-    const mappedStatus: TruckStatus = hasGpsLostProblem
-      ? 'GPS_LOST'
-      : hasNoWorkProblem
-        ? 'COMPLETED'
-        : mapTruckStatus(currentStatus);
-    let performanceStatus: PerformanceStatus = hasGpsLostProblem
+    const hasCompletedGpsLostTrip = hasGpsLostProblem && Boolean(stampEta && stampEtd);
+    const hasActiveGpsLostProblem = hasGpsLostProblem && !hasCompletedGpsLostTrip;
+    const mappedStatus: TruckStatus = hasCompletedGpsLostTrip
+      ? 'COMPLETED'
+      : hasActiveGpsLostProblem
+        ? 'GPS_LOST'
+        : hasNoWorkProblem
+          ? 'COMPLETED'
+          : mapTruckStatus(currentStatus);
+    let performanceStatus: PerformanceStatus = hasActiveGpsLostProblem
       ? 'GPS_LOST'
       : hasNoWorkProblem
         ? 'NO_DROP'
         : mapPerformanceStatus(efficiencyStatus);
 
-    if (!hasGpsLostProblem && !hasNoWorkProblem && stampEta && planEta && planEtd) {
+    if (!hasActiveGpsLostProblem && !hasNoWorkProblem && stampEta && planEta && planEtd) {
       performanceStatus = calculatePerformanceStatus(planEta, planEtd, stampEta);
     }
 
@@ -1508,7 +1512,9 @@ export async function updateTruckInSheets(
   );
   const hasGpsLostProblem = actionProblem.includes('GPS มีปัญหา');
   const hasNoWorkProblem = actionProblem.includes('ไม่มีงาน');
-  let efficiencyStatus: PerformanceStatus = hasGpsLostProblem
+  const hasCompletedGpsLostTrip = hasGpsLostProblem && Boolean(stampEta && stampEtd);
+  const hasActiveGpsLostProblem = hasGpsLostProblem && !hasCompletedGpsLostTrip;
+  let efficiencyStatus: PerformanceStatus = hasActiveGpsLostProblem
     ? 'GPS_LOST'
     : hasNoWorkProblem
       ? 'NO_DROP'
@@ -1516,7 +1522,7 @@ export async function updateTruckInSheets(
         ? updates.performanceStatus
         : currentTruck.performanceStatus;
 
-  if (!hasGpsLostProblem && !hasNoWorkProblem && stampEta && currentTruck.planEta && currentTruck.planEtd) {
+  if (!hasActiveGpsLostProblem && !hasNoWorkProblem && stampEta && currentTruck.planEta && currentTruck.planEtd) {
     efficiencyStatus = calculatePerformanceStatus(
       currentTruck.planEta,
       currentTruck.planEtd,
@@ -1524,13 +1530,15 @@ export async function updateTruckInSheets(
     );
   }
 
-  const effectiveStatus: TruckStatus = hasGpsLostProblem
-    ? 'GPS_LOST'
-    : hasNoWorkProblem
-      ? 'COMPLETED'
-      : updates.status !== undefined
-        ? updates.status
-        : currentTruck.status;
+  const effectiveStatus: TruckStatus = hasCompletedGpsLostTrip
+    ? 'COMPLETED'
+    : hasActiveGpsLostProblem
+      ? 'GPS_LOST'
+      : hasNoWorkProblem
+        ? 'COMPLETED'
+        : updates.status !== undefined
+          ? updates.status
+          : currentTruck.status;
 
   const newRow = [
     truckId,
@@ -1566,11 +1574,20 @@ export async function updateTruckInSheets(
     throw new Error('The server did not confirm the update.');
   }
   const confirmedRow = Array.isArray(result.confirmedActualRow) ? result.confirmedActualRow : null;
+  const confirmedStampEta = confirmedRow ? parseGoogleSheetsTime(confirmedRow[4]) : '';
+  const confirmedStampEtd = confirmedRow ? parseGoogleSheetsTime(confirmedRow[5]) : '';
+  const confirmedActionProblem = confirmedRow ? String(confirmedRow[6] || '') : '';
+  const confirmedCompletedGpsLostTrip =
+    confirmedActionProblem.includes('GPS มีปัญหา') && Boolean(confirmedStampEta && confirmedStampEtd);
   const confirmed = confirmedRow ? {
-    status: mapTruckStatus(String(confirmedRow[1] || currentTruck.status)),
-    performanceStatus: mapPerformanceStatus(String(confirmedRow[2] || currentTruck.performanceStatus)),
-    stampEta: parseGoogleSheetsTime(confirmedRow[4]),
-    stampEtd: parseGoogleSheetsTime(confirmedRow[5]),
+    status: confirmedCompletedGpsLostTrip
+      ? 'COMPLETED' as TruckStatus
+      : mapTruckStatus(String(confirmedRow[1] || currentTruck.status)),
+    performanceStatus: confirmedCompletedGpsLostTrip && currentTruck.planEta && currentTruck.planEtd
+      ? calculatePerformanceStatus(currentTruck.planEta, currentTruck.planEtd, confirmedStampEta)
+      : mapPerformanceStatus(String(confirmedRow[2] || currentTruck.performanceStatus)),
+    stampEta: confirmedStampEta,
+    stampEtd: confirmedStampEtd,
     actionProblem: String(confirmedRow[6] || ''),
     actionCountermeasure: String(confirmedRow[7] || ''),
     actionResponsible: String(confirmedRow[8] || ''),
