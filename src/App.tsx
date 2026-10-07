@@ -758,11 +758,17 @@ export default function App() {
   const shouldShowTruck = (truck: Truck): boolean => {
     if (showHiddenRows) return true;
 
-    // NO DROP / NO WORK is treated as a completed operational outcome.
+    // NO DROP / NO WORK is a completed operational outcome.
     if (hasNoWorkAction(truck)) return false;
 
-    // GPS LOST remains visible because the issue still requires follow-up.
-    if (hasGpsLostAction(truck)) return true;
+    const hasActualEta = Boolean(truck.stampEta || truck.actualEta);
+    const hasActualEtd = Boolean(truck.stampEtd);
+
+    // GPS LOST remains visible only while the trip still needs follow-up.
+    // Once ETA and ETD are both recorded, hide it like other completed trips.
+    if (hasGpsLostAction(truck)) {
+      return !(hasActualEta && hasActualEtd);
+    }
 
     if (truck.status !== 'COMPLETED' && truck.status !== 'TRUCK_OUT') return true;
     if (!truck.stampEtd) return true;
