@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '61';
+const API_VERSION = '62';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -1798,6 +1798,28 @@ async function processPendingGpsStamp(pendingId) {
       }
       const currentBangkokMinutes = getBangkokMinuteOfDay(new Date());
       const activeShiftWindow = getGpsEtaShiftWindow(currentBangkokMinutes);
+      const etaEventWindow = getEtaWindowDecision(
+        currentTrip.planDate,
+        currentTrip.planEta,
+        record.gpsTime
+      );
+      if (!etaEventWindow.allowed) {
+        console.warn(JSON.stringify({
+          logType: 'ELIVE_GPS_STAMP',
+          event: 'PENDING_ETA_SUPERSEDED_GPS_EVENT_OUTSIDE_PLAN_WINDOW',
+          pendingId,
+          codeRun: record.codeRun,
+          gpsTime: record.gpsTime,
+          planDate: currentTrip.planDate,
+          planEta: currentTrip.planEta,
+          reason: etaEventWindow.reason,
+          earlyWindowMinutes: etaEventWindow.earlyWindowMinutes ?? GPS_NEXT_TRIP_EARLY_WINDOW_MINUTES,
+        }));
+        return await closePendingStamp(record, 'SUPERSEDED', {
+          lastError: etaEventWindow.reason || 'GPS_EVENT_OUTSIDE_PLAN_WINDOW',
+          terminalReason: 'GPS_EVENT_TIME_REVALIDATION_FAILED',
+        });
+      }
       if (!isPlanAllowedForGpsEtaShift(currentTrip.planEtaMinutes, currentBangkokMinutes)) {
         console.warn(JSON.stringify({
           logType: 'ELIVE_GPS_STAMP',
@@ -4079,12 +4101,12 @@ app.get(['/health', '/api/health'], (req, res) => {
       tripSelectionPolicy: 'IN_PROGRESS_THEN_ACTIVE_SHIFT_THEN_MATCHING_GEOFENCE_EARLIEST_UNSTAMPED_PLAN_SINGLE_CANDIDATE',
       activeTripLockEnabled: true,
       singleEtaCandidatePerVehicleCycle: true,
-      lspStampCopyToM1Enabled: true,
-      lspStampCopyTargets: ['M1-1', 'M1-2'],
-      lspStampCopyMatchKeys: ['PLAN_DATE', 'LICENSE_PLATE'],
-      futureTripGuardEnabled: false,
+      lspStampCopyToM1Enabled: false,
+      lspStampCopyTargets: [],
+      lspStampCopyMatchKeys: [],
+      futureTripGuardEnabled: true,
       etaPermissiveModeEnabled: true,
-      etaFiltersRemoved: ['GPS_FRESHNESS', 'DUPLICATE', 'OUT_OF_ORDER', 'PLAN_WINDOW', 'ARRIVAL_GROUP_30_MINUTES'],
+      etaFiltersRemoved: ['GPS_FRESHNESS', 'DUPLICATE', 'OUT_OF_ORDER', 'ARRIVAL_GROUP_30_MINUTES'],
       etaShiftGuardEnabled: true,
       etaShiftSelectionUsesCurrentBangkokTime: true,
       pendingEtaShiftRevalidationEnabled: true,
@@ -4143,7 +4165,7 @@ app.get(['/health', '/api/health'], (req, res) => {
       pendingStampTerminalValidationReasons: ['IS_CANCELLED', 'ETA_AFTER_ETD'],
       pendingStampBatchSize: GPS_PENDING_STAMP_BATCH_SIZE,
       pendingStampOrder: 'ETD_FIRST_THEN_GPS_TIME_THEN_CREATED_AT_THEN_CODE_RUN',
-      etaEarlyWindowGuardLayers: ['MANUAL_ROUTE_ONLY'],
+      etaEarlyWindowGuardLayers: ['MANUAL_ROUTE', 'PENDING_AUTO_ETA_PRE_SEND'],
       pendingStampRetryBaseSeconds: Math.floor(GPS_PENDING_STAMP_BASE_RETRY_MS / 1000),
       pendingStampRetryMaximumSeconds: Math.floor(GPS_PENDING_STAMP_MAX_RETRY_MS / 1000),
       etdRule: 'NORMAL_EXIT_AFTER_INSIDE_OR_OPEN_ETA_RECONCILIATION_ON_ANY_SAME_DAY_GPS_OUTSIDE_TARGET_GEOFENCE',
