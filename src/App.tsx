@@ -118,7 +118,12 @@ function hasGpsLostAction(truck: Truck): boolean {
   const status = String(truck.status || '').trim().toUpperCase();
   const performanceStatus = String(truck.performanceStatus || '').trim().toUpperCase();
   const text = String(truck.actionProblem || '');
-  return status === 'GPS_LOST' || performanceStatus === 'GPS_LOST' || text.includes('GPS มีปัญหา');
+  const hasCompletedTrip = Boolean((truck.stampEta || truck.actualEta) && truck.stampEtd);
+  return !hasCompletedTrip && (
+    status === 'GPS_LOST' ||
+    performanceStatus === 'GPS_LOST' ||
+    text.includes('GPS มีปัญหา')
+  );
 }
 function hasNoWorkAction(truck: Truck): boolean {
   const status = String(truck.status || '').trim().toUpperCase();
@@ -475,7 +480,10 @@ export default function App() {
         ? updates.actionProblem
         : currentTruck.actionProblem || ''
     );
-    const willBeGpsLost = noDropActionText.includes('GPS มีปัญหา');
+    const nextStampEta = updates.stampEta !== undefined ? updates.stampEta : currentTruck.stampEta || currentTruck.actualEta;
+    const nextStampEtd = updates.stampEtd !== undefined ? updates.stampEtd : currentTruck.stampEtd;
+    const hasCompletedGpsLostTrip = Boolean(nextStampEta && nextStampEtd);
+    const willBeGpsLost = noDropActionText.includes('GPS มีปัญหา') && !hasCompletedGpsLostTrip;
     const willBeNoDrop = !willBeGpsLost && noDropActionText.includes('ไม่มีงาน');
     const optimisticTruck = {
       ...currentTruck,
@@ -758,17 +766,11 @@ export default function App() {
   const shouldShowTruck = (truck: Truck): boolean => {
     if (showHiddenRows) return true;
 
-    // NO DROP / NO WORK is a completed operational outcome.
+    // NO DROP / NO WORK is treated as a completed operational outcome.
     if (hasNoWorkAction(truck)) return false;
 
-    const hasActualEta = Boolean(truck.stampEta || truck.actualEta);
-    const hasActualEtd = Boolean(truck.stampEtd);
-
-    // GPS LOST remains visible only while the trip still needs follow-up.
-    // Once ETA and ETD are both recorded, hide it like other completed trips.
-    if (hasGpsLostAction(truck)) {
-      return !(hasActualEta && hasActualEtd);
-    }
+    // GPS LOST remains visible because the issue still requires follow-up.
+    if (hasGpsLostAction(truck)) return true;
 
     if (truck.status !== 'COMPLETED' && truck.status !== 'TRUCK_OUT') return true;
     if (!truck.stampEtd) return true;
