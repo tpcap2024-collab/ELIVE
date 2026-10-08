@@ -59,15 +59,6 @@ type GeofenceEvaluation = GeofenceConfig & {
   distanceMeters: number;
   isInside: boolean;
 };
-type DebugRouteResult = RouteToTpcapResult & {
-  blocked?: boolean;
-  reason?: string;
-  warning?: string;
-  forbiddenIntersection?: {
-    routeSegmentIndex?: number;
-    distanceMeters?: number;
-  };
-};
 const DEFAULT_GEOFENCE_RADIUS_METERS = 50;
 const GPS_GEOFENCES: GeofenceConfig[] = [
   {
@@ -107,13 +98,23 @@ const TPCAP_POSITION:
     13.623729606202758,
     101.01501162061923,
   ];
-const TPCAP_FORBIDDEN_ROUTE_DEBUG = {
-  name: 'FORBIDDEN ROUTE 20 M',
-  latitude: 13.61100594245636,
-  longitude: 101.02291747681245,
-  radiusMeters: 20,
-  color: '#dc2626',
-};
+
+const TPCAP_FORBIDDEN_ROUTE_DEBUG_POINTS = [
+  {
+    name: 'FORBIDDEN ROUTE 1 - 20 M',
+    latitude: 13.61100594245636,
+    longitude: 101.02291747681245,
+    radiusMeters: 20,
+    color: '#dc2626',
+  },
+  {
+    name: 'FORBIDDEN ROUTE 2 - 20 M',
+    latitude: 13.608574856374567,
+    longitude: 101.02126021577799,
+    radiusMeters: 20,
+    color: '#b91c1c',
+  },
+];
 
 function parseGpsDateTime(
   value?: string
@@ -611,7 +612,7 @@ export function LiveMap({
   const [
     routeResult,
     setRouteResult,
-  ] = useState<DebugRouteResult | null>(
+  ] = useState<RouteToTpcapResult | null>(
     null
   );
 
@@ -913,46 +914,43 @@ export function LiveMap({
     if (!map || !geofenceLayer) return;
     geofenceLayer.clearLayers();
 
-    const forbiddenPosition: [number, number] = [
-      TPCAP_FORBIDDEN_ROUTE_DEBUG.latitude,
-      TPCAP_FORBIDDEN_ROUTE_DEBUG.longitude,
-    ];
-
-    L.circle(forbiddenPosition, {
-      radius: TPCAP_FORBIDDEN_ROUTE_DEBUG.radiusMeters,
-      color: TPCAP_FORBIDDEN_ROUTE_DEBUG.color,
-      weight: 4,
-      opacity: 1,
-      fillColor: TPCAP_FORBIDDEN_ROUTE_DEBUG.color,
-      fillOpacity: 0.28,
-      dashArray: '6 4',
-    }).addTo(geofenceLayer);
-
-    L.marker(forbiddenPosition, {
-      icon: createGeofenceMarkerIcon(
-        TPCAP_FORBIDDEN_ROUTE_DEBUG.name,
-        TPCAP_FORBIDDEN_ROUTE_DEBUG.color
-      ),
-      title: TPCAP_FORBIDDEN_ROUTE_DEBUG.name,
-      zIndexOffset: 850,
-    })
-      .bindPopup(`
-        <div style="font-family:system-ui,sans-serif;min-width:180px;">
-          <div style="font-size:14px;font-weight:800;color:#b91c1c;">
-            FORBIDDEN ROUTE
+    for (const forbiddenPoint of TPCAP_FORBIDDEN_ROUTE_DEBUG_POINTS) {
+      const forbiddenPosition: [number, number] = [
+        forbiddenPoint.latitude,
+        forbiddenPoint.longitude,
+      ];
+      L.circle(forbiddenPosition, {
+        radius: forbiddenPoint.radiusMeters,
+        color: forbiddenPoint.color,
+        weight: 4,
+        opacity: 1,
+        fillColor: forbiddenPoint.color,
+        fillOpacity: 0.28,
+        dashArray: '6 4',
+      }).addTo(geofenceLayer);
+      L.marker(forbiddenPosition, {
+        icon: createGeofenceMarkerIcon(forbiddenPoint.name, forbiddenPoint.color),
+        title: forbiddenPoint.name,
+        zIndexOffset: 850,
+      })
+        .bindPopup(`
+          <div style="font-family:system-ui,sans-serif;min-width:190px;">
+            <div style="font-size:14px;font-weight:800;color:#b91c1c;">
+              ${forbiddenPoint.name}
+            </div>
+            <div style="margin-top:5px;font-size:12px;color:#334155;">
+              จุดห้ามใช้สำหรับคำนวณเส้นทาง
+            </div>
+            <div style="margin-top:4px;font-size:12px;color:#334155;">
+              รัศมี ${forbiddenPoint.radiusMeters} เมตร
+            </div>
+            <div style="margin-top:4px;font-size:11px;color:#64748b;">
+              ${forbiddenPoint.latitude}, ${forbiddenPoint.longitude}
+            </div>
           </div>
-          <div style="margin-top:5px;font-size:12px;color:#334155;">
-            จุดตรวจสอบเส้นทางต้องห้าม
-          </div>
-          <div style="margin-top:4px;font-size:12px;color:#334155;">
-            รัศมี 20 เมตร
-          </div>
-          <div style="margin-top:4px;font-size:11px;color:#64748b;">
-            13.61100594245636, 101.02291747681245
-          </div>
-        </div>
-      `)
-      .addTo(geofenceLayer);
+        `)
+        .addTo(geofenceLayer);
+    }
 
     const geofencesToShow = showGeofenceDebug
       ? GPS_GEOFENCES
@@ -1176,17 +1174,9 @@ export function LiveMap({
             return;
           }
 
-          const debugResult = result as DebugRouteResult;
-          setRouteResult(debugResult);
-          if (debugResult.blocked) {
-            const hitDistance = Number(debugResult.forbiddenIntersection?.distanceMeters);
-            const distanceText = Number.isFinite(hitDistance)
-              ? ` ระยะใกล้ที่สุด ${hitDistance.toFixed(2)} เมตร`
-              : '';
-            setRouteError(
-              `${debugResult.warning || 'เส้นทางผ่านจุดที่ระบบกำหนดว่าห้ามใช้'}${distanceText}`
-            );
-          }
+          setRouteResult(
+            result
+          );
         } catch (error) {
           if (
             routeRequestIdRef.current !==
@@ -1333,14 +1323,9 @@ export function LiveMap({
           latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180
         );
       if (routePoints.length >= 2) {
-        const isBlockedRoute = routeResult.blocked === true;
         L.polyline(routePoints, {
-          color: isBlockedRoute ? '#dc2626' : '#0284c7',
-          weight: isBlockedRoute ? 7 : 6,
-          opacity: 0.9,
-          dashArray: isBlockedRoute ? '12 10' : undefined,
-          lineCap: 'round',
-          lineJoin: 'round',
+          color: '#0284c7', weight: 6, opacity: 0.9,
+          lineCap: 'round', lineJoin: 'round',
         }).addTo(routeLayer);
         const bounds = L.latLngBounds(routePoints);
         bounds.extend(truckPosition);
