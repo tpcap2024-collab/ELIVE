@@ -483,9 +483,9 @@ function createTpcapMarkerIcon():
               width:40px;
               height:40px;
               border-radius:50% 50% 50% 0;
-              background:#ef4444;
-              border:4px solid white;
-              box-shadow:0 5px 16px rgba(185,28,28,0.45);
+              background:#ff0000;
+              border:4px solid #050505;
+              box-shadow:0 0 0 3px white,0 6px 20px rgba(255,0,0,0.75);
               transform:rotate(-45deg);
               box-sizing:border-box;
             "
@@ -500,6 +500,7 @@ function createTpcapMarkerIcon():
               height:14px;
               border-radius:50%;
               background:white;
+              box-shadow:0 0 0 2px #050505;
             "
           ></div>
         </div>
@@ -510,8 +511,8 @@ function createTpcapMarkerIcon():
             padding:4px 9px;
             border-radius:6px;
             background:white;
-            border:1px solid #fecaca;
-            color:#b91c1c;
+            border:2px solid #050505;
+            color:#ff0000;
             font-size:11px;
             font-weight:700;
             white-space:nowrap;
@@ -1268,8 +1269,20 @@ export function LiveMap({
         );
       if (routePoints.length >= 2) {
         L.polyline(routePoints, {
-          color: '#0284c7', weight: 6, opacity: 0.9,
-          lineCap: 'round', lineJoin: 'round',
+          color: '#050505',
+          weight: 13,
+          opacity: 0.98,
+          lineCap: 'round',
+          lineJoin: 'round',
+          interactive: false,
+        }).addTo(routeLayer);
+        L.polyline(routePoints, {
+          color: '#003cff',
+          weight: 8,
+          opacity: 1,
+          lineCap: 'round',
+          lineJoin: 'round',
+          interactive: false,
         }).addTo(routeLayer);
         const bounds = L.latLngBounds(routePoints);
         bounds.extend(truckPosition);
