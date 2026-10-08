@@ -99,23 +99,6 @@ const TPCAP_POSITION:
     101.01501162061923,
   ];
 
-const TPCAP_FORBIDDEN_ROUTE_DEBUG_POINTS = [
-  {
-    name: 'FORBIDDEN ROUTE 1 - 20 M',
-    latitude: 13.61100594245636,
-    longitude: 101.02291747681245,
-    radiusMeters: 20,
-    color: '#dc2626',
-  },
-  {
-    name: 'FORBIDDEN ROUTE 2 - 20 M',
-    latitude: 13.608574856374567,
-    longitude: 101.02126021577799,
-    radiusMeters: 20,
-    color: '#b91c1c',
-  },
-];
-
 function parseGpsDateTime(
   value?: string
 ): Date | null {
@@ -913,45 +896,6 @@ export function LiveMap({
     const geofenceLayer = geofenceLayerRef.current;
     if (!map || !geofenceLayer) return;
     geofenceLayer.clearLayers();
-
-    for (const forbiddenPoint of TPCAP_FORBIDDEN_ROUTE_DEBUG_POINTS) {
-      const forbiddenPosition: [number, number] = [
-        forbiddenPoint.latitude,
-        forbiddenPoint.longitude,
-      ];
-      L.circle(forbiddenPosition, {
-        radius: forbiddenPoint.radiusMeters,
-        color: forbiddenPoint.color,
-        weight: 4,
-        opacity: 1,
-        fillColor: forbiddenPoint.color,
-        fillOpacity: 0.28,
-        dashArray: '6 4',
-      }).addTo(geofenceLayer);
-      L.marker(forbiddenPosition, {
-        icon: createGeofenceMarkerIcon(forbiddenPoint.name, forbiddenPoint.color),
-        title: forbiddenPoint.name,
-        zIndexOffset: 850,
-      })
-        .bindPopup(`
-          <div style="font-family:system-ui,sans-serif;min-width:190px;">
-            <div style="font-size:14px;font-weight:800;color:#b91c1c;">
-              ${forbiddenPoint.name}
-            </div>
-            <div style="margin-top:5px;font-size:12px;color:#334155;">
-              จุดห้ามใช้สำหรับคำนวณเส้นทาง
-            </div>
-            <div style="margin-top:4px;font-size:12px;color:#334155;">
-              รัศมี ${forbiddenPoint.radiusMeters} เมตร
-            </div>
-            <div style="margin-top:4px;font-size:11px;color:#64748b;">
-              ${forbiddenPoint.latitude}, ${forbiddenPoint.longitude}
-            </div>
-          </div>
-        `)
-        .addTo(geofenceLayer);
-    }
-
     const geofencesToShow = showGeofenceDebug
       ? GPS_GEOFENCES
       : selectedGeofenceEvaluation
