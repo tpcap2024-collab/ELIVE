@@ -4978,15 +4978,39 @@ app.get('/api/route-to-tpcap', requireAuthentication, requireMinimumRole('TV_VIE
         },
         ...forbiddenIntersection,
       }));
-      return res.status(409).json({
-        success: false,
-        error: 'เส้นทางที่คำนวณได้ผ่านจุดที่ระบบกำหนดว่าห้ามใช้',
+      const distanceMeters = Number(route.distance);
+      const durationSeconds = Number(route.duration);
+      const estimatedArrival = new Date(Date.now() + durationSeconds * 1000);
+
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(200).json({
+        success: true,
+        blocked: true,
         reason: 'ROUTE_BLOCKED_BY_FORBIDDEN_POINT',
+        warning: 'เส้นทางที่คำนวณได้ผ่านจุดที่ระบบกำหนดว่าห้ามใช้',
+        origin: { latitude, longitude },
+        waypoint: {
+          name: 'TPCAP Green Entry',
+          latitude: TPCAP_GREEN_ENTRY_LATITUDE,
+          longitude: TPCAP_GREEN_ENTRY_LONGITUDE,
+        },
+        destination: {
+          name: 'TPCAP',
+          latitude: TPCAP_LATITUDE,
+          longitude: TPCAP_LONGITUDE,
+        },
         forbiddenPoint: {
           latitude: TPCAP_FORBIDDEN_ROUTE_LATITUDE,
           longitude: TPCAP_FORBIDDEN_ROUTE_LONGITUDE,
           radiusMeters: TPCAP_FORBIDDEN_ROUTE_RADIUS_METERS,
         },
+        forbiddenIntersection,
+        distanceMeters,
+        distanceKilometers: Number((distanceMeters / 1000).toFixed(1)),
+        durationSeconds,
+        durationMinutes: Math.max(1, Math.round(durationSeconds / 60)),
+        estimatedArrival: estimatedArrival.toISOString(),
+        geometry: route.geometry,
         timestamp: new Date().toISOString(),
       });
     }
