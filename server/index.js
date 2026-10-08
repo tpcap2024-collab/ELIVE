@@ -4921,74 +4921,161 @@ app.post('/api/trucks/update', requireAuthentication, requireMinimumRole('OPERAT
 
 app.get('/api/route-to-tpcap', requireAuthentication, requireMinimumRole('TV_VIEWER'), async (req, res) => {
   try {
-    const latitude = Number(req.query.lat);
-    const longitude = Number(req.query.lng);
+    const latitude = Number(req.query.latitude);
+    const longitude = Number(req.query.longitude);
 
     if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) {
-      throw new Error('Latitude is invalid.');
+      return res.status(400).json({ success: false, error: 'Invalid latitude.' });
     }
-
     if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
-      throw new Error('Longitude is invalid.');
+      return res.status(400).json({ success: false, error: 'Invalid longitude.' });
     }
 
-    const coordinates =
-      `${longitude},${latitude};` +
-      `${TPCAP_GREEN_ENTRY_LONGITUDE},${TPCAP_GREEN_ENTRY_LATITUDE};` +
-      `${TPCAP_LONGITUDE},${TPCAP_LATITUDE}`;
-
-    const routeUrl =
-      `${OSRM_BASE_URL}/route/v1/driving/${coordinates}` +
-      '?overview=full&geometries=geojson&steps=false';
-
-    const routeResponse = await fetchWithTimeout(
-      routeUrl,
-      {
-        method: 'GET',
-        headers: {
-          Accept: 'application/json',
-          'User-Agent': `ELIVE-API/${API_VERSION}.0`,
+    const requestRoute = async (waypoints) => {
+      const coordinates = waypoints
+        .map((point) => `${point.longitude},${point.latitude}`)
+        .join(';');
+      const routeUrl =
+        `${OSRM_BASE_URL}/route/v1/driving/${coordinates}` +
+        '?overview=full&geometries=geojson&steps=false&alternatives=true';
+      const routeResponse = await fetchWithTimeout(
+        routeUrl,
+        {
+          method: 'GET',
+          headers: {
+            Accept: 'application/json',
+            'User-Agent': `ELIVE-API/${API_VERSION}.0`,
+          },
         },
+        ROUTE_TIMEOUT_MS
+      );
+      const routeData = parseJsonText(
+        await routeResponse.text(),
+        'Routing service returned invalid JSON.'
+      );
+      if (!routeResponse.ok || routeData.code !== 'Ok') {
+        throw new Error(routeData.message || 'No driving route was found.');
+      }
+      return Array.isArray(routeData.routes) ? routeData.routes : [];
+    };
+
+    const destinationWaypoints = [
+      {
+        latitude: TPCAP_GREEN_ENTRY_LATITUDE,
+        longitude: TPCAP_GREEN_ENTRY_LONGITUDE,
       },
-      ROUTE_TIMEOUT_MS
-    );
+      { latitude: TPCAP_LATITUDE, longitude: TPCAP_LONGITUDE },
+    ];
+    const origin = { latitude, longitude };
+    const normalRoutes = await requestRoute([origin, ...destinationWaypoints]);
+    if (normalRoutes.length === 0) throw new Error('No driving route was found.');
 
-    const routeData = parseJsonText(
-      await routeResponse.text(),
-      'Routing service returned invalid JSON.'
-    );
+    let selectedRoute = normalRoutes
+      .filter((candidate) => !getForbiddenRoutePointHit(candidate.geometry))
+      .sort((left, right) => Number(left.duration) - Number(right.duration))[0] || null;
+    const blockedRoute = normalRoutes[0];
+    let rerouted = false;
+    let selectedAvoidPoint = null;
+    let attemptedCandidates = 0;
 
-    if (!routeResponse.ok || routeData.code !== 'Ok') {
-      throw new Error(routeData.message || 'No driving route was found.');
+    if (!selectedRoute) {
+      const toRadians = (degrees) => degrees * Math.PI / 180;
+      const toDegrees = (radians) => radians * 180 / Math.PI;
+      const pointAtDistanceAndBearing = (center, distanceMeters, bearingDegrees) => {
+        const earthRadiusMeters = 6371000;
+        const angularDistance = distanceMeters / earthRadiusMeters;
+        const bearing = toRadians(bearingDegrees);
+        const latitude1 = toRadians(center.latitude);
+        const longitude1 = toRadians(center.longitude);
+        const latitude2 = Math.asin(
+          Math.sin(latitude1) * Math.cos(angularDistance) +
+          Math.cos(latitude1) * Math.sin(angularDistance) * Math.cos(bearing)
+        );
+        const longitude2 = longitude1 + Math.atan2(
+          Math.sin(bearing) * Math.sin(angularDistance) * Math.cos(latitude1),
+          Math.cos(angularDistance) - Math.sin(latitude1) * Math.sin(latitude2)
+        );
+        return {
+          latitude: toDegrees(latitude2),
+          longitude: toDegrees(longitude2),
+          distanceMeters,
+          bearingDegrees,
+        };
+      };
+
+      const forbiddenCenter = {
+        latitude: TPCAP_FORBIDDEN_ROUTE_LATITUDE,
+        longitude: TPCAP_FORBIDDEN_ROUTE_LONGITUDE,
+      };
+      const avoidDistancesMeters = [120, 200, 350];
+      const avoidBearingsDegrees = [0, 45, 90, 135, 180, 225, 270, 315];
+      const avoidPoints = avoidDistancesMeters.flatMap((distanceMeters) =>
+        avoidBearingsDegrees.map((bearingDegrees) =>
+          pointAtDistanceAndBearing(forbiddenCenter, distanceMeters, bearingDegrees)
+        )
+      );
+      const validCandidates = [];
+      const batchSize = 4;
+
+      for (let offset = 0; offset < avoidPoints.length; offset += batchSize) {
+        const batch = avoidPoints.slice(offset, offset + batchSize);
+        const batchResults = await Promise.allSettled(
+          batch.map(async (avoidPoint) => {
+            attemptedCandidates += 1;
+            const routes = await requestRoute([
+              origin,
+              { latitude: avoidPoint.latitude, longitude: avoidPoint.longitude },
+              ...destinationWaypoints,
+            ]);
+            return routes
+              .filter((candidate) => !getForbiddenRoutePointHit(candidate.geometry))
+              .map((candidate) => ({ route: candidate, avoidPoint }));
+          })
+        );
+        for (const result of batchResults) {
+          if (result.status === 'fulfilled') validCandidates.push(...result.value);
+        }
+      }
+
+      validCandidates.sort(
+        (left, right) => Number(left.route.duration) - Number(right.route.duration)
+      );
+      if (validCandidates.length > 0) {
+        selectedRoute = validCandidates[0].route;
+        selectedAvoidPoint = validCandidates[0].avoidPoint;
+        rerouted = true;
+        console.info(JSON.stringify({
+          logType: 'ELIVE_ROUTE',
+          event: 'FORBIDDEN_ROUTE_REROUTED',
+          origin,
+          attemptedCandidates,
+          validCandidates: validCandidates.length,
+          selectedAvoidPoint,
+          distanceMeters: Number(selectedRoute.distance),
+          durationSeconds: Number(selectedRoute.duration),
+        }));
+      }
     }
 
-    const route = Array.isArray(routeData.routes) ? routeData.routes[0] : null;
-    if (!route) throw new Error('No driving route was found.');
-
-    const forbiddenIntersection = getForbiddenRoutePointHit(route.geometry);
-    if (forbiddenIntersection) {
+    if (!selectedRoute) {
+      const forbiddenIntersection = getForbiddenRoutePointHit(blockedRoute.geometry);
       console.warn(JSON.stringify({
         logType: 'ELIVE_ROUTE',
-        event: 'ROUTE_BLOCKED_BY_FORBIDDEN_POINT',
-        origin: { latitude, longitude },
-        forbiddenPoint: {
-          latitude: TPCAP_FORBIDDEN_ROUTE_LATITUDE,
-          longitude: TPCAP_FORBIDDEN_ROUTE_LONGITUDE,
-          radiusMeters: TPCAP_FORBIDDEN_ROUTE_RADIUS_METERS,
-        },
-        ...forbiddenIntersection,
+        event: 'FORBIDDEN_ROUTE_NO_SAFE_ALTERNATIVE',
+        origin,
+        attemptedCandidates,
+        forbiddenIntersection,
       }));
-      const distanceMeters = Number(route.distance);
-      const durationSeconds = Number(route.duration);
-      const estimatedArrival = new Date(Date.now() + durationSeconds * 1000);
-
+      const distanceMeters = Number(blockedRoute.distance);
+      const durationSeconds = Number(blockedRoute.duration);
       res.setHeader('Cache-Control', 'no-store');
       return res.status(200).json({
         success: true,
         blocked: true,
+        rerouted: false,
         reason: 'ROUTE_BLOCKED_BY_FORBIDDEN_POINT',
-        warning: 'เส้นทางที่คำนวณได้ผ่านจุดที่ระบบกำหนดว่าห้ามใช้',
-        origin: { latitude, longitude },
+        warning: 'ไม่พบเส้นทางอื่นที่หลบจุดห้ามใช้ได้',
+        origin,
         waypoint: {
           name: 'TPCAP Green Entry',
           latitude: TPCAP_GREEN_ENTRY_LATITUDE,
@@ -5005,25 +5092,28 @@ app.get('/api/route-to-tpcap', requireAuthentication, requireMinimumRole('TV_VIE
           radiusMeters: TPCAP_FORBIDDEN_ROUTE_RADIUS_METERS,
         },
         forbiddenIntersection,
+        attemptedCandidates,
         distanceMeters,
         distanceKilometers: Number((distanceMeters / 1000).toFixed(1)),
         durationSeconds,
         durationMinutes: Math.max(1, Math.round(durationSeconds / 60)),
-        estimatedArrival: estimatedArrival.toISOString(),
-        geometry: route.geometry,
+        geometry: blockedRoute.geometry,
         timestamp: new Date().toISOString(),
       });
     }
 
-    const distanceMeters = Number(route.distance);
-    const durationSeconds = Number(route.duration);
+    const distanceMeters = Number(selectedRoute.distance);
+    const durationSeconds = Number(selectedRoute.duration);
     const estimatedArrival = new Date(Date.now() + durationSeconds * 1000);
-
-    res.setHeader('Cache-Control', 'public, max-age=45');
-
+    res.setHeader('Cache-Control', rerouted ? 'no-store' : 'public, max-age=45');
     return res.status(200).json({
       success: true,
-      origin: { latitude, longitude },
+      blocked: false,
+      rerouted,
+      routeSelection: rerouted ? 'SAFE_ALTERNATIVE' : 'NORMAL',
+      attemptedCandidates,
+      avoidPoint: selectedAvoidPoint,
+      origin,
       waypoint: {
         name: 'TPCAP Green Entry',
         latitude: TPCAP_GREEN_ENTRY_LATITUDE,
@@ -5034,6 +5124,11 @@ app.get('/api/route-to-tpcap', requireAuthentication, requireMinimumRole('TV_VIE
         latitude: TPCAP_LATITUDE,
         longitude: TPCAP_LONGITUDE,
       },
+      forbiddenPoint: {
+        latitude: TPCAP_FORBIDDEN_ROUTE_LATITUDE,
+        longitude: TPCAP_FORBIDDEN_ROUTE_LONGITUDE,
+        radiusMeters: TPCAP_FORBIDDEN_ROUTE_RADIUS_METERS,
+      },
       distanceMeters,
       distanceKilometers: Number((distanceMeters / 1000).toFixed(1)),
       durationSeconds,
@@ -5043,7 +5138,7 @@ app.get('/api/route-to-tpcap', requireAuthentication, requireMinimumRole('TV_VIE
         timeZone: 'Asia/Bangkok',
         hour12: false,
       }),
-      geometry: route.geometry,
+      geometry: selectedRoute.geometry,
     });
   } catch (error) {
     return sendRouteError(res, error, 'Unable to calculate route.', 502);
