@@ -19,9 +19,23 @@ const TPCAP_LATITUDE = 13.623729606202758;
 const TPCAP_LONGITUDE = 101.01501162061923;
 const TPCAP_GREEN_ENTRY_LATITUDE = 13.623811776425006;
 const TPCAP_GREEN_ENTRY_LONGITUDE = 101.01549416834828;
-const TPCAP_FORBIDDEN_ROUTE_LATITUDE = 13.61100594245636;
-const TPCAP_FORBIDDEN_ROUTE_LONGITUDE = 101.02291747681245;
 const TPCAP_FORBIDDEN_ROUTE_RADIUS_METERS = 20;
+const TPCAP_FORBIDDEN_ROUTE_POINTS = [
+  {
+    id: 'FORBIDDEN_ROUTE_1',
+    latitude: 13.61100594245636,
+    longitude: 101.02291747681245,
+    radiusMeters: TPCAP_FORBIDDEN_ROUTE_RADIUS_METERS,
+  },
+  {
+    id: 'FORBIDDEN_ROUTE_2',
+    latitude: 13.608574856374567,
+    longitude: 101.02126021577799,
+    radiusMeters: TPCAP_FORBIDDEN_ROUTE_RADIUS_METERS,
+  },
+];
+const TPCAP_FORBIDDEN_ROUTE_LATITUDE = TPCAP_FORBIDDEN_ROUTE_POINTS[0].latitude;
+const TPCAP_FORBIDDEN_ROUTE_LONGITUDE = TPCAP_FORBIDDEN_ROUTE_POINTS[0].longitude;
 const OSRM_BASE_URL = 'https://router.project-osrm.org';
 
 const FRESH_CACHE_DURATION_MS = 60000;
@@ -749,30 +763,29 @@ function getForbiddenRoutePointHit(geometry) {
   const coordinates = Array.isArray(geometry?.coordinates) ? geometry.coordinates : [];
   if (coordinates.length < 2) return null;
 
-  const forbiddenPoint = {
-    lat: TPCAP_FORBIDDEN_ROUTE_LATITUDE,
-    lng: TPCAP_FORBIDDEN_ROUTE_LONGITUDE,
-  };
+  for (const forbiddenPoint of TPCAP_FORBIDDEN_ROUTE_POINTS) {
+    for (let index = 1; index < coordinates.length; index += 1) {
+      const previous = coordinates[index - 1];
+      const current = coordinates[index];
+      if (!Array.isArray(previous) || !Array.isArray(current)) continue;
 
-  for (let index = 1; index < coordinates.length; index += 1) {
-    const previous = coordinates[index - 1];
-    const current = coordinates[index];
-    if (!Array.isArray(previous) || !Array.isArray(current)) continue;
+      const distanceMeters = distancePointToSegmentMeters(
+        { lat: forbiddenPoint.latitude, lng: forbiddenPoint.longitude },
+        { lat: Number(previous[1]), lng: Number(previous[0]) },
+        { lat: Number(current[1]), lng: Number(current[0]) }
+      );
 
-    const distanceMeters = distancePointToSegmentMeters(
-      forbiddenPoint,
-      { lat: Number(previous[1]), lng: Number(previous[0]) },
-      { lat: Number(current[1]), lng: Number(current[0]) }
-    );
-
-    if (
-      Number.isFinite(distanceMeters) &&
-      distanceMeters <= TPCAP_FORBIDDEN_ROUTE_RADIUS_METERS
-    ) {
-      return {
-        routeSegmentIndex: index - 1,
-        distanceMeters: Number(distanceMeters.toFixed(2)),
-      };
+      if (
+        Number.isFinite(distanceMeters) &&
+        distanceMeters <= forbiddenPoint.radiusMeters
+      ) {
+        return {
+          forbiddenPointId: forbiddenPoint.id,
+          forbiddenPoint: { ...forbiddenPoint },
+          routeSegmentIndex: index - 1,
+          distanceMeters: Number(distanceMeters.toFixed(2)),
+        };
+      }
     }
   }
 
@@ -5003,15 +5016,14 @@ app.get('/api/route-to-tpcap', requireAuthentication, requireMinimumRole('TV_VIE
         };
       };
 
-      const forbiddenCenter = {
-        latitude: TPCAP_FORBIDDEN_ROUTE_LATITUDE,
-        longitude: TPCAP_FORBIDDEN_ROUTE_LONGITUDE,
-      };
       const avoidDistancesMeters = [120, 200, 350];
       const avoidBearingsDegrees = [0, 45, 90, 135, 180, 225, 270, 315];
-      const avoidPoints = avoidDistancesMeters.flatMap((distanceMeters) =>
-        avoidBearingsDegrees.map((bearingDegrees) =>
-          pointAtDistanceAndBearing(forbiddenCenter, distanceMeters, bearingDegrees)
+      const avoidPoints = TPCAP_FORBIDDEN_ROUTE_POINTS.flatMap((forbiddenPoint) =>
+        avoidDistancesMeters.flatMap((distanceMeters) =>
+          avoidBearingsDegrees.map((bearingDegrees) => ({
+            ...pointAtDistanceAndBearing(forbiddenPoint, distanceMeters, bearingDegrees),
+            forbiddenPointId: forbiddenPoint.id,
+          }))
         )
       );
       const validCandidates = [];
@@ -5086,11 +5098,7 @@ app.get('/api/route-to-tpcap', requireAuthentication, requireMinimumRole('TV_VIE
           latitude: TPCAP_LATITUDE,
           longitude: TPCAP_LONGITUDE,
         },
-        forbiddenPoint: {
-          latitude: TPCAP_FORBIDDEN_ROUTE_LATITUDE,
-          longitude: TPCAP_FORBIDDEN_ROUTE_LONGITUDE,
-          radiusMeters: TPCAP_FORBIDDEN_ROUTE_RADIUS_METERS,
-        },
+        forbiddenPoints: TPCAP_FORBIDDEN_ROUTE_POINTS,
         forbiddenIntersection,
         attemptedCandidates,
         distanceMeters,
@@ -5124,11 +5132,7 @@ app.get('/api/route-to-tpcap', requireAuthentication, requireMinimumRole('TV_VIE
         latitude: TPCAP_LATITUDE,
         longitude: TPCAP_LONGITUDE,
       },
-      forbiddenPoint: {
-        latitude: TPCAP_FORBIDDEN_ROUTE_LATITUDE,
-        longitude: TPCAP_FORBIDDEN_ROUTE_LONGITUDE,
-        radiusMeters: TPCAP_FORBIDDEN_ROUTE_RADIUS_METERS,
-      },
+      forbiddenPoints: TPCAP_FORBIDDEN_ROUTE_POINTS,
       distanceMeters,
       distanceKilometers: Number((distanceMeters / 1000).toFixed(1)),
       durationSeconds,
