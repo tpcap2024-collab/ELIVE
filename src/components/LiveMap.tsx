@@ -98,6 +98,13 @@ const TPCAP_POSITION:
     13.623729606202758,
     101.01501162061923,
   ];
+const TPCAP_FORBIDDEN_ROUTE_DEBUG = {
+  name: 'FORBIDDEN ROUTE 20 M',
+  latitude: 13.61100594245636,
+  longitude: 101.02291747681245,
+  radiusMeters: 20,
+  color: '#dc2626',
+};
 
 function parseGpsDateTime(
   value?: string
@@ -896,6 +903,48 @@ export function LiveMap({
     const geofenceLayer = geofenceLayerRef.current;
     if (!map || !geofenceLayer) return;
     geofenceLayer.clearLayers();
+
+    const forbiddenPosition: [number, number] = [
+      TPCAP_FORBIDDEN_ROUTE_DEBUG.latitude,
+      TPCAP_FORBIDDEN_ROUTE_DEBUG.longitude,
+    ];
+
+    L.circle(forbiddenPosition, {
+      radius: TPCAP_FORBIDDEN_ROUTE_DEBUG.radiusMeters,
+      color: TPCAP_FORBIDDEN_ROUTE_DEBUG.color,
+      weight: 4,
+      opacity: 1,
+      fillColor: TPCAP_FORBIDDEN_ROUTE_DEBUG.color,
+      fillOpacity: 0.28,
+      dashArray: '6 4',
+    }).addTo(geofenceLayer);
+
+    L.marker(forbiddenPosition, {
+      icon: createGeofenceMarkerIcon(
+        TPCAP_FORBIDDEN_ROUTE_DEBUG.name,
+        TPCAP_FORBIDDEN_ROUTE_DEBUG.color
+      ),
+      title: TPCAP_FORBIDDEN_ROUTE_DEBUG.name,
+      zIndexOffset: 850,
+    })
+      .bindPopup(`
+        <div style="font-family:system-ui,sans-serif;min-width:180px;">
+          <div style="font-size:14px;font-weight:800;color:#b91c1c;">
+            FORBIDDEN ROUTE
+          </div>
+          <div style="margin-top:5px;font-size:12px;color:#334155;">
+            จุดตรวจสอบเส้นทางต้องห้าม
+          </div>
+          <div style="margin-top:4px;font-size:12px;color:#334155;">
+            รัศมี 20 เมตร
+          </div>
+          <div style="margin-top:4px;font-size:11px;color:#64748b;">
+            13.61100594245636, 101.02291747681245
+          </div>
+        </div>
+      `)
+      .addTo(geofenceLayer);
+
     const geofencesToShow = showGeofenceDebug
       ? GPS_GEOFENCES
       : selectedGeofenceEvaluation
