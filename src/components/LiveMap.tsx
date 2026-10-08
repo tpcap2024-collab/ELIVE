@@ -59,6 +59,15 @@ type GeofenceEvaluation = GeofenceConfig & {
   distanceMeters: number;
   isInside: boolean;
 };
+type DebugRouteResult = RouteToTpcapResult & {
+  blocked?: boolean;
+  reason?: string;
+  warning?: string;
+  forbiddenIntersection?: {
+    routeSegmentIndex?: number;
+    distanceMeters?: number;
+  };
+};
 const DEFAULT_GEOFENCE_RADIUS_METERS = 50;
 const GPS_GEOFENCES: GeofenceConfig[] = [
   {
@@ -602,7 +611,7 @@ export function LiveMap({
   const [
     routeResult,
     setRouteResult,
-  ] = useState<RouteToTpcapResult | null>(
+  ] = useState<DebugRouteResult | null>(
     null
   );
 
@@ -1167,9 +1176,17 @@ export function LiveMap({
             return;
           }
 
-          setRouteResult(
-            result
-          );
+          const debugResult = result as DebugRouteResult;
+          setRouteResult(debugResult);
+          if (debugResult.blocked) {
+            const hitDistance = Number(debugResult.forbiddenIntersection?.distanceMeters);
+            const distanceText = Number.isFinite(hitDistance)
+              ? ` ระยะใกล้ที่สุด ${hitDistance.toFixed(2)} เมตร`
+              : '';
+            setRouteError(
+              `${debugResult.warning || 'เส้นทางผ่านจุดที่ระบบกำหนดว่าห้ามใช้'}${distanceText}`
+            );
+          }
         } catch (error) {
           if (
             routeRequestIdRef.current !==
@@ -1316,9 +1333,14 @@ export function LiveMap({
           latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180
         );
       if (routePoints.length >= 2) {
+        const isBlockedRoute = routeResult.blocked === true;
         L.polyline(routePoints, {
-          color: '#0284c7', weight: 6, opacity: 0.9,
-          lineCap: 'round', lineJoin: 'round',
+          color: isBlockedRoute ? '#dc2626' : '#0284c7',
+          weight: isBlockedRoute ? 7 : 6,
+          opacity: 0.9,
+          dashArray: isBlockedRoute ? '12 10' : undefined,
+          lineCap: 'round',
+          lineJoin: 'round',
         }).addTo(routeLayer);
         const bounds = L.latLngBounds(routePoints);
         bounds.extend(truckPosition);
