@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '63';
+const API_VERSION = '65';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -19,6 +19,9 @@ const TPCAP_LATITUDE = 13.623729606202758;
 const TPCAP_LONGITUDE = 101.01501162061923;
 const TPCAP_GREEN_ENTRY_LATITUDE = 13.623811776425006;
 const TPCAP_GREEN_ENTRY_LONGITUDE = 101.01549416834828;
+const TPCAP_FORBIDDEN_ROUTE_LATITUDE = 13.61100594245636;
+const TPCAP_FORBIDDEN_ROUTE_LONGITUDE = 101.02291747681245;
+const TPCAP_FORBIDDEN_ROUTE_RADIUS_METERS = 80;
 const OSRM_BASE_URL = 'https://router.project-osrm.org';
 
 const FRESH_CACHE_DURATION_MS = 60000;
@@ -700,6 +703,40 @@ function calculateDistanceMeters(firstLatitude, firstLongitude, secondLatitude, 
     Math.sin(longitudeDelta / 2) ** 2;
   return 2 * earthRadiusMeters * Math.asin(Math.sqrt(haversine));
 }
+function getForbiddenRoutePointHit(geometry) {
+  const coordinates = Array.isArray(geometry?.coordinates) ? geometry.coordinates : [];
+  if (coordinates.length < 2) return null;
+
+  const forbiddenPoint = {
+    lat: TPCAP_FORBIDDEN_ROUTE_LATITUDE,
+    lng: TPCAP_FORBIDDEN_ROUTE_LONGITUDE,
+  };
+
+  for (let index = 1; index < coordinates.length; index += 1) {
+    const previous = coordinates[index - 1];
+    const current = coordinates[index];
+    if (!Array.isArray(previous) || !Array.isArray(current)) continue;
+
+    const distanceMeters = distancePointToSegmentMeters(
+      forbiddenPoint,
+      { lat: Number(previous[1]), lng: Number(previous[0]) },
+      { lat: Number(current[1]), lng: Number(current[0]) }
+    );
+
+    if (
+      Number.isFinite(distanceMeters) &&
+      distanceMeters <= TPCAP_FORBIDDEN_ROUTE_RADIUS_METERS
+    ) {
+      return {
+        routeSegmentIndex: index - 1,
+        distanceMeters: Number(distanceMeters.toFixed(2)),
+      };
+    }
+  }
+
+  return null;
+}
+
 function getBangkokDateText(date = new Date()) {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Bangkok',
@@ -4270,6 +4307,12 @@ app.get(['/health', '/api/health'], (req, res) => {
       pendingStampRetryMaximumSeconds: Math.floor(GPS_PENDING_STAMP_MAX_RETRY_MS / 1000),
       etdRule: 'NORMAL_EXIT_AFTER_INSIDE_OR_OPEN_ETA_RECONCILIATION_ON_ANY_SAME_DAY_GPS_OUTSIDE_TARGET_GEOFENCE',
       geofenceSelectionPolicy: 'ACTIVE_TRIP_DROP_POINT_TARGET_WITH_NEAREST_DEBUG_ONLY',
+      forbiddenRoutePointEnabled: true,
+      forbiddenRoutePointRadiusMeters: TPCAP_FORBIDDEN_ROUTE_RADIUS_METERS,
+      forbiddenRoutePoint: {
+        latitude: TPCAP_FORBIDDEN_ROUTE_LATITUDE,
+        longitude: TPCAP_FORBIDDEN_ROUTE_LONGITUDE,
+      },
       dwellStateIsolation: 'CODE_RUN_AND_TARGET_GEOFENCE',
       dwellStateTtlSeconds: GPS_DWELL_STATE_TTL_SECONDS,
       vehicleCycleTtlSeconds: GPS_VEHICLE_CYCLE_TTL_SECONDS,
@@ -4879,6 +4922,32 @@ app.get('/api/route-to-tpcap', requireAuthentication, requireMinimumRole('TV_VIE
 
     const route = Array.isArray(routeData.routes) ? routeData.routes[0] : null;
     if (!route) throw new Error('No driving route was found.');
+
+    const forbiddenIntersection = getForbiddenRoutePointHit(route.geometry);
+    if (forbiddenIntersection) {
+      console.warn(JSON.stringify({
+        logType: 'ELIVE_ROUTE',
+        event: 'ROUTE_BLOCKED_BY_FORBIDDEN_POINT',
+        origin: { latitude, longitude },
+        forbiddenPoint: {
+          latitude: TPCAP_FORBIDDEN_ROUTE_LATITUDE,
+          longitude: TPCAP_FORBIDDEN_ROUTE_LONGITUDE,
+          radiusMeters: TPCAP_FORBIDDEN_ROUTE_RADIUS_METERS,
+        },
+        ...forbiddenIntersection,
+      }));
+      return res.status(409).json({
+        success: false,
+        error: 'เส้นทางที่คำนวณได้ผ่านจุดที่ระบบกำหนดว่าห้ามใช้',
+        reason: 'ROUTE_BLOCKED_BY_FORBIDDEN_POINT',
+        forbiddenPoint: {
+          latitude: TPCAP_FORBIDDEN_ROUTE_LATITUDE,
+          longitude: TPCAP_FORBIDDEN_ROUTE_LONGITUDE,
+          radiusMeters: TPCAP_FORBIDDEN_ROUTE_RADIUS_METERS,
+        },
+        timestamp: new Date().toISOString(),
+      });
+    }
 
     const distanceMeters = Number(route.distance);
     const durationSeconds = Number(route.duration);
