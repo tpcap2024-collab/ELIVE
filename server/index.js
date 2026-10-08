@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '65';
+const API_VERSION = '66';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -703,6 +703,48 @@ function calculateDistanceMeters(firstLatitude, firstLongitude, secondLatitude, 
     Math.sin(longitudeDelta / 2) ** 2;
   return 2 * earthRadiusMeters * Math.asin(Math.sqrt(haversine));
 }
+function distancePointToSegmentMeters(point, segmentStart, segmentEnd) {
+  const referenceLatitude =
+    (Number(point.lat) + Number(segmentStart.lat) + Number(segmentEnd.lat)) / 3;
+  const earthRadiusMeters = 6371000;
+  const toRadians = value => value * Math.PI / 180;
+  const project = coordinate => ({
+    x:
+      earthRadiusMeters *
+      toRadians(Number(coordinate.lng)) *
+      Math.cos(toRadians(referenceLatitude)),
+    y: earthRadiusMeters * toRadians(Number(coordinate.lat)),
+  });
+
+  const projectedPoint = project(point);
+  const projectedStart = project(segmentStart);
+  const projectedEnd = project(segmentEnd);
+  const deltaX = projectedEnd.x - projectedStart.x;
+  const deltaY = projectedEnd.y - projectedStart.y;
+  const segmentLengthSquared = deltaX * deltaX + deltaY * deltaY;
+
+  if (!Number.isFinite(segmentLengthSquared)) return Number.POSITIVE_INFINITY;
+  if (segmentLengthSquared === 0) {
+    return Math.hypot(
+      projectedPoint.x - projectedStart.x,
+      projectedPoint.y - projectedStart.y
+    );
+  }
+
+  const projectionRatio = Math.max(
+    0,
+    Math.min(
+      1,
+      ((projectedPoint.x - projectedStart.x) * deltaX +
+        (projectedPoint.y - projectedStart.y) * deltaY) /
+        segmentLengthSquared
+    )
+  );
+  const nearestX = projectedStart.x + projectionRatio * deltaX;
+  const nearestY = projectedStart.y + projectionRatio * deltaY;
+  return Math.hypot(projectedPoint.x - nearestX, projectedPoint.y - nearestY);
+}
+
 function getForbiddenRoutePointHit(geometry) {
   const coordinates = Array.isArray(geometry?.coordinates) ? geometry.coordinates : [];
   if (coordinates.length < 2) return null;
