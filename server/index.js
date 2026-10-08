@@ -4921,8 +4921,8 @@ app.post('/api/trucks/update', requireAuthentication, requireMinimumRole('OPERAT
 
 app.get('/api/route-to-tpcap', requireAuthentication, requireMinimumRole('TV_VIEWER'), async (req, res) => {
   try {
-    const latitude = Number(req.query.latitude);
-    const longitude = Number(req.query.longitude);
+    const latitude = Number(req.query.lat ?? req.query.latitude);
+    const longitude = Number(req.query.lng ?? req.query.longitude);
 
     if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) {
       return res.status(400).json({ success: false, error: 'Invalid latitude.' });
