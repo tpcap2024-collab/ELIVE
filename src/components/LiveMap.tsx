@@ -60,6 +60,13 @@ type GeofenceEvaluation = GeofenceConfig & {
   isInside: boolean;
 };
 const DEFAULT_GEOFENCE_RADIUS_METERS = 50;
+
+const TPCAP_SITE_POLYGON: [number, number][] = [
+  [13.628373770556774, 101.01488672623992],
+  [13.624058460200862, 101.01077277012493],
+  [13.62156363013412, 101.01457300431943],
+  [13.625365805109753, 101.01794805367612],
+];
 const GPS_GEOFENCES: GeofenceConfig[] = [
   {
     id: 'TPCAP-LSP',
@@ -897,6 +904,49 @@ export function LiveMap({
     const geofenceLayer = geofenceLayerRef.current;
     if (!map || !geofenceLayer) return;
     geofenceLayer.clearLayers();
+
+    L.polygon(TPCAP_SITE_POLYGON, {
+      color: '#050505',
+      weight: 8,
+      opacity: 0.95,
+      fill: false,
+      interactive: false,
+      lineCap: 'round',
+      lineJoin: 'round',
+    }).addTo(geofenceLayer);
+
+    L.polygon(TPCAP_SITE_POLYGON, {
+      color: '#ffea00',
+      weight: 4,
+      opacity: 1,
+      fillColor: '#ffea00',
+      fillOpacity: 0.08,
+      interactive: true,
+      lineCap: 'round',
+      lineJoin: 'round',
+    })
+      .bindTooltip('TPCAP-SITE', {
+        permanent: true,
+        direction: 'center',
+        className: 'elive-site-polygon-label',
+        opacity: 0.95,
+      })
+      .bindPopup(`
+        <div style="font-family:system-ui,sans-serif;min-width:205px;">
+          <div style="font-size:14px;font-weight:900;color:#0f172a;">TPCAP-SITE</div>
+          <div style="margin-top:5px;font-size:12px;color:#334155;">
+            พื้นที่หลักสำหรับควบคุมกลุ่มรอบงาน
+          </div>
+          <div style="margin-top:4px;font-size:11px;color:#64748b;">
+            อยู่ภายในพื้นที่ = กลุ่มงานยังเปิดอยู่
+          </div>
+          <div style="margin-top:3px;font-size:11px;color:#64748b;">
+            ออกนอกพื้นที่ต่อเนื่อง 60 วินาที = ปิดกลุ่มงาน
+          </div>
+        </div>
+      `)
+      .addTo(geofenceLayer);
+
     const geofencesToShow = showGeofenceDebug
       ? GPS_GEOFENCES
       : selectedGeofenceEvaluation
@@ -1381,12 +1431,13 @@ export function LiveMap({
         mapRef.current;
 
       if (map) {
-        const geofenceBounds = L.latLngBounds(
-          GPS_GEOFENCES.map(geofence => [
+        const geofenceBounds = L.latLngBounds([
+          ...TPCAP_SITE_POLYGON,
+          ...GPS_GEOFENCES.map(geofence => [
             geofence.latitude,
             geofence.longitude,
-          ] as [number, number])
-        );
+          ] as [number, number]),
+        ]);
         map.fitBounds(geofenceBounds, {
           padding: [60, 60],
           maxZoom: 16,
