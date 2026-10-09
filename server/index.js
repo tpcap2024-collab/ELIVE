@@ -2278,29 +2278,67 @@ async function runGpsDailyCloseout(data, operationDate, minuteOfDay) {
     enabled: GPS_DAILY_CLOSEOUT_ENABLED,
     operationDate,
     eligible: 0,
-    deferredPendingEta: 0,
+    cancelledPendingEta: 0,
+    pendingEtaCancelFailed: 0,
     requested: 0,
     written: 0,
     alreadyFinal: 0,
     failed: 0,
     batches: 0,
     completed: false,
+    snapshotRefreshed: false,
+    realtimeSource: null,
   };
   if (!GPS_DAILY_CLOSEOUT_ENABLED || minuteOfDay < GPS_DAILY_CLOSEOUT_START_MINUTES) return empty;
   const client = requireRedisClient();
   const completionKey = getGpsDailyCloseoutKey(operationDate);
   if (await client.exists(completionKey)) return { ...empty, completed: true, alreadyCompleted: true };
+
+  const candidates = buildGpsDailyCloseoutCandidates(data, operationDate);
   const selected = [];
-  let deferredPendingEta = 0;
-  for (const item of buildGpsDailyCloseoutCandidates(data, operationDate)) {
+  let cancelledPendingEta = 0;
+  let pendingEtaCancelFailed = 0;
+
+  for (const item of candidates) {
     const pendingEta = await readPendingStamp(getPendingStampId('ETA', item.codeRun));
     if (isActivePendingStamp(pendingEta)) {
-      deferredPendingEta += 1;
-      continue;
+      try {
+        await closePendingStamp(pendingEta, 'BLOCKED_NO_WORK', {
+          lastError: 'DAILY_CLOSEOUT_18_00',
+          terminalReason: 'DAILY_CLOSEOUT_NO_ETA_AT_18_00',
+          closedBy: 'GPS DAILY CLOSEOUT',
+          closeoutOperationDate: operationDate,
+        });
+        cancelledPendingEta += 1;
+        console.log(JSON.stringify({
+          logType: 'ELIVE_GPS_DAILY_CLOSEOUT',
+          event: 'PENDING_ETA_BLOCKED_NO_WORK',
+          operationDate,
+          codeRun: item.codeRun,
+          pendingId: pendingEta.pendingId || getPendingStampId('ETA', item.codeRun),
+        }));
+      } catch (error) {
+        pendingEtaCancelFailed += 1;
+        console.error(JSON.stringify({
+          logType: 'ELIVE_GPS_DAILY_CLOSEOUT',
+          event: 'PENDING_ETA_BLOCK_NO_WORK_FAILED',
+          operationDate,
+          codeRun: item.codeRun,
+          error: getErrorMessage(error),
+        }));
+        continue;
+      }
     }
     selected.push(item);
   }
-  const summary = { ...empty, eligible: selected.length + deferredPendingEta, deferredPendingEta, requested: selected.length };
+
+  const summary = {
+    ...empty,
+    eligible: candidates.length,
+    cancelledPendingEta,
+    pendingEtaCancelFailed,
+    requested: selected.length,
+  };
   for (let offset = 0; offset < selected.length; offset += GPS_R_DOCK_NO_WORK_BATCH_SIZE) {
     const items = selected.slice(offset, offset + GPS_R_DOCK_NO_WORK_BATCH_SIZE);
     const response = await requestAppsScriptPost('setGpsNoWorkBatch', { items });
@@ -2310,11 +2348,23 @@ async function runGpsDailyCloseout(data, operationDate, minuteOfDay) {
     summary.alreadyFinal += Number(result?.alreadyFinalCount || 0);
     summary.failed += Number(result?.failedCount || 0);
   }
-  if (summary.failed === 0 && summary.deferredPendingEta === 0) {
+  summary.failed += pendingEtaCancelFailed;
+
+  if (summary.written > 0 || summary.alreadyFinal > 0) {
+    const refresh = await refreshRealtimeAfterMutation();
+    summary.snapshotRefreshed = refresh.snapshotRefreshed === true;
+    summary.realtimeSource = refresh.realtimeSource || null;
+    summary.refreshedAt = refresh.refreshedAt || null;
+  }
+  if (summary.failed === 0) {
     summary.completed = true;
     await client.set(completionKey, JSON.stringify({ ...summary, completedAt: new Date().toISOString() }), { EX: GPS_DAILY_CLOSEOUT_TTL_SECONDS });
   }
-  console.log(JSON.stringify({ logType: 'ELIVE_GPS_DAILY_CLOSEOUT', event: summary.completed ? 'GPS_DAILY_CLOSEOUT_COMPLETED' : 'GPS_DAILY_CLOSEOUT_DEFERRED', ...summary }));
+  console.log(JSON.stringify({
+    logType: 'ELIVE_GPS_DAILY_CLOSEOUT',
+    event: summary.completed ? 'GPS_DAILY_CLOSEOUT_COMPLETED' : 'GPS_DAILY_CLOSEOUT_FAILED',
+    ...summary,
+  }));
   return summary;
 }
 
