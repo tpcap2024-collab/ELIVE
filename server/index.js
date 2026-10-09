@@ -1326,13 +1326,42 @@ async function resolveVehicleTrip(input, isInside, dataOverride = null, detected
     previousCycle?.date === dateText &&
     previousCycle?.lastCompletedCodeRun !== latestCompletedTrip.codeRun
   );
+  const completedTripGeofenceId = latestCompletedTrip
+    ? getGeofenceIdForDropPoint(latestCompletedTrip.dropPoint)
+    : previousCycle?.completedTripGeofenceId || null;
+  let exitConfirmationMode = previousCycle?.date === dateText
+    ? previousCycle?.exitConfirmationMode || null
+    : null;
+
   if (completedCodeRunChanged && isInside) {
     waitingForExit = true;
     exitConfirmedAt = null;
+    exitConfirmationMode = null;
   }
-  if (waitingForExit && !isInside) {
+
+  const movedToDifferentGeofence = Boolean(
+    waitingForExit &&
+    detectedGeofenceId &&
+    completedTripGeofenceId &&
+    detectedGeofenceId !== completedTripGeofenceId
+  );
+
+  if (waitingForExit && (!isInside || movedToDifferentGeofence)) {
     waitingForExit = false;
     exitConfirmedAt = new Date().toISOString();
+    exitConfirmationMode = movedToDifferentGeofence
+      ? 'GEOFENCE_TRANSITION'
+      : 'OUTSIDE_ALL_DETECTED_GEOFENCES';
+    console.log(JSON.stringify({
+      logType: 'ELIVE_GPS_VEHICLE_CYCLE',
+      event: 'WAITING_FOR_EXIT_RELEASED',
+      licensePlate: input.licensePlate,
+      completedCodeRun: latestCompletedTrip?.codeRun || previousCycle?.lastCompletedCodeRun || null,
+      completedTripGeofenceId,
+      detectedGeofenceId: detectedGeofenceId || null,
+      exitConfirmationMode,
+      exitConfirmedAt,
+    }));
   }
   const activeTrip = waitingForExit ? null : selected.activeTrip;
   const nextPendingTrip = trips
@@ -1355,6 +1384,9 @@ async function resolveVehicleTrip(input, isInside, dataOverride = null, detected
     lastCompletedCodeRun: latestCompletedTrip?.codeRun || previousCycle?.lastCompletedCodeRun || null,
     waitingForExit,
     exitConfirmedAt,
+    exitConfirmationMode,
+    completedTripGeofenceId,
+    movedToDifferentGeofence,
     selectionReason: waitingForExit
       ? 'WAITING_FOR_EXIT_AFTER_ETD'
       : selected.selectionReason,
