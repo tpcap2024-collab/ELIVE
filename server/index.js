@@ -1242,33 +1242,29 @@ function buildGpsPlanTimeGroups(trips) {
     const current = groups[groups.length - 1];
     if (!current || trip.planEtaMinutes > current.startMinutes + GPS_SITE_GROUP_WINDOW_MINUTES) {
       groups.push({
-        id: `${trip.planDate}:${String(trip.planEtaMinutes).padStart(4, '0')}`,
+        id: `${trip.planDate}:${normalizeLicensePlate(trip.planLicensePlate)}:${String(trip.planEtaMinutes).padStart(4, '0')}`,
         startMinutes: trip.planEtaMinutes,
         endMinutes: trip.planEtaMinutes,
+        routes: trip.route ? [trip.route] : [],
         trips: [trip],
       });
     } else {
       current.trips.push(trip);
       current.endMinutes = Math.max(current.endMinutes, trip.planEtaMinutes);
+      if (trip.route && !current.routes.includes(trip.route)) current.routes.push(trip.route);
     }
   }
   return groups;
 }
 function selectGpsSiteGroup(groups, detectedGeofenceId, closedGroupIds = []) {
   const closed = new Set(Array.isArray(closedGroupIds) ? closedGroupIds : []);
-  const openGroups = groups.filter(group =>
-    !closed.has(group.id) &&
-    group.trips.some(trip => !trip.stampEta && !trip.stampEtd && !trip.noWorkAction)
-  );
-  if (!openGroups.length) return null;
-  if (detectedGeofenceId) {
-    const matching = openGroups.find(group => group.trips.some(trip =>
-      !trip.stampEta && !trip.stampEtd && !trip.noWorkAction &&
-      getGeofenceIdForDropPoint(trip.dropPoint) === detectedGeofenceId
-    ));
-    if (matching) return matching;
-  }
-  return openGroups[0];
+  const openGroups = groups
+    .filter(group =>
+      !closed.has(group.id) &&
+      group.trips.some(trip => !trip.stampEta && !trip.stampEtd && !trip.noWorkAction)
+    )
+    .sort((first, second) => first.startMinutes - second.startMinutes);
+  return openGroups[0] || null;
 }
 
 function compareTripsByPlanTime(first, second) {
@@ -1303,6 +1299,7 @@ function buildTripsForPlate(data, licensePlate, dateText) {
     const actual = actualByCodeRun.get(codeRun) || [];
     trips.push({
       codeRun,
+      route: cleanText(row[2]).toUpperCase(),
       planDate,
       planLicensePlate: planPlate,
       dropPoint: cleanText(row[9]).toUpperCase(),
@@ -1369,7 +1366,7 @@ function getEligibleEtaTripsForVehicle(trips, geofenceId, nowMinutes) {
   });
 }
 function selectGpsEtaArrivalGroup(trips, activeTrip, geofenceId, nowMinutes) {
-  return getEligibleEtaTripsForVehicle(trips, geofenceId, nowMinutes).slice(0, 1);
+  return getEligibleEtaTripsForVehicle(trips, geofenceId, nowMinutes);
 }
 
 function selectTripForVehicle(trips, nowMinutes, previousCycle = null, detectedGeofenceId = null) {
