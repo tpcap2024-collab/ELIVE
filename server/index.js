@@ -126,6 +126,17 @@ const GPS_REALTIME_SYNCHRONIZER_WAIT_MS = 95000;
 const GPS_REALTIME_SYNCHRONIZER_POLL_MS = 250;
 const GPS_REALTIME_STALE_FALLBACK_MAX_AGE_MS = GPS_REALTIME_CACHE_TTL_SECONDS * 1000;
 const SERVICE_MODE = cleanText(process.env.SERVICE_MODE || 'web').toLowerCase();
+const TPCAP_SITE_POLYGON = Object.freeze([
+  Object.freeze({ latitude: 13.628373770556774, longitude: 101.01488672623992 }),
+  Object.freeze({ latitude: 13.624058460200862, longitude: 101.01077277012493 }),
+  Object.freeze({ latitude: 13.62156363013412, longitude: 101.01457300431943 }),
+  Object.freeze({ latitude: 13.625365805109753, longitude: 101.01794805367612 }),
+]);
+const GPS_SITE_GROUP_WINDOW_MINUTES = 30;
+const GPS_SITE_EXIT_CONFIRM_MS = 60 * 1000;
+const GPS_SITE_GROUP_KEY_PREFIX = 'elive:gps-site-group:';
+const GPS_SITE_GROUP_TTL_SECONDS = 36 * 60 * 60;
+
 const GPS_GEOFENCES = Object.freeze([
   Object.freeze({
     id: 'TPCAP-LSP',
@@ -1187,6 +1198,79 @@ async function getGpsWorkerCycleData(dateText) {
   };
 }
 
+function isPointInsidePolygon(latitude, longitude, polygon = TPCAP_SITE_POLYGON) {
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || !Array.isArray(polygon) || polygon.length < 3) return false;
+  let inside = false;
+  for (let currentIndex = 0, previousIndex = polygon.length - 1; currentIndex < polygon.length; previousIndex = currentIndex, currentIndex += 1) {
+    const current = polygon[currentIndex];
+    const previous = polygon[previousIndex];
+    const intersects =
+      ((current.latitude > latitude) !== (previous.latitude > latitude)) &&
+      (longitude <
+        ((previous.longitude - current.longitude) * (latitude - current.latitude)) /
+          (previous.latitude - current.latitude || Number.EPSILON) +
+        current.longitude);
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+function getGpsSiteGroupKey(licensePlate, operationDate) {
+  return `${GPS_SITE_GROUP_KEY_PREFIX}${operationDate}:${createHash('sha256').update(normalizeLicensePlate(licensePlate)).digest('hex')}`;
+}
+async function readGpsSiteGroupState(licensePlate, operationDate) {
+  const raw = await requireRedisClient().get(getGpsSiteGroupKey(licensePlate, operationDate));
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch {
+    await requireRedisClient().del(getGpsSiteGroupKey(licensePlate, operationDate));
+    return null;
+  }
+}
+async function writeGpsSiteGroupState(licensePlate, operationDate, state) {
+  await requireRedisClient().set(
+    getGpsSiteGroupKey(licensePlate, operationDate),
+    JSON.stringify({ ...state, operationDate, updatedAt: new Date().toISOString() }),
+    { EX: Math.min(GPS_SITE_GROUP_TTL_SECONDS, getGpsOperationStateTtlSeconds(operationDate)) }
+  );
+  return state;
+}
+function buildGpsPlanTimeGroups(trips) {
+  const sorted = [...trips]
+    .filter(trip => Number.isFinite(trip.planEtaMinutes))
+    .sort(compareTripsByPlanTime);
+  const groups = [];
+  for (const trip of sorted) {
+    const current = groups[groups.length - 1];
+    if (!current || trip.planEtaMinutes > current.startMinutes + GPS_SITE_GROUP_WINDOW_MINUTES) {
+      groups.push({
+        id: `${trip.planDate}:${String(trip.planEtaMinutes).padStart(4, '0')}`,
+        startMinutes: trip.planEtaMinutes,
+        endMinutes: trip.planEtaMinutes,
+        trips: [trip],
+      });
+    } else {
+      current.trips.push(trip);
+      current.endMinutes = Math.max(current.endMinutes, trip.planEtaMinutes);
+    }
+  }
+  return groups;
+}
+function selectGpsSiteGroup(groups, detectedGeofenceId, closedGroupIds = []) {
+  const closed = new Set(Array.isArray(closedGroupIds) ? closedGroupIds : []);
+  const openGroups = groups.filter(group =>
+    !closed.has(group.id) &&
+    group.trips.some(trip => !trip.stampEta && !trip.stampEtd && !trip.noWorkAction)
+  );
+  if (!openGroups.length) return null;
+  if (detectedGeofenceId) {
+    const matching = openGroups.find(group => group.trips.some(trip =>
+      !trip.stampEta && !trip.stampEtd && !trip.noWorkAction &&
+      getGeofenceIdForDropPoint(trip.dropPoint) === detectedGeofenceId
+    ));
+    if (matching) return matching;
+  }
+  return openGroups[0];
+}
+
 function compareTripsByPlanTime(first, second) {
   const firstDate = cleanText(first.planDate);
   const secondDate = cleanText(second.planDate);
@@ -1310,7 +1394,11 @@ async function resolveVehicleTrip(input, isInside, dataOverride = null, detected
   const storedCycle = await readVehicleCycleState(input.licensePlate);
   const previousCycle = storedCycle?.date === dateText ? storedCycle : null;
   const nowMinutes = getBangkokMinuteOfDay(new Date());
-  const selected = selectTripForVehicle(trips, nowMinutes, previousCycle, detectedGeofenceId);
+  const siteGroupState = await readGpsSiteGroupState(input.licensePlate, dateText);
+  const selectableTrips = siteGroupState?.activeGroupId
+    ? trips.filter(trip => (siteGroupState.activeGroupCodeRuns || []).includes(trip.codeRun))
+    : trips;
+  const selected = selectTripForVehicle(selectableTrips, nowMinutes, previousCycle, detectedGeofenceId);
   const completedTrips = trips.filter(trip => trip.completed).sort(compareTripsByPlanTime);
   const latestCompletedTrip = completedTrips.length
     ? completedTrips[completedTrips.length - 1]
@@ -1378,6 +1466,10 @@ async function resolveVehicleTrip(input, isInside, dataOverride = null, detected
     planEtaDifferenceMinutes: selected.planEtaDifferenceMinutes,
     gpsMinuteOfDay: nowMinutes,
     detectedGeofenceId: detectedGeofenceId || null,
+    isInsideTpcapSite: isPointInsidePolygon(input.latitude, input.longitude),
+    activeSiteGroupId: siteGroupState?.activeGroupId || null,
+    activeSiteGroupCodeRuns: siteGroupState?.activeGroupCodeRuns || [],
+    siteGroupStatus: siteGroupState?.status || null,
     nextCodeRun: nextPendingTrip?.codeRun || null,
     nextPlanEta: nextPendingTrip?.planEta || null,
     requestedCodeRun: input.codeRun,
@@ -2146,93 +2238,129 @@ function updateLocalNoWorkActual(data, codeRun, actionProblem) {
 }
 async function reconcileSkippedRDockAfterLsp(input, data, noWorkCollector = null) {
   if (!GPS_R_DOCK_NO_WORK_ENABLED) return [];
-  const operationDate = getBangkokDateText(new Date());
-  const trips = buildTripsForPlate(data, input.licensePlate, operationDate)
-    .sort(compareTripsByPlanTime);
-  const results = [];
-  for (let targetIndex = 0; targetIndex < trips.length; targetIndex += 1) {
-    const targetTrip = trips[targetIndex];
-    if (
-      !isRDockDropPoint(targetTrip.dropPoint) ||
-      targetTrip.stampEta ||
-      targetTrip.stampEtd ||
-      targetTrip.noWorkAction
-    ) continue;
+  const operationDate = getBangkokDateText(input.gpsTime);
+  const trips = buildTripsForPlate(data, input.licensePlate, operationDate).sort(compareTripsByPlanTime);
+  const groups = buildGpsPlanTimeGroups(trips);
+  const detected = findNearestGpsGeofence(input.latitude, input.longitude);
+  const detectedGeofenceId = detected.distanceMeters <= detected.radiusMeters ? detected.id : null;
+  const isInsideSite = isPointInsidePolygon(input.latitude, input.longitude);
+  const nowIso = new Date().toISOString();
+  const currentTimeMs = Date.now();
+  const previousState = await readGpsSiteGroupState(input.licensePlate, operationDate);
+  const closedGroupIds = Array.isArray(previousState?.closedGroupIds) ? previousState.closedGroupIds : [];
+  let activeGroup = groups.find(group => group.id === previousState?.activeGroupId) || null;
+  let state = {
+    operationDate,
+    licensePlate: input.licensePlate,
+    normalizedLicensePlate: normalizeLicensePlate(input.licensePlate),
+    activeGroupId: activeGroup?.id || null,
+    activeGroupStartMinutes: activeGroup?.startMinutes ?? null,
+    activeGroupEndMinutes: activeGroup?.endMinutes ?? null,
+    activeGroupCodeRuns: activeGroup?.trips.map(trip => trip.codeRun) || [],
+    closedGroupIds,
+    isInsideSite,
+    enteredSiteAt: previousState?.enteredSiteAt || null,
+    outsideStartedAt: previousState?.outsideStartedAt || null,
+    exitedSiteAt: previousState?.exitedSiteAt || null,
+    status: previousState?.status || 'WAITING_FOR_SITE_ENTRY',
+    detectedGeofenceId,
+  };
 
-    const previousLspTrip = trips
-      .slice(0, targetIndex)
-      .filter(trip => isLspDropPoint(trip.dropPoint) && Boolean(trip.stampEtd))
-      .sort(compareTripsByPlanTime)
-      .pop();
-    if (!previousLspTrip) continue;
-
-    const earlierUnfinishedRDockTrip = trips
-      .slice(0, targetIndex)
-      .some(trip => isRDockDropPoint(trip.dropPoint) && !trip.noWorkAction && !trip.stampEtd);
-    if (earlierUnfinishedRDockTrip) continue;
-
-    const currentBangkokMinutes = getBangkokMinuteOfDay(new Date());
-    const noWorkEligibleAtMinutes = Number.isFinite(targetTrip.planEtaMinutes)
-      ? targetTrip.planEtaMinutes + GPS_R_DOCK_NO_WORK_GRACE_MINUTES
-      : null;
-    if (noWorkEligibleAtMinutes === null || currentBangkokMinutes < noWorkEligibleAtMinutes) {
-      console.log(JSON.stringify({
-        logType: 'ELIVE_GPS_NO_WORK',
-        event: 'R_DOCK_AUTO_NO_WORK_WAITING_PLAN_GRACE',
-        codeRun: targetTrip.codeRun,
-        sourceCodeRun: previousLspTrip.codeRun,
-        planEta: targetTrip.planEta,
-        planEtaMinutes: targetTrip.planEtaMinutes,
-        graceMinutes: GPS_R_DOCK_NO_WORK_GRACE_MINUTES,
-        eligibleAtMinutes: noWorkEligibleAtMinutes,
-        currentBangkokMinutes,
-      }));
-      continue;
+  if (isInsideSite) {
+    if (!activeGroup || closedGroupIds.includes(activeGroup.id)) {
+      activeGroup = selectGpsSiteGroup(groups, detectedGeofenceId, closedGroupIds);
     }
-
-    const targetGeofenceId = getGeofenceIdForDropPoint(targetTrip.dropPoint);
-    const targetGeofence = findGpsGeofenceById(targetGeofenceId, input.latitude, input.longitude);
-    if (!targetGeofence || targetGeofence.distanceMeters <= GPS_R_DOCK_NO_WORK_DISTANCE_METERS) continue;
-
-    const item = {
-      codeRun: targetTrip.codeRun,
-      licensePlate: targetTrip.planLicensePlate,
-      sourceCodeRun: previousLspTrip.codeRun,
-      sourceStampEtd: previousLspTrip.stampEtd,
-      targetDropPoint: targetTrip.dropPoint,
-      targetGeofenceId,
-      distanceMeters: Number(targetGeofence.distanceMeters.toFixed(2)),
-      thresholdMeters: GPS_R_DOCK_NO_WORK_DISTANCE_METERS,
-      planEta: targetTrip.planEta,
-      graceMinutes: GPS_R_DOCK_NO_WORK_GRACE_MINUTES,
-      gpsTime: input.gpsTime.toISOString(),
-      stampedBy: 'GPS SYSTEM',
+    state = {
+      ...state,
+      activeGroupId: activeGroup?.id || null,
+      activeGroupStartMinutes: activeGroup?.startMinutes ?? null,
+      activeGroupEndMinutes: activeGroup?.endMinutes ?? null,
+      activeGroupCodeRuns: activeGroup?.trips.map(trip => trip.codeRun) || [],
+      enteredSiteAt: previousState?.enteredSiteAt || nowIso,
+      outsideStartedAt: null,
+      exitedSiteAt: null,
+      status: activeGroup ? 'ACTIVE_INSIDE_SITE' : 'INSIDE_SITE_NO_OPEN_GROUP',
+      isInsideSite: true,
+      detectedGeofenceId,
     };
-
-    if (noWorkCollector instanceof Map) {
-      if (!noWorkCollector.has(item.codeRun)) {
-        noWorkCollector.set(item.codeRun, item);
-        updateLocalNoWorkActual(
-          data,
-          item.codeRun,
-          'ไม่มีงานลง (GPS AUTO: รอเขียนแบบ Batch)'
-        );
-        console.log(JSON.stringify({
-          logType: 'ELIVE_GPS_NO_WORK',
-          event: 'R_DOCK_AUTO_NO_WORK_BATCH_QUEUED',
-          codeRun: item.codeRun,
-          sourceCodeRun: item.sourceCodeRun,
-          licensePlate: input.licensePlate,
-          targetDropPoint: item.targetDropPoint,
-          queueSize: noWorkCollector.size,
-        }));
-      }
-      results.push({ ...item, queued: true, written: false });
-      break;
-    }
-
-    return results;
+    await writeGpsSiteGroupState(input.licensePlate, operationDate, state);
+    return [];
   }
+
+  if (!activeGroup || previousState?.status === 'GROUP_CLOSED') {
+    state = { ...state, isInsideSite: false, status: 'OUTSIDE_SITE', detectedGeofenceId: null };
+    await writeGpsSiteGroupState(input.licensePlate, operationDate, state);
+    return [];
+  }
+
+  const outsideStartedAt = previousState?.outsideStartedAt || nowIso;
+  const outsideDurationMs = Math.max(0, currentTimeMs - Date.parse(outsideStartedAt));
+  if (outsideDurationMs < GPS_SITE_EXIT_CONFIRM_MS) {
+    state = {
+      ...state,
+      isInsideSite: false,
+      outsideStartedAt,
+      status: 'SITE_EXIT_CONFIRMING',
+      detectedGeofenceId: null,
+      outsideConfirmRemainingSeconds: Math.ceil((GPS_SITE_EXIT_CONFIRM_MS - outsideDurationMs) / 1000),
+    };
+    await writeGpsSiteGroupState(input.licensePlate, operationDate, state);
+    return [];
+  }
+
+  const groupHasStartedWork = activeGroup.trips.some(trip => Boolean(trip.stampEta || trip.stampEtd));
+  const results = [];
+  if (groupHasStartedWork) {
+    for (const trip of activeGroup.trips) {
+      if (trip.stampEta || trip.stampEtd || trip.noWorkAction) continue;
+      const pendingEta = await readPendingStamp(getPendingStampId('ETA', trip.codeRun));
+      if (isActivePendingStamp(pendingEta)) continue;
+      const item = {
+        codeRun: trip.codeRun,
+        licensePlate: trip.planLicensePlate,
+        sourceCodeRun: activeGroup.trips.find(item => item.stampEta || item.stampEtd)?.codeRun || '',
+        targetDropPoint: trip.dropPoint,
+        targetGeofenceId: getGeofenceIdForDropPoint(trip.dropPoint),
+        planEta: trip.planEta,
+        planDate: trip.planDate,
+        mode: 'SITE_GROUP_EXIT',
+        gpsTime: input.gpsTime.toISOString(),
+        stampedBy: 'GPS SITE GROUP',
+      };
+      if (noWorkCollector instanceof Map && !noWorkCollector.has(item.codeRun)) {
+        noWorkCollector.set(item.codeRun, item);
+        updateLocalNoWorkActual(data, item.codeRun, 'ไม่มีงานลง (GPS AUTO: รถออกจากพื้นที่ TPCAP หลังจบรอบงานเดียวกัน)');
+      }
+      results.push({ ...item, queued: noWorkCollector instanceof Map, written: false });
+    }
+  }
+
+  const nextClosedGroupIds = [...new Set([...closedGroupIds, activeGroup.id])];
+  state = {
+    ...state,
+    isInsideSite: false,
+    status: 'GROUP_CLOSED',
+    exitedSiteAt: nowIso,
+    outsideStartedAt,
+    activeGroupId: null,
+    activeGroupCodeRuns: [],
+    closedGroupIds: nextClosedGroupIds,
+    noWorkCodeRuns: results.map(item => item.codeRun),
+    groupHasStartedWork,
+    detectedGeofenceId: null,
+  };
+  await writeGpsSiteGroupState(input.licensePlate, operationDate, state);
+  console.log(JSON.stringify({
+    logType: 'ELIVE_GPS_SITE_GROUP',
+    event: 'TPCAP_SITE_GROUP_CLOSED',
+    licensePlate: input.licensePlate,
+    operationDate,
+    groupId: activeGroup.id,
+    groupCodeRuns: activeGroup.trips.map(trip => trip.codeRun),
+    noWorkCodeRuns: results.map(item => item.codeRun),
+    groupHasStartedWork,
+    outsideDurationMs,
+  }));
   return results;
 }
 
@@ -4454,6 +4582,7 @@ app.get(['/health', '/api/health'], (req, res) => {
       dwellStateTtlSeconds: GPS_DWELL_STATE_TTL_SECONDS,
       vehicleCycleTtlSeconds: GPS_VEHICLE_CYCLE_TTL_SECONDS,
       geofences: GPS_GEOFENCES,
+      tpcapSitePolygon: TPCAP_SITE_POLYGON,
     },
     rateLimitStore: { type: 'redis', persistentAcrossDeploys: true, windowSeconds: LOGIN_RATE_LIMIT_WINDOW_SECONDS },
     sessionAccountValidation: { enabled: true, invalidatesOnInactive: true, invalidatesOnRoleChange: true, invalidatesOnCredentialChange: true },
@@ -4551,6 +4680,7 @@ app.get('/api/gps/geofences', requireAuthentication, requireMinimumRole('TV_VIEW
   return res.status(200).json({
     success: true,
     geofences: GPS_GEOFENCES,
+      tpcapSitePolygon: TPCAP_SITE_POLYGON,
     config: {
       parkingSpeedThresholdKmh: GPS_PARKING_SPEED_THRESHOLD_KMH,
       dwellThresholdSeconds: Math.floor(GPS_DWELL_THRESHOLD_MS / 1000),
