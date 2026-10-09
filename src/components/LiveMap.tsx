@@ -921,31 +921,10 @@ export function LiveMap({
       opacity: 1,
       fillColor: '#ffea00',
       fillOpacity: 0.08,
-      interactive: true,
+      interactive: false,
       lineCap: 'round',
       lineJoin: 'round',
-    })
-      .bindTooltip('TPCAP-SITE', {
-        permanent: true,
-        direction: 'center',
-        className: 'elive-site-polygon-label',
-        opacity: 0.95,
-      })
-      .bindPopup(`
-        <div style="font-family:system-ui,sans-serif;min-width:205px;">
-          <div style="font-size:14px;font-weight:900;color:#0f172a;">TPCAP-SITE</div>
-          <div style="margin-top:5px;font-size:12px;color:#334155;">
-            พื้นที่หลักสำหรับควบคุมกลุ่มรอบงาน
-          </div>
-          <div style="margin-top:4px;font-size:11px;color:#64748b;">
-            อยู่ภายในพื้นที่ = กลุ่มงานยังเปิดอยู่
-          </div>
-          <div style="margin-top:3px;font-size:11px;color:#64748b;">
-            ออกนอกพื้นที่ต่อเนื่อง 60 วินาที = ปิดกลุ่มงาน
-          </div>
-        </div>
-      `)
-      .addTo(geofenceLayer);
+    }).addTo(geofenceLayer);
 
     const geofencesToShow = showGeofenceDebug
       ? GPS_GEOFENCES
@@ -963,11 +942,13 @@ export function LiveMap({
         fillOpacity: 0.12,
         dashArray: '8 6',
       }).addTo(geofenceLayer);
-      L.marker(position, {
-        icon: createGeofenceMarkerIcon(geofence.name, geofence.color),
-        title: geofence.name,
-        zIndexOffset: 800,
-      }).addTo(geofenceLayer);
+      if (showGeofenceDebug) {
+        L.marker(position, {
+          icon: createGeofenceMarkerIcon(geofence.name, geofence.color),
+          title: geofence.name,
+          zIndexOffset: 800,
+        }).addTo(geofenceLayer);
+      }
     }
   }, [showGeofenceDebug, selectedGeofenceEvaluation]);
   useEffect(() => {
