@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '66';
+const API_VERSION = '67';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -2061,10 +2061,39 @@ async function processPendingGpsStamp(pendingId) {
       if (!pendingGeofenceId || getGeofenceIdForDropPoint(currentTrip.dropPoint) !== pendingGeofenceId) {
         return await closePendingStamp(record, 'SUPERSEDED', { lastError: 'PLAN_GEOFENCE_DOES_NOT_MATCH_DETECTED_GEOFENCE' });
       }
-      const earliestEligibleTrip = getEligibleEtaTripsForVehicle(currentTrips, pendingGeofenceId, currentBangkokMinutes)[0] || null;
-      if (!earliestEligibleTrip || earliestEligibleTrip.codeRun !== currentTrip.codeRun) {
-        console.warn(JSON.stringify({ logType: 'ELIVE_GPS_STAMP', event: 'PENDING_ETA_SUPERSEDED_NOT_EARLIEST_PLAN', pendingId, codeRun: record.codeRun, earliestEligibleCodeRun: earliestEligibleTrip?.codeRun || null, earliestEligiblePlanEta: earliestEligibleTrip?.planEta || null, queuedPlanEta: currentTrip.planEta }));
-        return await closePendingStamp(record, 'SUPERSEDED', { lastError: 'NOT_EARLIEST_ELIGIBLE_PLAN', terminalReason: 'PLAN_SEQUENCE_REVALIDATION_FAILED' });
+      const eligibleTrips = getEligibleEtaTripsForVehicle(
+        currentTrips,
+        pendingGeofenceId,
+        currentBangkokMinutes
+      );
+      const siteGroupState = await readGpsSiteGroupState(
+        record.licensePlate,
+        pendingDate
+      );
+      const activeGroupCodeRuns = Array.isArray(siteGroupState?.activeGroupCodeRuns)
+        ? siteGroupState.activeGroupCodeRuns
+        : [];
+      const eligibleActiveGroupCodeRuns = eligibleTrips
+        .filter(item => activeGroupCodeRuns.includes(item.codeRun))
+        .map(item => item.codeRun);
+      const pendingBelongsToActiveGroup =
+        activeGroupCodeRuns.includes(currentTrip.codeRun) &&
+        eligibleActiveGroupCodeRuns.includes(currentTrip.codeRun);
+      if (!pendingBelongsToActiveGroup) {
+        console.warn(JSON.stringify({
+          logType: 'ELIVE_GPS_STAMP',
+          event: 'PENDING_ETA_SUPERSEDED_OUTSIDE_ACTIVE_GROUP',
+          pendingId,
+          codeRun: record.codeRun,
+          activeGroupId: siteGroupState?.activeGroupId || null,
+          activeGroupCodeRuns,
+          eligibleActiveGroupCodeRuns,
+          queuedPlanEta: currentTrip.planEta,
+        }));
+        return await closePendingStamp(record, 'SUPERSEDED', {
+          lastError: 'NOT_ELIGIBLE_IN_ACTIVE_SITE_GROUP',
+          terminalReason: 'SITE_GROUP_REVALIDATION_FAILED',
+        });
       }
     }
     if (record.stampType === 'ETA') {
@@ -2305,57 +2334,133 @@ async function reconcileSkippedRDockAfterLsp(input, data, noWorkCollector = null
     return [];
   }
 
-  const groupHasStartedWork = activeGroup.trips.some(trip => Boolean(trip.stampEta || trip.stampEtd));
-  const results = [];
-  if (groupHasStartedWork) {
-    for (const trip of activeGroup.trips) {
-      if (trip.stampEta || trip.stampEtd || trip.noWorkAction) continue;
-      const pendingEta = await readPendingStamp(getPendingStampId('ETA', trip.codeRun));
-      if (isActivePendingStamp(pendingEta)) continue;
-      const item = {
-        codeRun: trip.codeRun,
-        licensePlate: trip.planLicensePlate,
-        sourceCodeRun: activeGroup.trips.find(item => item.stampEta || item.stampEtd)?.codeRun || '',
-        targetDropPoint: trip.dropPoint,
-        targetGeofenceId: getGeofenceIdForDropPoint(trip.dropPoint),
-        planEta: trip.planEta,
-        planDate: trip.planDate,
-        mode: 'SITE_GROUP_EXIT',
-        gpsTime: input.gpsTime.toISOString(),
-        stampedBy: 'GPS SITE GROUP',
-      };
-      if (noWorkCollector instanceof Map && !noWorkCollector.has(item.codeRun)) {
-        noWorkCollector.set(item.codeRun, item);
-        updateLocalNoWorkActual(data, item.codeRun, 'ไม่มีงานลง (GPS AUTO: รถออกจากพื้นที่ TPCAP หลังจบรอบงานเดียวกัน)');
-      }
-      results.push({ ...item, queued: noWorkCollector instanceof Map, written: false });
-    }
+  const groupHasStartedWork = activeGroup.trips.some(
+    trip => Boolean(trip.stampEta || trip.stampEtd)
+  );
+  const groupAllFinal = activeGroup.trips.every(
+    trip => Boolean(trip.stampEta || trip.stampEtd || trip.noWorkAction)
+  );
+
+  if (!groupHasStartedWork) {
+    state = {
+      ...state,
+      isInsideSite: false,
+      status: 'WAITING_FOR_GROUP_STAMP_CONFIRMATION',
+      outsideStartedAt,
+      exitedSiteAt: null,
+      groupHasStartedWork: false,
+      detectedGeofenceId: null,
+    };
+    await writeGpsSiteGroupState(input.licensePlate, operationDate, state);
+    console.warn(JSON.stringify({
+      logType: 'ELIVE_GPS_SITE_GROUP',
+      event: 'TPCAP_SITE_GROUP_WAITING_FOR_STAMP_CONFIRMATION',
+      licensePlate: input.licensePlate,
+      operationDate,
+      groupId: activeGroup.id,
+      groupCodeRuns: activeGroup.trips.map(trip => trip.codeRun),
+      outsideDurationMs,
+    }));
+    return [];
   }
 
-  const nextClosedGroupIds = [...new Set([...closedGroupIds, activeGroup.id])];
+  if (groupAllFinal) {
+    const nextClosedGroupIds = [...new Set([...closedGroupIds, activeGroup.id])];
+    state = {
+      ...state,
+      isInsideSite: false,
+      status: 'GROUP_CLOSED',
+      exitedSiteAt: nowIso,
+      outsideStartedAt,
+      activeGroupId: null,
+      activeGroupCodeRuns: [],
+      closedGroupIds: nextClosedGroupIds,
+      noWorkCodeRuns: activeGroup.trips
+        .filter(trip => trip.noWorkAction)
+        .map(trip => trip.codeRun),
+      groupHasStartedWork: true,
+      detectedGeofenceId: null,
+    };
+    await writeGpsSiteGroupState(input.licensePlate, operationDate, state);
+    console.log(JSON.stringify({
+      logType: 'ELIVE_GPS_SITE_GROUP',
+      event: 'TPCAP_SITE_GROUP_CLOSED',
+      licensePlate: input.licensePlate,
+      operationDate,
+      groupId: activeGroup.id,
+      groupCodeRuns: activeGroup.trips.map(trip => trip.codeRun),
+      noWorkCodeRuns: state.noWorkCodeRuns,
+      groupHasStartedWork: true,
+      outsideDurationMs,
+    }));
+    return [];
+  }
+
+  const results = [];
+  for (const trip of activeGroup.trips) {
+    if (trip.stampEta || trip.stampEtd || trip.noWorkAction) continue;
+    const pendingEta = await readPendingStamp(getPendingStampId('ETA', trip.codeRun));
+    if (isActivePendingStamp(pendingEta)) {
+      await closePendingStamp(pendingEta, 'BLOCKED_NO_WORK', {
+        lastError: 'SITE_GROUP_EXIT_NO_ETA',
+        terminalReason: 'SITE_GROUP_EXIT_NO_WORK',
+        closedBy: 'GPS SITE GROUP',
+        siteGroupId: activeGroup.id,
+      });
+      console.log(JSON.stringify({
+        logType: 'ELIVE_GPS_SITE_GROUP',
+        event: 'PENDING_ETA_BLOCKED_NO_WORK_ON_SITE_EXIT',
+        licensePlate: input.licensePlate,
+        operationDate,
+        groupId: activeGroup.id,
+        codeRun: trip.codeRun,
+        pendingId: pendingEta.pendingId || getPendingStampId('ETA', trip.codeRun),
+      }));
+    }
+    const item = {
+      codeRun: trip.codeRun,
+      licensePlate: trip.planLicensePlate,
+      sourceCodeRun: activeGroup.trips.find(item => item.stampEta || item.stampEtd)?.codeRun || '',
+      targetDropPoint: trip.dropPoint,
+      targetGeofenceId: getGeofenceIdForDropPoint(trip.dropPoint),
+      planEta: trip.planEta,
+      planDate: trip.planDate,
+      mode: 'SITE_GROUP_EXIT',
+      gpsTime: input.gpsTime.toISOString(),
+      stampedBy: 'GPS SITE GROUP',
+    };
+    if (noWorkCollector instanceof Map && !noWorkCollector.has(item.codeRun)) {
+      noWorkCollector.set(item.codeRun, item);
+      updateLocalNoWorkActual(
+        data,
+        item.codeRun,
+        'ไม่มีงานลง (GPS AUTO: รถออกจากพื้นที่ TPCAP หลังจบรอบงานเดียวกัน)'
+      );
+    }
+    results.push({ ...item, queued: noWorkCollector instanceof Map, written: false });
+  }
+
   state = {
     ...state,
     isInsideSite: false,
-    status: 'GROUP_CLOSED',
-    exitedSiteAt: nowIso,
+    status: 'WAITING_FOR_NO_WORK_CONFIRMATION',
+    exitedSiteAt: null,
     outsideStartedAt,
-    activeGroupId: null,
-    activeGroupCodeRuns: [],
-    closedGroupIds: nextClosedGroupIds,
+    activeGroupId: activeGroup.id,
+    activeGroupCodeRuns: activeGroup.trips.map(trip => trip.codeRun),
     noWorkCodeRuns: results.map(item => item.codeRun),
-    groupHasStartedWork,
+    groupHasStartedWork: true,
     detectedGeofenceId: null,
   };
   await writeGpsSiteGroupState(input.licensePlate, operationDate, state);
   console.log(JSON.stringify({
     logType: 'ELIVE_GPS_SITE_GROUP',
-    event: 'TPCAP_SITE_GROUP_CLOSED',
+    event: 'TPCAP_SITE_GROUP_NO_WORK_QUEUED',
     licensePlate: input.licensePlate,
     operationDate,
     groupId: activeGroup.id,
     groupCodeRuns: activeGroup.trips.map(trip => trip.codeRun),
     noWorkCodeRuns: results.map(item => item.codeRun),
-    groupHasStartedWork,
     outsideDurationMs,
   }));
   return results;
