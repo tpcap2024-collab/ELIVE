@@ -80,7 +80,8 @@ type DailyRefreshOptions = {
   clearResultOnError?: boolean;
 };
 
-const MAX_BATCH_DELETE_PLANS = 500;
+const MAX_BATCH_DELETE_PLANS = 2000;
+const MAX_DAILY_VIEW_DAYS = 6;
 const WORKING_DAYS = [
   { value: 1, short: 'จ.', full: 'จันทร์' },
   { value: 2, short: 'อ.', full: 'อังคาร' },
@@ -172,6 +173,27 @@ function getBangkokDate(): string {
   }).format(new Date());
 }
 
+function addCalendarDays(dateText: string, days: number): string {
+  const date = new Date(`${dateText}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return dateText;
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+function buildDateRange(startDate: string, endDate: string): string[] {
+  if (!startDate || !endDate || endDate < startDate) return [];
+  const dates: string[] = [];
+  let current = startDate;
+  while (current <= endDate && dates.length < MAX_DAILY_VIEW_DAYS) {
+    dates.push(current);
+    current = addCalendarDays(current, 1);
+  }
+  return dates;
+}
+function clampDailyEndDate(startDate: string, endDate: string): string {
+  const maximumEndDate = addCalendarDays(startDate, MAX_DAILY_VIEW_DAYS - 1);
+  if (!endDate || endDate < startDate) return startDate;
+  return endDate > maximumEndDate ? maximumEndDate : endDate;
+}
 function getErrorMessage(error: unknown): string {
   return error instanceof Error && error.message
     ? error.message
@@ -394,6 +416,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
   const [showCreateConfirmation, setShowCreateConfirmation] = useState(false);
 
   const [dailyDate, setDailyDate] = useState(today);
+  const [dailyEndDate, setDailyEndDate] = useState(today);
   const [dailyResult, setDailyResult] = useState<DailyPlansResult | null>(null);
   const [dailySearch, setDailySearch] = useState('');
   const [dailyFilter, setDailyFilter] = useState<DailyFilter>('ALL');
@@ -458,7 +481,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
     setSelectedPlanCodes(current => {
       if (current.includes(codeRun)) return current.filter(item => item !== codeRun);
       if (current.length >= MAX_BATCH_DELETE_PLANS) {
-        setNotice({ type: 'info', message: 'เลือกได้สูงสุด 500 รายการต่อครั้ง' });
+        setNotice({ type: 'info', message: 'เลือกได้สูงสุด 2000 รายการต่อครั้ง' });
         return current;
       }
       return [...current, codeRun];
@@ -473,7 +496,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
       const newCodes = displayedPlanCodes.filter(codeRun => !current.includes(codeRun));
       const next = [...current, ...newCodes.slice(0, availableSlots)];
       if (newCodes.length > availableSlots) {
-        setNotice({ type: 'info', message: 'เลือกได้สูงสุด 500 รายการต่อครั้ง ระบบเลือกให้ครบ 500 รายการแล้ว' });
+        setNotice({ type: 'info', message: 'เลือกได้สูงสุด 2000 รายการต่อครั้ง ระบบเลือกให้ครบ 2000 รายการแล้ว' });
       }
       return next;
     });
@@ -729,21 +752,45 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
   };
 
   const loadDailyPlans = async (
-    date = dailyDate,
+    start = dailyDate,
+    end = dailyEndDate,
     options: DailyRefreshOptions = {}
   ): Promise<DailyPlansResult> => {
     const { showMessage = true, clearResultOnError = showMessage } = options;
+    const normalizedEnd = clampDailyEndDate(start, end);
+    const dates = buildDateRange(start, normalizedEnd);
+    if (!dates.length) throw new Error('ช่วงวันที่ดูแผนไม่ถูกต้อง');
     setIsLoadingDaily(true);
     if (showMessage) setNotice(null);
-
     try {
-      const result = await fetchDailyPlans(date);
+      const dailyResults = await Promise.all(dates.map(date => fetchDailyPlans(date)));
+      const rows = dailyResults
+        .flatMap(result => result.rows || [])
+        .sort((first, second) =>
+          String(first.date || '').localeCompare(String(second.date || '')) ||
+          String(first.planEta || '').localeCompare(String(second.planEta || '')) ||
+          String(first.codeRun || '').localeCompare(String(second.codeRun || ''))
+        );
+      const firstResult = dailyResults[0];
+      const result: DailyPlansResult = {
+        ...firstResult,
+        rows,
+        rowCount: rows.length,
+        activeCount: dailyResults.reduce((sum, item) => sum + Number(item.activeCount || 0), 0),
+        regularCount: dailyResults.reduce((sum, item) => sum + Number(item.regularCount || 0), 0),
+        extraCount: dailyResults.reduce((sum, item) => sum + Number(item.extraCount || 0), 0),
+        cancelCount: dailyResults.reduce((sum, item) => sum + Number(item.cancelCount || 0), 0),
+      };
+      setDailyDate(start);
+      setDailyEndDate(normalizedEnd);
       setDailyResult(result);
       setSelectedPlanCodes([]);
       if (showMessage) {
         setNotice({
           type: 'success',
-          message: `โหลดแผนวันที่ ${date} สำเร็จ ${result.rowCount} รายการ`,
+          message: dates.length === 1
+            ? `โหลดแผนวันที่ ${start} สำเร็จ ${result.rowCount} รายการ`
+            : `โหลดแผน ${start} ถึง ${normalizedEnd} รวม ${dates.length} วัน สำเร็จ ${result.rowCount} รายการ`,
         });
       }
       return result;
@@ -755,7 +802,6 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
       setIsLoadingDaily(false);
     }
   };
-
   const openExtraDialog = () => {
     if (isSavingPlan) return;
     setEditingCodeRun('');
@@ -811,15 +857,16 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
       }
 
       setDailyDate(submittedPlan.date);
+      setDailyEndDate(submittedPlan.date);
       setPlanDialogMode(null);
       setEditingCodeRun('');
-      await loadDailyPlans(submittedPlan.date, {
+      await loadDailyPlans(submittedPlan.date, submittedPlan.date, {
         showMessage: false,
         clearResultOnError: false,
       });
     } catch (error) {
       try {
-        await loadDailyPlans(submittedPlan.date, {
+        await loadDailyPlans(submittedPlan.date, submittedPlan.date, {
           showMessage: false,
           clearResultOnError: false,
         });
@@ -844,7 +891,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
       setSelectedPlanCodes([]);
 
       try {
-        await loadDailyPlans(dailyDate, {
+        await loadDailyPlans(dailyDate, dailyEndDate, {
           showMessage: false,
           clearResultOnError: false,
         });
@@ -882,7 +929,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
     try {
       await deleteDailyPlan(target.codeRun);
       setDeletePlanTarget(null);
-      await loadDailyPlans(dailyDate, { showMessage: false, clearResultOnError: false });
+      await loadDailyPlans(dailyDate, dailyEndDate, { showMessage: false, clearResultOnError: false });
       setNotice({ type: 'success', message: `ลบ ${target.codeRun} และข้อมูล Actual ที่เกี่ยวข้องสำเร็จ` });
     } catch (error) {
       setNotice({ type: 'error', message: getErrorMessage(error) });
@@ -900,7 +947,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
     try {
       await cancelDailyPlan(target.codeRun);
       setCancelTarget(null);
-      await loadDailyPlans(dailyDate, { showMessage: false, clearResultOnError: false });
+      await loadDailyPlans(dailyDate, dailyEndDate, { showMessage: false, clearResultOnError: false });
       setNotice({ type: 'success', message: `ยกเลิก ${target.codeRun} สำเร็จ` });
     } catch (error) {
       setNotice({ type: 'error', message: getErrorMessage(error) });
@@ -918,7 +965,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
     try {
       await restoreDailyPlan(target.codeRun, restoreAs);
       setRestoreTarget(null);
-      await loadDailyPlans(dailyDate, { showMessage: false, clearResultOnError: false });
+      await loadDailyPlans(dailyDate, dailyEndDate, { showMessage: false, clearResultOnError: false });
       setNotice({
         type: 'success',
         message: `คืนค่า ${target.codeRun} เป็น ${restoreAs} สำเร็จ`,
@@ -1074,7 +1121,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                 tab === 'daily' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500'
               }`}
             >
-              ดูแผนประจำวัน
+              ดูแผนหลายวัน
             </button>
           </div>
 
@@ -1402,17 +1449,33 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
             <div className="space-y-5 p-5 sm:p-6">
               <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 lg:flex-row lg:items-end">
                 <label className="block text-sm font-medium text-slate-700">
-                  วันที่ดูแผน
+                  วันที่เริ่มต้น
                   <input
                     type="date"
                     value={dailyDate}
-                    onChange={event => setDailyDate(event.target.value)}
-                    className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 lg:w-52"
+                    onChange={event => {
+                      const nextStart = event.target.value;
+                      setDailyDate(nextStart);
+                      setDailyEndDate(current => clampDailyEndDate(nextStart, current));
+                    }}
+                    className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 lg:w-44"
                   />
+                </label>
+                <label className="block text-sm font-medium text-slate-700">
+                  วันที่สิ้นสุด
+                  <input
+                    type="date"
+                    value={dailyEndDate}
+                    min={dailyDate}
+                    max={addCalendarDays(dailyDate, MAX_DAILY_VIEW_DAYS - 1)}
+                    onChange={event => setDailyEndDate(clampDailyEndDate(dailyDate, event.target.value))}
+                    className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 lg:w-44"
+                  />
+                  <span className="mt-1 block text-xs text-slate-500">สูงสุด 6 วัน รวมวันเริ่มต้น</span>
                 </label>
                 <button
                   type="button"
-                  onClick={() => void loadDailyPlans(dailyDate, { showMessage: true, clearResultOnError: true })}
+                  onClick={() => void loadDailyPlans(dailyDate, dailyEndDate, { showMessage: true, clearResultOnError: true })}
                   disabled={isLoadingDaily}
                   className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-60"
                 >
@@ -1478,14 +1541,14 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                           <th className="w-12 px-4 py-3 text-center">
                             <input type="checkbox" checked={allDisplayedPlansSelected} onChange={toggleSelectAllDisplayed} disabled={!displayedPlanCodes.length || isSavingPlan} className="h-4 w-4 rounded border-slate-300 text-blue-600" aria-label="เลือกทั้งหมดที่แสดง" />
                           </th>
-                          {['Code Run', 'Type', 'Route', 'Company', 'Truck Name', 'Drop Point', 'รายละเอียดงาน', 'ETA', 'ETD', 'Action'].map(heading => (
+                          {['Code Run', 'Date', 'Type', 'Route', 'Company', 'Truck Name', 'Drop Point', 'รายละเอียดงาน', 'ETA', 'ETD', 'Action'].map(heading => (
                             <th key={heading} className="whitespace-nowrap px-4 py-3">{heading}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 bg-white">
                         {filteredDailyRows.length === 0 ? (
-                          <tr><td colSpan={11} className="px-4 py-10 text-center text-slate-500">ไม่พบแผนในวันที่เลือก</td></tr>
+                          <tr><td colSpan={12} className="px-4 py-10 text-center text-slate-500">ไม่พบแผนในวันที่เลือก</td></tr>
                         ) : (
                           filteredDailyRows.map(plan => (
                             <tr key={plan.codeRun} className={plan.remark === 'CANCEL' ? 'bg-red-50/50 text-slate-500' : 'hover:bg-blue-50/40'}>
@@ -1493,6 +1556,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                                 <input type="checkbox" checked={selectedPlanCodes.includes(plan.codeRun)} onChange={() => toggleSelectPlan(plan.codeRun)} disabled={isSavingPlan} className="h-4 w-4 rounded border-slate-300 text-blue-600" aria-label={`เลือก ${plan.codeRun}`} />
                               </td>
                               <td className="whitespace-nowrap px-4 py-3 font-bold text-slate-900">{plan.codeRun}</td>
+                              <td className="whitespace-nowrap px-4 py-3 font-mono text-slate-600">{plan.date}</td>
                               <td className="whitespace-nowrap px-4 py-3"><RemarkBadge remark={plan.remark} /></td>
                               <td className="whitespace-nowrap px-4 py-3">{plan.route}</td>
                               <td className="whitespace-nowrap px-4 py-3">{plan.company}</td>
@@ -1772,7 +1836,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
           <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
             <h2 className="text-lg font-bold">ยืนยันลบตาม Code run {selectedPlanCodes.length} รายการ</h2>
             <div className="mt-4 max-h-48 overflow-auto rounded-xl border bg-slate-50 p-3 font-mono text-sm">{selectedPlanCodes.join(', ')}</div>
-            <p className="mt-4 rounded-xl bg-red-50 p-4 text-sm text-red-800">ระบบลบเฉพาะแถวที่มี Code run ตรงกับรายการที่เลือก และลบ Actual data ที่เกี่ยวข้อง เลือกได้สูงสุด 500 รายการต่อครั้ง</p>
+            <p className="mt-4 rounded-xl bg-red-50 p-4 text-sm text-red-800">ระบบลบเฉพาะแถวที่มี Code run ตรงกับรายการที่เลือก และลบ Actual data ที่เกี่ยวข้อง เลือกได้สูงสุด 2000 รายการต่อครั้ง</p>
             <div className="mt-6 flex justify-end gap-3">
               <button type="button" onClick={() => setShowBatchDeleteConfirmation(false)} disabled={isSavingPlan} className="rounded-xl border px-5 py-2.5">กลับ</button>
               <button type="button" onClick={() => void handleBatchDeletePlans()} disabled={isSavingPlan || batchDeleteRunningRef.current || selectedPlanCodes.length > MAX_BATCH_DELETE_PLANS} className="rounded-xl bg-red-600 px-5 py-2.5 font-semibold text-white disabled:opacity-50">ยืนยันลบ {selectedPlanCodes.length} รายการ</button>
