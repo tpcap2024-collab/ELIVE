@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '72';
+const API_VERSION = '73';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -2006,10 +2006,11 @@ async function processPendingGpsStamp(pendingId) {
       }
       const currentBangkokMinutes = getBangkokMinuteOfDay(new Date());
       const activeShiftWindow = getGpsEtaShiftWindow(currentBangkokMinutes);
+      const etaValidationTime = new Date().toISOString();
       const etaEventWindow = getEtaWindowDecision(
         currentTrip.planDate,
         currentTrip.planEta,
-        record.gpsTime
+        etaValidationTime
       );
       if (!etaEventWindow.allowed) {
         console.warn(JSON.stringify({
@@ -2018,6 +2019,7 @@ async function processPendingGpsStamp(pendingId) {
           pendingId,
           codeRun: record.codeRun,
           gpsTime: record.gpsTime,
+          etaValidationTime,
           planDate: currentTrip.planDate,
           planEta: currentTrip.planEta,
           reason: etaEventWindow.reason,
@@ -2740,8 +2742,6 @@ async function evaluateGpsDock(payload, dataOverride = null, noWorkCollector = n
     status = 'GPS_PLATE_MISMATCH';
     parkingStartedAtMs = 0;
     movingStartedAtMs = 0;
-  } else if (gpsAgeMs > GPS_STALE_THRESHOLD_MS) {
-    status = 'GPS_STALE';
   } else if (!isInside) {
     status = 'OUTSIDE_GEOFENCE';
     parkingStartedAtMs = 0;
@@ -2843,6 +2843,17 @@ async function evaluateGpsDock(payload, dataOverride = null, noWorkCollector = n
   };
   await writeGpsDwellState(effectiveCodeRun, state);
   if (state.readyForGpsStampEta) {
+    if (gpsAgeMs > GPS_STALE_THRESHOLD_MS) {
+      console.log(JSON.stringify({
+        logType: 'ELIVE_GPS_STAMP',
+        event: 'STALE_SAME_DAY_GPS_ACCEPTED_FOR_ETA',
+        licensePlate: input.licensePlate,
+        gpsTime: input.gpsTime.toISOString(),
+        gpsAgeSeconds: Math.floor(gpsAgeMs / 1000),
+        detectedGeofenceId,
+        eligibleEtaCodeRuns: eligibleEtaTrips.map(trip => trip.codeRun),
+      }));
+    }
     state.autoStampEtaResults = await executeGpsAutoStampEtaBatch(state, eligibleEtaTrips);
     const etaResults = state.autoStampEtaResults
       .map(item => item.result)
@@ -4623,16 +4634,19 @@ app.get(['/health', '/api/health'], (req, res) => {
       fallbackAutoStampAllowed: false,
       duplicateGpsGuardEnabled: false,
       outOfOrderGpsGuardEnabled: false,
-      autoStampFreshThresholdSeconds: Math.floor(GPS_AUTO_STAMP_FRESH_THRESHOLD_MS / 1000),
+      autoStampFreshThresholdSeconds: null,
       lastProcessedGpsTtlSeconds: GPS_LAST_PROCESSED_TTL_SECONDS,
       directGetTrucksForDashboardEnabled: false,
       realtimeCacheTtlSeconds: GPS_REALTIME_CACHE_TTL_SECONDS,
       realtimeFallbackMaximumAgeSeconds: Math.floor(GPS_REALTIME_FALLBACK_MAX_AGE_MS / 1000),
       realtimeFallbackStillEnforcesGpsStaleGuard: false,
+      etaGpsAgeGuardEnabled: false,
+      etaLatestSameDayCoordinateAcceptedRegardlessOfAge: true,
       serviceMode: SERVICE_MODE,
       parkingSpeedThresholdKmh: GPS_PARKING_SPEED_THRESHOLD_KMH,
       dwellThresholdSeconds: Math.floor(GPS_DWELL_THRESHOLD_MS / 1000),
       gpsStaleThresholdSeconds: Math.floor(GPS_STALE_THRESHOLD_MS / 1000),
+      gpsStaleStatusBlocksEta: false,
       movementGraceSeconds: Math.floor(GPS_MOVEMENT_GRACE_MS / 1000),
       multipleTripsPerVehiclePerDay: true,
       tripSelectionPolicy: 'IN_PROGRESS_THEN_ACTIVE_SHIFT_THEN_MATCHING_GEOFENCE_EARLIEST_UNSTAMPED_PLAN_SINGLE_CANDIDATE',
@@ -4649,7 +4663,7 @@ app.get(['/health', '/api/health'], (req, res) => {
       pendingEtaShiftRevalidationEnabled: true,
       finalPreSendEtaShiftGuardEnabled: true,
       legacyPendingOutsideCurrentShiftBecomesSuperseded: true,
-      gpsFreshnessPolicy: 'IGNORE_AGE_WITHIN_CURRENT_BANGKOK_DATE',
+      gpsFreshnessPolicy: 'LATEST_SAME_DAY_COORDINATE_ACCEPTED_REGARDLESS_OF_AGE',
       historicalGpsPolicy: 'SKIP_WHEN_GPS_DATE_IS_NOT_CURRENT_BANGKOK_DATE',
       sameDayGpsRequired: true,
       etaCoreIntegrityGuardsRetained: ['ACTUAL_ETA_EMPTY', 'SAME_OPERATION_DATE', 'LICENSE_PLATE_MATCH', 'INSIDE_MATCHING_GEOFENCE', 'NOT_CANCELLED', 'NO_WORK_ACTION_BLOCK', 'IDEMPOTENT_PENDING_QUEUE'],
