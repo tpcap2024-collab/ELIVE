@@ -1627,12 +1627,15 @@ export default function App() {
                   const selectedTruck = actionDialog.truck;
                   if (selectedTruck && problem) {
                     setIsSavingAction(true);
-                    try {
-                      await handleUpdateTruck(selectedTruck.id, { actionProblem: problem, actionStatus: 'OPEN' });
-                      setActionDialog({ isOpen: false, truck: null });
-                    } finally {
-                      setIsSavingAction(false);
-                    }
+                    const savePromise = handleUpdateTruck(selectedTruck.id, {
+                      actionProblem: problem,
+                      actionStatus: 'OPEN',
+                    });
+                    setActionDialog({ isOpen: false, truck: null });
+                    setIsSavingAction(false);
+                    void savePromise.catch(error => {
+                      console.error('Unable to save Action / Problem:', error);
+                    });
                   }
                 }}
               >
