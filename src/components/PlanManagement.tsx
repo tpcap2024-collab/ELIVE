@@ -107,6 +107,7 @@ const EMPTY_PLAN: EditablePlan = {
   dropPoint: '',
   planEta: '',
   planEtd: '',
+  groupCode: '',
   remark: 'EXTRA',
   workDetail: '',
 };
@@ -165,6 +166,7 @@ const HEADER_ALIASES: Record<
   dropPoint: ['droppoint', 'dock', 'doc', 'จุดลงงาน', 'จุดส่งงาน'],
   planEta: ['planeta', 'eta', 'เวลาเข้า'],
   planEtd: ['planetd', 'etd', 'เวลาออก'],
+  groupCode: ['groupcode', 'group', 'รหัสกลุ่ม', 'กลุ่มงาน'],
 };
 
 function getBangkokDate(): string {
@@ -268,7 +270,7 @@ function parseTemplateRows(rawRows: unknown[][]): {
   ) as Record<keyof Omit<MasterPlanRow, 'sheetRow'>, number>;
 
   const missingColumns = Object.entries(indexes)
-    .filter(([, index]) => index < 0)
+    .filter(([key, index]) => key !== 'groupCode' && index < 0)
     .map(([key]) => key);
 
   if (missingColumns.length) {
@@ -292,6 +294,7 @@ function parseTemplateRows(rawRows: unknown[][]): {
       dropPoint: cleanCell(rawRow[indexes.dropPoint]),
       planEta: normalizeTime(rawRow[indexes.planEta]),
       planEtd: normalizeTime(rawRow[indexes.planEtd]),
+      groupCode: indexes.groupCode >= 0 ? cleanCell(rawRow[indexes.groupCode]) : '',
     };
 
     const values = Object.entries(row).filter(([key]) => key !== 'sheetRow');
@@ -331,7 +334,7 @@ async function readPlanFile(file: File): Promise<unknown[][]> {
 
 function buildMasterWorkbook(rows: MasterPlanRow[]) {
   const headers=['Route','Company','Truck Name','Truck type','Driver name','Tel driver','Project','Doc','Plan ETA','Plan ETD','Group Code'];
-  const body=rows.map(row=>[row.route,row.company,row.truckName,row.truckType,row.driverName,row.telDriver,row.project,row.dropPoint,row.planEta,row.planEtd,String((row as MasterPlanRow & {groupCode?:string}).groupCode||'')]);
+  const body=rows.map(row=>[row.route,row.company,row.truckName,row.truckType,row.driverName,row.telDriver,row.project,row.dropPoint,row.planEta,row.planEtd,String(row.groupCode||'')]);
   const workbook=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(workbook,XLSX.utils.aoa_to_sheet([headers,...body]),'Master Plan'); return workbook;
 }
 async function runInBatches<T>(items:T[],worker:(item:T)=>Promise<unknown>){for(let i=0;i<items.length;i+=OPERATION_BATCH_SIZE)await Promise.all(items.slice(i,i+OPERATION_BATCH_SIZE).map(worker));}
@@ -466,7 +469,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
     const query = templateSearch.trim().toLowerCase();
     if (!query) return templateRows;
     return templateRows.filter(row =>
-      [row.route, row.company, row.truckName, row.driverName, row.project, row.dropPoint]
+      [row.route, row.company, row.truckName, row.driverName, row.project, row.dropPoint, row.groupCode]
         .join(' ')
         .toLowerCase()
         .includes(query)
@@ -531,6 +534,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
         row.telDriver,
         row.project,
         row.dropPoint,
+        row.groupCode,
       ]
         .join(' ')
         .toLowerCase()
@@ -553,6 +557,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
       'telDriver',
       'project',
       'dropPoint',
+      'groupCode',
     ] as const;
     return Object.fromEntries(
       fields.map(field => [
@@ -840,6 +845,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
       dropPoint: plan.dropPoint,
       planEta: plan.planEta,
       planEtd: plan.planEtd,
+      groupCode: plan.groupCode || '',
       remark: plan.remark,
       workDetail: plan.workDetail || '',
     });
@@ -1022,6 +1028,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
       dropPoint: row.dropPoint,
       planEta: row.planEta,
       planEtd: row.planEtd,
+      groupCode: row.groupCode || '',
     });
     setMasterDialogMode('edit');
   };
@@ -1214,6 +1221,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                         'Drop Point',
                         'ETA',
                         'ETD',
+                        'Group Code',
                         'Action',
                       ].map(heading => (
                         <th key={heading} className="whitespace-nowrap px-4 py-3">{heading}</th>
@@ -1223,7 +1231,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                   <tbody className="divide-y divide-slate-100 bg-white">
                     {filteredMasterRows.length === 0 ? (
                       <tr>
-                        <td colSpan={12} className="px-4 py-12 text-center text-slate-500">
+                        <td colSpan={13} className="px-4 py-12 text-center text-slate-500">
                           {isLoadingMaster ? 'กำลังโหลด Master Plan...' : 'ไม่พบข้อมูล Master Plan'}
                         </td>
                       </tr>
@@ -1241,6 +1249,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                           <td className="whitespace-nowrap px-4 py-3">{row.dropPoint}</td>
                           <td className="whitespace-nowrap px-4 py-3 font-mono">{row.planEta}</td>
                           <td className="whitespace-nowrap px-4 py-3 font-mono">{row.planEtd}</td>
+                          <td className="whitespace-nowrap px-4 py-3"><span className={row.groupCode ? 'rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-bold text-emerald-700' : 'text-slate-400'}>{row.groupCode || 'ไม่มี Group'}</span></td>
                           <td className="whitespace-nowrap px-4 py-3">
                             <div className="flex gap-2">
                               <button
@@ -1301,7 +1310,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                       </section>
                       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
                         <div className="flex items-center justify-between"><div><h3 className="font-bold text-slate-900">แผนล่าสุด</h3><p className="text-sm text-slate-500">แสดงแผน 5 รายการล่าสุดของวันนี้</p></div><button type="button" onClick={() => setTab('daily')} className="rounded-xl border px-4 py-2 text-sm font-semibold text-blue-700">ดูทั้งหมด</button></div>
-                        <div className="mt-4 overflow-x-auto"><table className="min-w-full text-sm"><thead className="bg-slate-50 text-left text-xs uppercase text-slate-500"><tr>{['วันที่','Route','ทะเบียนรถ','จุดลงงาน','Plan ETA','ประเภท'].map(h=><th key={h} className="px-3 py-3">{h}</th>)}</tr></thead><tbody className="divide-y">{(dailyResult?.rows || []).slice(0,5).map(row=><tr key={row.codeRun}><td className="px-3 py-3">{row.date}</td><td className="px-3 py-3 font-semibold">{row.route}</td><td className="px-3 py-3">{row.truckName}</td><td className="px-3 py-3">{row.dropPoint}</td><td className="px-3 py-3 font-mono">{row.planEta}</td><td className="px-3 py-3"><RemarkBadge remark={row.remark}/></td></tr>)}{!(dailyResult?.rows?.length) && <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">ยังไม่มีข้อมูลแผนของวันนี้</td></tr>}</tbody></table></div>
+                        <div className="mt-4 overflow-x-auto"><table className="min-w-full text-sm"><thead className="bg-slate-50 text-left text-xs uppercase text-slate-500"><tr>{['วันที่','Route','ทะเบียนรถ','จุดลงงาน','Plan ETA','Group Code','ประเภท'].map(h=><th key={h} className="px-3 py-3">{h}</th>)}</tr></thead><tbody className="divide-y">{(dailyResult?.rows || []).slice(0,5).map(row=><tr key={row.codeRun}><td className="px-3 py-3">{row.date}</td><td className="px-3 py-3 font-semibold">{row.route}</td><td className="px-3 py-3">{row.truckName}</td><td className="px-3 py-3">{row.dropPoint}</td><td className="px-3 py-3 font-mono">{row.planEta}</td><td className="px-3 py-3">{row.groupCode || 'ไม่มี Group'}</td><td className="px-3 py-3"><RemarkBadge remark={row.remark}/></td></tr>)}{!(dailyResult?.rows?.length) && <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-400">ยังไม่มีข้อมูลแผนของวันนี้</td></tr>}</tbody></table></div>
                       </section>
                     </div>
                     <aside className="space-y-5">
@@ -1517,14 +1526,14 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                           <th className="w-12 px-4 py-3 text-center">
                             <input type="checkbox" checked={allDisplayedPlansSelected} onChange={toggleSelectAllDisplayed} disabled={!displayedPlanCodes.length || isSavingPlan} className="h-4 w-4 rounded border-slate-300 text-blue-600" aria-label="เลือกทั้งหมดที่แสดง" />
                           </th>
-                          {['Code Run', 'Date', 'Type', 'Route', 'Company', 'Truck Name', 'Drop Point', 'รายละเอียดงาน', 'ETA', 'ETD', 'Action'].map(heading => (
+                          {['Code Run', 'Date', 'Type', 'Route', 'Company', 'Truck Name', 'Drop Point', 'Group Code', 'รายละเอียดงาน', 'ETA', 'ETD', 'Action'].map(heading => (
                             <th key={heading} className="whitespace-nowrap px-4 py-3">{heading}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 bg-white">
                         {filteredDailyRows.length === 0 ? (
-                          <tr><td colSpan={12} className="px-4 py-10 text-center text-slate-500">ไม่พบแผนในวันที่เลือก</td></tr>
+                          <tr><td colSpan={13} className="px-4 py-10 text-center text-slate-500">ไม่พบแผนในวันที่เลือก</td></tr>
                         ) : (
                           filteredDailyRows.map(plan => (
                             <tr key={plan.codeRun} className={plan.remark === 'CANCEL' ? 'bg-red-50/50 text-slate-500' : 'hover:bg-blue-50/40'}>
@@ -1538,6 +1547,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                               <td className="whitespace-nowrap px-4 py-3">{plan.company}</td>
                               <td className="whitespace-nowrap px-4 py-3 font-medium">{plan.truckName}</td>
                               <td className="whitespace-nowrap px-4 py-3">{plan.dropPoint}</td>
+                              <td className="whitespace-nowrap px-4 py-3"><span className={plan.groupCode ? 'rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-bold text-emerald-700' : 'rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-700'}>{plan.groupCode || 'ไม่มี Group'}</span></td>
                               <td className="max-w-[280px] px-4 py-3">
                                 <span className="block truncate" title={plan.workDetail || '-'}>
                                   {plan.workDetail || '-'}
@@ -1640,7 +1650,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
               <table className="min-w-full divide-y divide-slate-200 text-sm">
                 <thead className="bg-slate-100 text-left text-xs font-semibold uppercase text-slate-600">
                   <tr>
-                    {['Route', 'Company', 'Truck Name', 'Truck Type', 'Driver', 'Project', 'Drop Point', 'ETA', 'ETD'].map(heading => (
+                    {['Route', 'Company', 'Truck Name', 'Truck Type', 'Driver', 'Project', 'Drop Point', 'ETA', 'ETD', 'Group Code'].map(heading => (
                       <th key={heading} className="whitespace-nowrap px-4 py-3">{heading}</th>
                     ))}
                   </tr>
@@ -1657,6 +1667,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                       <td className="whitespace-nowrap px-4 py-3">{row.dropPoint}</td>
                       <td className="whitespace-nowrap px-4 py-3 font-mono">{row.planEta}</td>
                       <td className="whitespace-nowrap px-4 py-3 font-mono">{row.planEtd}</td>
+                      <td className="whitespace-nowrap px-4 py-3">{row.groupCode || 'ไม่มี Group'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -1765,7 +1776,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                   {item.label}{item.required ? ' *' : ''}
                   <input
                     type={item.type}
-                    value={masterForm[item.field]}
+                    value={String(masterForm[item.field] || '')}
                     onChange={event => setMasterFormField(item.field, event.target.value)}
                     required={item.required}
                     disabled={isSavingMaster}
