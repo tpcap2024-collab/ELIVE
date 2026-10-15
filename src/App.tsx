@@ -1079,7 +1079,7 @@ export default function App() {
       label: 'Plan Management',
       icon: ClipboardList,
       minimumRole: 'PLANNER',
-      activeClass: 'bg-emerald-50 font-semibold text-emerald-700',
+      activeClass: 'bg-blue-50 font-semibold text-blue-700',
     },
     {
       view: 'incident',
@@ -1097,7 +1097,7 @@ export default function App() {
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600">
             <span className="text-lg font-bold italic text-white">E</span>
           </div>
-          <span className="text-xl font-bold text-slate-800">ELIVE</span>
+          <div><span className="block text-xl font-bold text-slate-800">ELIVE</span><span className="block text-[10px] text-slate-400">Logistics Platform</span></div>
         </div>
         <button type="button" onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="rounded-lg p-2 text-slate-600 hover:bg-slate-100">
           <Menu className="h-5 w-5" />
@@ -1117,7 +1117,7 @@ export default function App() {
                 <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600">
                   <span className="text-lg font-bold italic text-white">E</span>
                 </div>
-                <span className="text-xl font-bold text-slate-800">ELIVE</span>
+                <div><span className="block text-xl font-bold text-slate-800">ELIVE</span><span className="block text-[10px] text-slate-400">Logistics Platform</span></div>
               </div>
               <button type="button" onClick={() => setIsSidebarOpen(false)} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 md:hidden">
                 <X className="h-5 w-5" />
@@ -1465,13 +1465,13 @@ export default function App() {
           </>
         )}
 
-        <footer className="z-10 flex h-12 shrink-0 items-center justify-between bg-slate-800 px-6 text-xs text-white">
+        {currentView !== 'plan-management' && <footer className="z-10 flex h-12 shrink-0 items-center justify-between bg-slate-800 px-6 text-xs text-white">
           <div className="flex items-center gap-4">
             <span className="rounded-full bg-red-500 px-2 py-0.5 text-[10px] font-bold">ALERT</span>
             <span className="hidden sm:inline">System running. Check the warning banner for connection status.</span>
           </div>
           <span className="opacity-60">© 2026 ELIVE Logistics</span>
-        </footer>
+        </footer>}
       </div>
 
       {isGpsPopupOpen &&
