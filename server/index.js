@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '70';
+const API_VERSION = '71';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -2482,49 +2482,30 @@ async function flushGpsNoWorkBatch(noWorkCollector, data) {
         );
       }
     }
-    const requestedItems = batchItems.map(item => ({
-      codeRun: cleanText(item?.codeRun).toUpperCase(),
-      sourceCodeRun: cleanText(item?.sourceCodeRun).toUpperCase(),
-      planDate: cleanText(item?.planDate),
-      planEta: cleanText(item?.planEta),
-      targetDropPoint: cleanText(item?.targetDropPoint).toUpperCase(),
-      targetGeofenceId: cleanText(item?.targetGeofenceId).toUpperCase(),
-      mode: cleanText(item?.mode).toUpperCase(),
-      gpsTime: cleanText(item?.gpsTime),
-    }));
-    const responseRecords = records.map(record => ({
-      codeRun: cleanText(record?.codeRun).toUpperCase(),
-      written: record?.written === true,
-      alreadyFinal: record?.alreadyFinal === true,
-      reason: cleanText(record?.reason),
-      error: cleanText(record?.error),
-      status: cleanText(record?.status),
-      mode: cleanText(record?.mode),
-      planDate: cleanText(record?.planDate),
-      targetDropPoint: cleanText(record?.targetDropPoint).toUpperCase(),
-      actionProblem: cleanText(record?.actionProblem),
-    }));
-    const failedRecords = responseRecords.filter(record =>
-      record.written !== true && record.alreadyFinal !== true
-    );
+    const failedCount = Number(result?.failedCount || 0);
     const responseCountMismatch = records.length !== batchItems.length;
-    console.warn(JSON.stringify({
-      logType: 'ELIVE_GPS_NO_WORK',
-      event: 'R_DOCK_AUTO_NO_WORK_BATCH_CONFIRMED',
-      batchNumber: summary.batches,
-      requestedCount: batchItems.length,
-      responseRecordCount: records.length,
-      responseCountMismatch,
-      requestedItems,
-      writtenCount: Number(result?.writtenCount || 0),
-      alreadyFinalCount: Number(result?.alreadyFinalCount || 0),
-      failedCount: Number(result?.failedCount || 0),
-      failedRecords,
-      responseRecords,
-      responseMessage: cleanText(result?.message),
-      responseStatus: cleanText(result?.status),
-    }));
-    if (responseCountMismatch || failedRecords.length > 0) {
+    if (failedCount > 0 || responseCountMismatch) {
+      const requestedItems = batchItems.map(item => ({
+        codeRun: cleanText(item?.codeRun).toUpperCase(),
+        sourceCodeRun: cleanText(item?.sourceCodeRun).toUpperCase(),
+        planDate: cleanText(item?.planDate),
+        planEta: cleanText(item?.planEta),
+        targetDropPoint: cleanText(item?.targetDropPoint).toUpperCase(),
+        targetGeofenceId: cleanText(item?.targetGeofenceId).toUpperCase(),
+        mode: cleanText(item?.mode).toUpperCase(),
+        gpsTime: cleanText(item?.gpsTime),
+      }));
+      const failedRecords = records
+        .filter(record => record?.written !== true && record?.alreadyFinal !== true)
+        .map(record => ({
+          codeRun: cleanText(record?.codeRun).toUpperCase(),
+          reason: cleanText(record?.reason),
+          error: cleanText(record?.error),
+          status: cleanText(record?.status),
+          mode: cleanText(record?.mode),
+          planDate: cleanText(record?.planDate),
+          targetDropPoint: cleanText(record?.targetDropPoint).toUpperCase(),
+        }));
       console.error(JSON.stringify({
         logType: 'ELIVE_GPS_NO_WORK',
         event: 'R_DOCK_AUTO_NO_WORK_BATCH_FAILURE_DETAILS',
@@ -2533,14 +2514,21 @@ async function flushGpsNoWorkBatch(noWorkCollector, data) {
         responseRecordCount: records.length,
         responseCountMismatch,
         requestedItems,
+        writtenCount: Number(result?.writtenCount || 0),
+        alreadyFinalCount: Number(result?.alreadyFinalCount || 0),
+        failedCount,
         failedRecords,
-        rawFailureSummary: {
-          writtenCount: Number(result?.writtenCount || 0),
-          alreadyFinalCount: Number(result?.alreadyFinalCount || 0),
-          failedCount: Number(result?.failedCount || 0),
-          message: cleanText(result?.message),
-          status: cleanText(result?.status),
-        },
+        responseMessage: cleanText(result?.message),
+        responseStatus: cleanText(result?.status),
+      }));
+    } else if (Number(result?.writtenCount || 0) > 0) {
+      console.log(JSON.stringify({
+        logType: 'ELIVE_GPS_NO_WORK',
+        event: 'R_DOCK_AUTO_NO_WORK_BATCH_WRITTEN',
+        batchNumber: summary.batches,
+        requestedCount: batchItems.length,
+        writtenCount: Number(result?.writtenCount || 0),
+        alreadyFinalCount: Number(result?.alreadyFinalCount || 0),
       }));
     }
   }
