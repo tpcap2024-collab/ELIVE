@@ -177,6 +177,7 @@ export interface MasterPlanRow {
   dropPoint: string;
   planEta: string;
   planEtd: string;
+  groupCode?: string;
 }
 
 export type EditableMasterPlanRow = Omit<MasterPlanRow, 'sheetRow'>;
@@ -279,6 +280,7 @@ export interface DailyPlan {
   dropPoint: string;
   planEta: string;
   planEtd: string;
+  groupCode?: string;
   remark: PlanRemark;
   workDetail: string;
   workDetailConfirmed: boolean;
@@ -296,6 +298,7 @@ export interface EditablePlan {
   dropPoint: string;
   planEta: string;
   planEtd: string;
+  groupCode?: string;
   remark?: PlanRemark;
   workDetail?: string;
 }
@@ -657,6 +660,7 @@ function validateEditablePlan(plan: EditablePlan): EditablePlan {
     dropPoint: String(plan.dropPoint || '').trim(),
     planEta: validatePlanTime(plan.planEta, 'Plan ETA'),
     planEtd: validatePlanTime(plan.planEtd, 'Plan ETD'),
+    groupCode: String(plan.groupCode || '').trim(),
     remark: plan.remark ? normalizePlanRemark(plan.remark) : undefined,
     workDetail: String(plan.workDetail || '').trim(),
   };
@@ -689,6 +693,7 @@ function validateMasterPlanRow(
     dropPoint: String(row.dropPoint || '').trim(),
     planEta: validatePlanTime(row.planEta, 'Plan ETA'),
     planEtd: validatePlanTime(row.planEtd, 'Plan ETD'),
+    groupCode: String(row.groupCode || '').trim(),
   };
 
   if (!validRow.route) throw new Error('Route is required.');
@@ -752,6 +757,7 @@ function mapDailyPlan(value: any): DailyPlan {
     dropPoint: String(value?.dropPoint || '').trim(),
     planEta: parseGoogleSheetsTime(value?.planEta),
     planEtd: parseGoogleSheetsTime(value?.planEtd),
+    groupCode: String(value?.groupCode || '').trim(),
     remark: normalizePlanRemark(value?.remark),
     workDetail: String(value?.workDetail || '').trim(),
     workDetailConfirmed: String(value?.workDetailConfirmed || '').trim().toUpperCase() === 'CONFIRMED',
@@ -1216,7 +1222,7 @@ export interface BatchDeletePlansResult {
 export async function deleteDailyPlansBatch(codeRuns: string[]): Promise<BatchDeletePlansResult> {
   const validCodeRuns = [...new Set((Array.isArray(codeRuns) ? codeRuns : []).map(normalizeCodeRun))];
   if (!validCodeRuns.length) throw new Error('Select at least one Plan.');
-  if (validCodeRuns.length > 500) throw new Error('เลือกได้สูงสุด 500 รายการต่อครั้ง');
+  if (validCodeRuns.length > 2000) throw new Error('เลือกได้สูงสุด 2000 รายการต่อครั้ง');
   const data: PlanApiResponse<BatchDeletePlansResult> = await fetchApiRequest('/api/plans/delete-batch', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ codeRuns: validCodeRuns }),
   });
