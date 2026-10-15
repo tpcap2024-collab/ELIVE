@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '67';
+const API_VERSION = '68';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -1233,28 +1233,71 @@ async function writeGpsSiteGroupState(licensePlate, operationDate, state) {
   );
   return state;
 }
-function buildGpsPlanTimeGroups(trips) {
+function normalizeGroupCode(value) {
+  return cleanText(value).toUpperCase().replace(/\s+/g, '');
+}
+function buildGpsPlanGroups(trips) {
   const sorted = [...trips]
     .filter(trip => Number.isFinite(trip.planEtaMinutes))
     .sort(compareTripsByPlanTime);
-  const groups = [];
+  const codedGroups = new Map();
+  const fallbackTrips = [];
   for (const trip of sorted) {
-    const current = groups[groups.length - 1];
-    if (!current || trip.planEtaMinutes > current.startMinutes + GPS_SITE_GROUP_WINDOW_MINUTES) {
-      groups.push({
-        id: `${trip.planDate}:${normalizeLicensePlate(trip.planLicensePlate)}:${String(trip.planEtaMinutes).padStart(4, '0')}`,
+    const groupCode = normalizeGroupCode(trip.groupCode);
+    if (!groupCode) {
+      fallbackTrips.push(trip);
+      continue;
+    }
+    const id = `${trip.planDate}:${normalizeLicensePlate(trip.planLicensePlate)}:${groupCode}`;
+    let group = codedGroups.get(id);
+    if (!group) {
+      group = {
+        id,
+        groupCode,
+        groupingMode: 'GROUP_CODE',
         startMinutes: trip.planEtaMinutes,
         endMinutes: trip.planEtaMinutes,
-        routes: trip.route ? [trip.route] : [],
-        trips: [trip],
-      });
-    } else {
-      current.trips.push(trip);
-      current.endMinutes = Math.max(current.endMinutes, trip.planEtaMinutes);
-      if (trip.route && !current.routes.includes(trip.route)) current.routes.push(trip.route);
+        routes: [],
+        trips: [],
+      };
+      codedGroups.set(id, group);
     }
+    group.trips.push(trip);
+    group.startMinutes = Math.min(group.startMinutes, trip.planEtaMinutes);
+    group.endMinutes = Math.max(group.endMinutes, trip.planEtaMinutes);
+    if (trip.route && !group.routes.includes(trip.route)) group.routes.push(trip.route);
   }
-  return groups;
+  const fallbackGroups = [];
+  for (const trip of fallbackTrips) {
+    let group = fallbackGroups[fallbackGroups.length - 1];
+    if (!group || trip.planEtaMinutes > group.startMinutes + GPS_SITE_GROUP_WINDOW_MINUTES) {
+      group = {
+        id: `${trip.planDate}:${normalizeLicensePlate(trip.planLicensePlate)}:TIME:${String(trip.planEtaMinutes).padStart(4, '0')}`,
+        groupCode: '',
+        groupingMode: 'TIME_FALLBACK',
+        startMinutes: trip.planEtaMinutes,
+        endMinutes: trip.planEtaMinutes,
+        routes: [],
+        trips: [],
+      };
+      fallbackGroups.push(group);
+    }
+    group.trips.push(trip);
+    group.endMinutes = Math.max(group.endMinutes, trip.planEtaMinutes);
+    if (trip.route && !group.routes.includes(trip.route)) group.routes.push(trip.route);
+  }
+  return [...codedGroups.values(), ...fallbackGroups]
+    .sort((first, second) => first.startMinutes - second.startMinutes || first.id.localeCompare(second.id));
+}
+function selectRecoverableOutsideSiteGroup(groups, closedGroupIds = []) {
+  const closed = new Set(Array.isArray(closedGroupIds) ? closedGroupIds : []);
+  return [...groups]
+    .filter(group =>
+      !closed.has(group.id) &&
+      group.trips.some(trip => Boolean(trip.stampEta || trip.stampEtd)) &&
+      group.trips.some(trip => !trip.stampEta && !trip.stampEtd && !trip.noWorkAction)
+    )
+    .sort((first, second) => second.startMinutes - first.startMinutes)[0] || null;
 }
 function selectGpsSiteGroup(groups, detectedGeofenceId, closedGroupIds = []) {
   const closed = new Set(Array.isArray(closedGroupIds) ? closedGroupIds : []);
@@ -1276,35 +1319,62 @@ function compareTripsByPlanTime(first, second) {
   if (firstMinutes !== secondMinutes) return firstMinutes - secondMinutes;
   return first.codeRun.localeCompare(second.codeRun, undefined, { numeric: true });
 }
+function findPlanColumnIndex(headers, aliases, fallbackIndex) {
+  const normalizedHeaders = (Array.isArray(headers) ? headers : []).map(header =>
+    cleanText(header).toLowerCase().replace(/\s+/g, '')
+  );
+  for (const alias of aliases) {
+    const index = normalizedHeaders.indexOf(cleanText(alias).toLowerCase().replace(/\s+/g, ''));
+    if (index >= 0) return index;
+  }
+  return fallbackIndex;
+}
+function getPlanColumnIndexes(planRows) {
+  const headers = Array.isArray(planRows?.[0]) ? planRows[0] : [];
+  return {
+    codeRun: findPlanColumnIndex(headers, ['Code run', 'CodeRun', 'Code'], 0),
+    date: findPlanColumnIndex(headers, ['Date'], 1),
+    route: findPlanColumnIndex(headers, ['Route'], 2),
+    plate: findPlanColumnIndex(headers, ['Truck Name', 'ทะเบียนรถ', 'License Plate'], 4),
+    project: findPlanColumnIndex(headers, ['Project'], 8),
+    dropPoint: findPlanColumnIndex(headers, ['Doc', 'Drop Point'], 9),
+    planEta: findPlanColumnIndex(headers, ['Plan ETA'], 10),
+    planEtd: findPlanColumnIndex(headers, ['Plan ETD'], 11),
+    remark: findPlanColumnIndex(headers, ['Remark'], 12),
+    groupCode: findPlanColumnIndex(headers, ['Group Code', 'GroupCode'], 15),
+  };
+}
 function buildTripsForPlate(data, licensePlate, dateText) {
   const targetPlate = normalizeLicensePlate(licensePlate);
   const planRows = Array.isArray(data?.plan) ? data.plan : [];
   const actualRows = Array.isArray(data?.actual) ? data.actual : [];
+  const columns = getPlanColumnIndexes(planRows);
   const actualByCodeRun = new Map();
   for (const row of actualRows.slice(1)) {
     if (!Array.isArray(row)) continue;
-    const codeRun = cleanText(row[0]).toUpperCase();
+    const codeRun = cleanText(row[columns.codeRun]).toUpperCase();
     if (codeRun) actualByCodeRun.set(codeRun, row);
   }
   const trips = [];
   for (const row of planRows.slice(1)) {
     if (!Array.isArray(row)) continue;
-    const codeRun = cleanText(row[0]).toUpperCase();
-    const planDate = parseSheetDateText(row[1]);
-    const planPlate = cleanText(row[4]);
-    const remark = cleanText(row[12]).toUpperCase();
+    const codeRun = cleanText(row[columns.codeRun]).toUpperCase();
+    const planDate = parseSheetDateText(row[columns.date]);
+    const planPlate = cleanText(row[columns.plate]);
+    const remark = cleanText(row[columns.remark]).toUpperCase();
     if (!/^A\d+$/.test(codeRun) || remark === 'CANCEL') continue;
     if (normalizeLicensePlate(planPlate) !== targetPlate) continue;
     if (planDate !== dateText) continue;
     const actual = actualByCodeRun.get(codeRun) || [];
     trips.push({
       codeRun,
-      route: cleanText(row[2]).toUpperCase(),
+      route: cleanText(row[columns.route]).toUpperCase(),
       planDate,
       planLicensePlate: planPlate,
-      dropPoint: cleanText(row[9]).toUpperCase(),
-      planEta: cleanText(row[10]),
-      planEtaMinutes: parsePlanMinutes(row[10]),
+      dropPoint: cleanText(row[columns.dropPoint]).toUpperCase(),
+      planEta: cleanText(row[columns.planEta]),
+      planEtaMinutes: parsePlanMinutes(row[columns.planEta]),
+      groupCode: normalizeGroupCode(row[columns.groupCode]),
       stampEta: cleanText(actual[4]),
       stampEtd: cleanText(actual[5]),
       actionProblem: cleanText(actual[6]),
@@ -2266,7 +2336,7 @@ async function reconcileSkippedRDockAfterLsp(input, data, noWorkCollector = null
   if (!GPS_R_DOCK_NO_WORK_ENABLED) return [];
   const operationDate = getBangkokDateText(input.gpsTime);
   const trips = buildTripsForPlate(data, input.licensePlate, operationDate).sort(compareTripsByPlanTime);
-  const groups = buildGpsPlanTimeGroups(trips);
+  const groups = buildGpsPlanGroups(trips);
   const detected = findNearestGpsGeofence(input.latitude, input.longitude);
   const detectedGeofenceId = detected.distanceMeters <= detected.radiusMeters ? detected.id : null;
   const isInsideSite = isPointInsidePolygon(input.latitude, input.longitude);
@@ -2282,6 +2352,8 @@ async function reconcileSkippedRDockAfterLsp(input, data, noWorkCollector = null
     activeGroupId: activeGroup?.id || null,
     activeGroupStartMinutes: activeGroup?.startMinutes ?? null,
     activeGroupEndMinutes: activeGroup?.endMinutes ?? null,
+    activeGroupCode: activeGroup?.groupCode || null,
+    activeGroupGroupingMode: activeGroup?.groupingMode || null,
     activeGroupCodeRuns: activeGroup?.trips.map(trip => trip.codeRun) || [],
     closedGroupIds,
     isInsideSite,
@@ -2292,6 +2364,31 @@ async function reconcileSkippedRDockAfterLsp(input, data, noWorkCollector = null
     detectedGeofenceId,
   };
 
+  if (!isInsideSite && !activeGroup) {
+    activeGroup = selectRecoverableOutsideSiteGroup(groups, closedGroupIds);
+    if (activeGroup) {
+      state = {
+        ...state,
+        activeGroupId: activeGroup.id,
+        activeGroupStartMinutes: activeGroup.startMinutes,
+        activeGroupEndMinutes: activeGroup.endMinutes,
+        activeGroupCode: activeGroup.groupCode || null,
+        activeGroupGroupingMode: activeGroup.groupingMode || null,
+        activeGroupCodeRuns: activeGroup.trips.map(trip => trip.codeRun),
+        status: 'RECOVERED_OUTSIDE_SITE_GROUP',
+      };
+      console.warn(JSON.stringify({
+        logType: 'ELIVE_GPS_SITE_GROUP',
+        event: 'TPCAP_SITE_GROUP_RECOVERED_FROM_ACTUAL_WHILE_OUTSIDE',
+        licensePlate: input.licensePlate,
+        operationDate,
+        groupId: activeGroup.id,
+        groupCode: activeGroup.groupCode || null,
+        groupingMode: activeGroup.groupingMode || null,
+        groupCodeRuns: activeGroup.trips.map(trip => trip.codeRun),
+      }));
+    }
+  }
   if (isInsideSite) {
     if (!activeGroup || closedGroupIds.includes(activeGroup.id)) {
       activeGroup = selectGpsSiteGroup(groups, detectedGeofenceId, closedGroupIds);
@@ -2301,6 +2398,8 @@ async function reconcileSkippedRDockAfterLsp(input, data, noWorkCollector = null
       activeGroupId: activeGroup?.id || null,
       activeGroupStartMinutes: activeGroup?.startMinutes ?? null,
       activeGroupEndMinutes: activeGroup?.endMinutes ?? null,
+      activeGroupCode: activeGroup?.groupCode || null,
+      activeGroupGroupingMode: activeGroup?.groupingMode || null,
       activeGroupCodeRuns: activeGroup?.trips.map(trip => trip.codeRun) || [],
       enteredSiteAt: previousState?.enteredSiteAt || nowIso,
       outsideStartedAt: null,
@@ -2838,19 +2937,20 @@ function buildBackgroundGpsInputs(data) {
   const gpsRows = Array.isArray(data?.gps) ? data.gps : [];
   if (gpsRows.length <= 1 || planRows.length <= 1) return [];
   const today = getBangkokDateText(new Date());
+  const columns = getPlanColumnIndexes(planRows);
   const seedTrips = [];
   for (const row of planRows.slice(1)) {
     if (!Array.isArray(row)) continue;
-    const codeRun = cleanText(row[0]).toUpperCase();
-    const planDate = parseSheetDateText(row[1]);
-    const plate = cleanText(row[4]);
-    const remark = cleanText(row[12]).toUpperCase();
+    const codeRun = cleanText(row[columns.codeRun]).toUpperCase();
+    const planDate = parseSheetDateText(row[columns.date]);
+    const plate = cleanText(row[columns.plate]);
+    const remark = cleanText(row[columns.remark]).toUpperCase();
     if (!/^A\d+$/.test(codeRun) || !plate || remark === 'CANCEL' || planDate !== today) continue;
     seedTrips.push({
       codeRun,
       planDate,
-      planEta: cleanText(row[10]),
-      planEtaMinutes: parsePlanMinutes(row[10]),
+      planEta: cleanText(row[columns.planEta]),
+      planEtaMinutes: parsePlanMinutes(row[columns.planEta]),
       planLicensePlate: plate,
       normalizedPlate: normalizeLicensePlate(plate),
     });
@@ -4143,6 +4243,7 @@ function normalizeTemplateRows(value) {
       dropPoint: cleanText(row?.dropPoint),
       planEta: cleanText(row?.planEta),
       planEtd: cleanText(row?.planEtd),
+      groupCode: normalizeGroupCode(row?.groupCode),
     }))
     .filter(row => Object.values(row).some(item => item !== ''));
 }
@@ -4206,6 +4307,7 @@ function normalizeEditablePlan(body) {
     dropPoint: cleanText(source.dropPoint),
     planEta: normalizeTimeText(source.planEta, 'Plan ETA'),
     planEtd: normalizeTimeText(source.planEtd, 'Plan ETD'),
+    groupCode: normalizeGroupCode(source.groupCode),
     remark:
       source.remark === undefined
         ? undefined
@@ -4252,6 +4354,7 @@ function normalizeMasterPlanRow(body) {
     dropPoint: cleanText(source.dropPoint),
     planEta: normalizeTimeText(source.planEta, 'Plan ETA'),
     planEtd: normalizeTimeText(source.planEtd, 'Plan ETD'),
+    groupCode: normalizeGroupCode(source.groupCode),
   };
 
   if (!row.route) throw new Error('Route is required.');
@@ -4598,9 +4701,9 @@ app.get(['/health', '/api/health'], (req, res) => {
       gpsStaleThresholdSeconds: Math.floor(GPS_STALE_THRESHOLD_MS / 1000),
       movementGraceSeconds: Math.floor(GPS_MOVEMENT_GRACE_MS / 1000),
       multipleTripsPerVehiclePerDay: true,
-      tripSelectionPolicy: 'IN_PROGRESS_THEN_ACTIVE_SHIFT_THEN_MATCHING_GEOFENCE_EARLIEST_UNSTAMPED_PLAN_SINGLE_CANDIDATE',
+      tripSelectionPolicy: 'ACTIVE_GROUP_THEN_MATCHING_GEOFENCE_ALL_ELIGIBLE_CODE_RUNS',
       activeTripLockEnabled: true,
-      singleEtaCandidatePerVehicleCycle: true,
+      singleEtaCandidatePerVehicleCycle: false,
       lspStampCopyToM1Enabled: false,
       lspStampCopyTargets: [],
       lspStampCopyMatchKeys: [],
@@ -4648,9 +4751,10 @@ app.get(['/health', '/api/health'], (req, res) => {
       rDockAutoNoWorkPostAction: 'setGpsNoWorkBatch',
       sheetsTimeOnlyIsoUsesFixedBangkokOffset: true,
       exitRequiredBeforeNextTrip: true,
-      etaRule: 'STAMP_ONE_EARLIEST_UNSTAMPED_PLAN_AFTER_PREVIOUS_SAME_DOCK_ETD',
-      multiDropSameGeofenceEtaEnabled: false,
-      lspArrivalGroupWindowMinutes: GPS_LSP_ARRIVAL_GROUP_WINDOW_MINUTES,
+      etaRule: 'STAMP_ALL_ELIGIBLE_CODE_RUNS_IN_ACTIVE_GROUP_MATCHING_DETECTED_GEOFENCE',
+      multiDropSameGeofenceEtaEnabled: true,
+      siteGroupingPolicy: 'GROUP_CODE_PRIMARY_TIME_30_MINUTE_FALLBACK',
+      outsideGroupRecoveryEnabled: true,
       dropPointGeofenceMapping: { L1: 'TPCAP-LSP', L2: 'TPCAP-LSP', L3: 'TPCAP-LSP', M1: 'TPCAP-LSP', R1: 'TPCAP-R1', R2: 'TPCAP-R2' },
       pendingStampRetryQueueEnabled: true,
       pendingStampScheduleSelfHealingEnabled: true,
