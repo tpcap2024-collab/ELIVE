@@ -6,6 +6,7 @@ import {
   CalendarDays,
   CheckCircle2,
   ClipboardList,
+  Download,
   Edit3,
   FileSpreadsheet,
   Loader2,
@@ -56,6 +57,7 @@ type CreateView = 'source' | 'master';
 type DailyFilter = 'ALL' | PlanRemark;
 type PlanDialogMode = 'extra' | 'edit';
 type MasterDialogMode = 'create' | 'edit';
+type MasterImportMode = 'append' | 'replace';
 
 type NoticeState = {
   type: 'success' | 'error' | 'info';
@@ -82,6 +84,7 @@ type DailyRefreshOptions = {
 
 const MAX_BATCH_DELETE_PLANS = 2000;
 const MAX_DAILY_VIEW_DAYS = 6;
+const OPERATION_BATCH_SIZE = 20;
 const WORKING_DAYS = [
   { value: 1, short: 'จ.', full: 'จันทร์' },
   { value: 2, short: 'อ.', full: 'อังคาร' },
@@ -326,6 +329,12 @@ async function readPlanFile(file: File): Promise<unknown[][]> {
   });
 }
 
+function buildMasterWorkbook(rows: MasterPlanRow[]) {
+  const headers=['Route','Company','Truck Name','Truck type','Driver name','Tel driver','Project','Doc','Plan ETA','Plan ETD','Group Code'];
+  const body=rows.map(row=>[row.route,row.company,row.truckName,row.truckType,row.driverName,row.telDriver,row.project,row.dropPoint,row.planEta,row.planEtd,String((row as MasterPlanRow & {groupCode?:string}).groupCode||'')]);
+  const workbook=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(workbook,XLSX.utils.aoa_to_sheet([headers,...body]),'Master Plan'); return workbook;
+}
+async function runInBatches<T>(items:T[],worker:(item:T)=>Promise<unknown>){for(let i=0;i<items.length;i+=OPERATION_BATCH_SIZE)await Promise.all(items.slice(i,i+OPERATION_BATCH_SIZE).map(worker));}
 function StatCard({
   label,
   value,
@@ -393,6 +402,7 @@ function Notice({ notice }: { notice: NoticeState }) {
 export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
   const today = useMemo(getBangkokDate, []);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const masterImportInputRef = useRef<HTMLInputElement>(null);
   const batchDeleteRunningRef = useRef(false);
 
   const [tab, setTab] = useState<MainTab>('create');
@@ -429,6 +439,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
   const [deletePlanTarget, setDeletePlanTarget] = useState<DailyPlan | null>(null);
   const [selectedPlanCodes, setSelectedPlanCodes] = useState<string[]>([]);
   const [showBatchDeleteConfirmation, setShowBatchDeleteConfirmation] = useState(false);
+  const [showBatchCancelConfirmation,setShowBatchCancelConfirmation]=useState(false);
   const [restoreTarget, setRestoreTarget] = useState<DailyPlan | null>(null);
 
   const [masterRows, setMasterRows] = useState<MasterPlanRow[]>([]);
@@ -440,6 +451,11 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
   const [editingMasterSheetRow, setEditingMasterSheetRow] = useState<number | null>(null);
   const [masterForm, setMasterForm] = useState<EditableMasterPlanRow>({ ...EMPTY_MASTER_PLAN });
   const [deleteMasterTarget, setDeleteMasterTarget] = useState<MasterPlanRow | null>(null);
+  const [showMasterImport,setShowMasterImport]=useState(false);
+  const [masterImportMode,setMasterImportMode]=useState<MasterImportMode>('append');
+  const [masterImportRows,setMasterImportRows]=useState<MasterPlanRow[]>([]);
+  const [masterImportErrors,setMasterImportErrors]=useState<MasterPlanValidationError[]>([]);
+  const [isImportingMaster,setIsImportingMaster]=useState(false);
 
   const selectedWorkingDays = useMemo(
     () => [...new Set(workingDays)].sort((a, b) => a - b),
@@ -879,6 +895,11 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
     }
   };
 
+  const handleBatchCancelPlans=async()=>{const items=[...selectedPlanCodes];setShowBatchCancelConfirmation(false);setIsSavingPlan(true);try{await runInBatches(items,c=>cancelDailyPlan(c));setSelectedPlanCodes([]);await loadDailyPlans(dailyDate,dailyEndDate,{showMessage:false,clearResultOnError:false});setNotice({type:'success',message:`ยกเลิกแผนสำเร็จ ${items.length} รายการ`});}catch(error){setNotice({type:'error',message:getErrorMessage(error)});}finally{setIsSavingPlan(false);}};
+  const downloadEmptyTemplate=()=>XLSX.writeFile(buildMasterWorkbook([]),'ELIVE_Master_Plan_Template.xlsx');
+  const downloadCurrentMasterPlan=async()=>{const rows=masterRows.length?masterRows:(await loadMasterRows(false)).rows;XLSX.writeFile(buildMasterWorkbook(rows),`ELIVE_Master_Plan_${getBangkokDate()}.xlsx`);};
+  const handleMasterImportFile=async(file:File)=>{try{const result=parseTemplateRows(await readPlanFile(file));setMasterImportRows(result.rows);setMasterImportErrors(result.validationErrors);}catch(error){setNotice({type:'error',message:getErrorMessage(error)});}};
+  const handleImportMasterPlan=async()=>{if(!masterImportRows.length||masterImportErrors.length)return;setIsImportingMaster(true);try{if(masterImportMode==='replace'){const rows=masterRows.length?masterRows:(await loadMasterRows(false)).rows;for(const row of rows.filter(r=>r.sheetRow).sort((a,b)=>Number(b.sheetRow)-Number(a.sheetRow)))await deleteMasterPlanRow(Number(row.sheetRow));}await runInBatches(masterImportRows,row=>createMasterPlanRow(row as EditableMasterPlanRow));await loadMasterRows(false);setShowMasterImport(false);setNotice({type:'success',message:`นำเข้า Master Plan สำเร็จ ${masterImportRows.length} รายการ`});}catch(error){setNotice({type:'error',message:getErrorMessage(error)});}finally{setIsImportingMaster(false);}};
   const handleBatchDeletePlans = async () => {
     if (!selectedPlanCodes.length || selectedPlanCodes.length > MAX_BATCH_DELETE_PLANS || isSavingPlan || batchDeleteRunningRef.current) return;
     const codeRuns = [...selectedPlanCodes];
@@ -1276,6 +1297,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
             </div>
           ) : tab === 'create' ? (
             <div className="p-5 sm:p-6">
+              <div className="mb-5 grid gap-3 sm:grid-cols-3"><button type="button" onClick={downloadEmptyTemplate} className="rounded-xl border p-3 font-semibold text-blue-700"><Download className="mr-2 inline h-4 w-4" />ดาวน์โหลด Template เปล่า</button><button type="button" onClick={()=>void downloadCurrentMasterPlan()} className="rounded-xl border p-3 font-semibold text-emerald-700"><Download className="mr-2 inline h-4 w-4" />ดาวน์โหลด Master Plan</button><button type="button" onClick={()=>setShowMasterImport(true)} className="rounded-xl border p-3 font-semibold text-amber-700"><Upload className="mr-2 inline h-4 w-4" />นำเข้า Master Plan</button></div>
               {!source ? (
                 <div className="grid gap-5 lg:grid-cols-3">
                   <button
@@ -1531,6 +1553,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                     <span className="text-sm font-semibold text-slate-600">เลือกแล้ว {selectedPlanCodes.length}/{MAX_BATCH_DELETE_PLANS} รายการ</span>
                     <div className="flex gap-2 sm:ml-auto">
                       <button type="button" onClick={() => setSelectedPlanCodes([])} disabled={!selectedPlanCodes.length || isSavingPlan} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold disabled:opacity-40">ล้างการเลือก</button>
+                      <button type="button" onClick={() => setShowBatchCancelConfirmation(true)} disabled={!selectedPlanCodes.length || isSavingPlan} className="inline-flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-xs font-semibold text-white disabled:opacity-40"><XCircle className="h-4 w-4" />ยกเลิกแผนที่เลือก ({selectedPlanCodes.length})</button>
                       <button type="button" onClick={() => setShowBatchDeleteConfirmation(true)} disabled={!selectedPlanCodes.length || selectedPlanCodes.length > MAX_BATCH_DELETE_PLANS || isSavingPlan} className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-40"><Trash2 className="h-4 w-4" />ลบรายการที่เลือก ({selectedPlanCodes.length})</button>
                     </div>
                   </div>
@@ -1831,6 +1854,8 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
         </div>
       )}
 
+      {showBatchCancelConfirmation&&selectedPlanCodes.length>0&&<div className="fixed inset-0 z-[1260] flex items-center justify-center bg-slate-950/70 p-4"><div className="w-full max-w-md rounded-2xl bg-white p-6"><h2 className="text-lg font-bold">ยกเลิกแผน {selectedPlanCodes.length} รายการ</h2><p className="mt-3 text-sm text-slate-600">เปลี่ยน Remark เป็น CANCEL โดยไม่ลบข้อมูล</p><div className="mt-6 flex justify-end gap-3"><button onClick={()=>setShowBatchCancelConfirmation(false)} className="rounded-xl border px-4 py-2">กลับ</button><button onClick={()=>void handleBatchCancelPlans()} className="rounded-xl bg-amber-500 px-4 py-2 font-semibold text-white">ยืนยัน</button></div></div></div>}
+      {showMasterImport&&<div className="fixed inset-0 z-[1300] flex items-center justify-center bg-slate-950/70 p-4"><div className="w-full max-w-2xl rounded-2xl bg-white p-6"><h2 className="text-xl font-bold">นำเข้า Master Plan</h2><input ref={masterImportInputRef} type="file" accept=".xlsx,.xls,.csv" className="mt-5" onChange={e=>{const f=e.target.files?.[0];if(f)void handleMasterImportFile(f);}} />{masterImportRows.length>0&&<div className="mt-4"><p>จำนวน {masterImportRows.length} รายการ | ผิดพลาด {masterImportErrors.length} แถว</p><div className="mt-3 flex gap-4"><label><input type="radio" checked={masterImportMode==='append'} onChange={()=>setMasterImportMode('append')} /> เพิ่มรายการ</label><label><input type="radio" checked={masterImportMode==='replace'} onChange={()=>setMasterImportMode('replace')} /> แทนที่ทั้งหมด</label></div></div>}<div className="mt-6 flex justify-end gap-3"><button onClick={()=>setShowMasterImport(false)} className="rounded-xl border px-4 py-2">ยกเลิก</button><button onClick={()=>void handleImportMasterPlan()} disabled={!masterImportRows.length||masterImportErrors.length>0||isImportingMaster} className="rounded-xl bg-blue-600 px-4 py-2 font-semibold text-white disabled:opacity-40">นำเข้า</button></div></div></div>}
       {showBatchDeleteConfirmation && selectedPlanCodes.length > 0 && (
         <div className="fixed inset-0 z-[1250] flex items-center justify-center bg-slate-950/70 p-4">
           <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
