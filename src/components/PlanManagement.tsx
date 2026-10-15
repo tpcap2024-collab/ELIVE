@@ -1106,7 +1106,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
 
   return (
     <div className="min-h-full bg-slate-50 p-4 sm:p-6">
-      <div className="mx-auto max-w-6xl space-y-5">
+      <div className="mx-auto max-w-[1500px] space-y-5">
         <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-200 px-6 py-6 sm:px-8">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -1120,31 +1120,6 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
               </div>
             </div>
           </div>
-
-          <div className="flex gap-2 border-b border-slate-200 bg-white px-6 py-3 sm:px-8">
-            <button
-              type="button"
-              onClick={() => {
-                setTab('create');
-                setCreateView('source');
-              }}
-              className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${
-                tab === 'create' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100'
-              }`}
-            >
-              สร้างแผนตามช่วง
-            </button>
-            <button
-              type="button"
-              onClick={() => setTab('daily')}
-              className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${
-                tab === 'daily' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100'
-              }`}
-            >
-              ดูแผนหลายวัน
-            </button>
-          </div>
-
           {tab === 'create' && createView === 'master' ? (
             <div className="space-y-5 p-5 sm:p-6">
               <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
@@ -1299,12 +1274,12 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
               
               {!source ? (
                 <div className="grid gap-5 lg:grid-cols-2">
-                  <section className="rounded-2xl border border-slate-200 bg-white p-5">
+                  <section className="rounded-2xl border border-blue-100 bg-gradient-to-br from-blue-50 to-white p-5">
                     <div className="flex items-start gap-3">
                       <div className="rounded-xl bg-blue-50 p-3 text-blue-600"><Sheet className="h-6 w-6" /></div>
                       <div>
                         <h2 className="text-lg font-bold text-slate-900">จัดการ Master Plan</h2>
-                        <p className="mt-1 text-sm text-slate-500">เพิ่ม แก้ไข และจัดการข้อมูลต้นแบบ</p>
+                        <p className="mt-1 text-sm text-slate-500">เพิ่ม แก้ไข และจัดการข้อมูลต้นแบบให้เป็นมาตรฐาน</p>
                       </div>
                     </div>
                     <div className="mt-5 grid gap-3">
@@ -1312,10 +1287,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                         <span className="inline-flex items-center gap-3"><Settings2 className="h-5 w-5 text-blue-600" />เปิด Master Plan</span><span className="text-slate-400">›</span>
                       </button>
                       <button type="button" onClick={() => void downloadCurrentMasterPlan()} className="flex items-center justify-between rounded-xl border border-slate-200 px-4 py-3 text-left font-semibold text-slate-800 transition hover:border-emerald-300 hover:bg-emerald-50">
-                        <span className="inline-flex items-center gap-3"><Download className="h-5 w-5 text-emerald-600" />ดาวน์โหลด Master Plan</span><span className="text-slate-400">›</span>
-                      </button>
-                      <button type="button" onClick={downloadEmptyTemplate} className="flex items-center justify-between rounded-xl border border-slate-200 px-4 py-3 text-left font-semibold text-slate-800 transition hover:border-sky-300 hover:bg-sky-50">
-                        <span className="inline-flex items-center gap-3"><FileSpreadsheet className="h-5 w-5 text-sky-600" />ดาวน์โหลด Template เปล่า</span><span className="text-slate-400">›</span>
+                        <span className="inline-flex items-center gap-3"><Download className="h-5 w-5 text-emerald-600" />ดาวน์โหลด Master Plan ปัจจุบัน</span><span className="text-slate-400">›</span>
                       </button>
                       <button type="button" onClick={() => setShowMasterImport(true)} className="flex items-center justify-between rounded-xl border border-slate-200 px-4 py-3 text-left font-semibold text-slate-800 transition hover:border-amber-300 hover:bg-amber-50">
                         <span className="inline-flex items-center gap-3"><Upload className="h-5 w-5 text-amber-600" />นำเข้า Master Plan</span><span className="text-slate-400">›</span>
@@ -1323,7 +1295,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                     </div>
                   </section>
 
-                  <section className="rounded-2xl border border-slate-200 bg-white p-5">
+                  <section className="rounded-2xl border border-emerald-100 bg-gradient-to-br from-emerald-50 to-white p-5">
                     <div className="flex items-start gap-3">
                       <div className="rounded-xl bg-emerald-50 p-3 text-emerald-600"><CalendarDays className="h-6 w-6" /></div>
                       <div>
@@ -1332,11 +1304,8 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                       </div>
                     </div>
                     <div className="mt-5 grid gap-3">
-                      <button type="button" onClick={() => void handleLoadMasterPlan()} disabled={isLoadingSource} className="flex items-center justify-between rounded-xl bg-blue-600 px-5 py-4 text-left font-semibold text-white transition hover:bg-blue-700 disabled:opacity-60">
-                        <span className="inline-flex items-center gap-3">{isLoadingSource ? <Loader2 className="h-5 w-5 animate-spin" /> : <ClipboardList className="h-5 w-5" />}สร้าง Plan จาก Master Plan</span><span>›</span>
-                      </button>
-                      <button type="button" onClick={() => fileInputRef.current?.click()} className="flex items-center justify-between rounded-xl border border-slate-200 px-5 py-4 text-left font-semibold text-slate-800 transition hover:border-emerald-300 hover:bg-emerald-50">
-                        <span className="inline-flex items-center gap-3"><Upload className="h-5 w-5 text-emerald-600" />อัปโหลดไฟล์ Plan</span><span className="text-slate-400">›</span>
+                      <button type="button" onClick={() => void handleLoadMasterPlan()} disabled={isLoadingSource} className="flex items-center justify-center rounded-xl bg-blue-600 px-5 py-4 text-center font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:opacity-60">
+                        <span className="inline-flex items-center gap-3">{isLoadingSource ? <Loader2 className="h-5 w-5 animate-spin" /> : <ClipboardList className="h-5 w-5" />}สร้าง Plan</span><span>›</span>
                       </button>
                       <button type="button" onClick={() => setTab('daily')} className="flex items-center justify-between rounded-xl border border-slate-200 px-5 py-4 text-left font-semibold text-slate-800 transition hover:border-violet-300 hover:bg-violet-50">
                         <span className="inline-flex items-center gap-3"><Search className="h-5 w-5 text-violet-600" />ดูและแก้ไข Plan</span><span className="text-slate-400">›</span>
@@ -1349,7 +1318,15 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                   </section>
                 </div>
               ) : (
-                <div className="grid gap-5 lg:grid-cols-[1fr_1.2fr]">
+                <div className="space-y-5">
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                    <div className="grid grid-cols-3 gap-2 text-center text-xs font-semibold sm:text-sm">
+                      <div className="rounded-xl bg-blue-600 px-3 py-3 text-white">1 เลือกช่วงวันที่</div>
+                      <div className={`rounded-xl px-3 py-3 ${preview ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500'}`}>2 ตรวจสอบข้อมูล</div>
+                      <div className={`rounded-xl px-3 py-3 ${creationResult ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-500'}`}>3 ยืนยันการสร้าง</div>
+                    </div>
+                  </div>
+                  <div className="grid gap-5 lg:grid-cols-[1fr_1.2fr]">
                   <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                     <div className="flex items-center justify-between gap-3">
                       <div className="flex min-w-0 items-center gap-3">
@@ -1445,6 +1422,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                         Preview Plan
                       </button>
                     </div>
+                  </div>
                   </div>
                 </div>
               )}
