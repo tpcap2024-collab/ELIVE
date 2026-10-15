@@ -1425,15 +1425,49 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                         </button>
                       ))}
                     </div>
-                    <div className="mt-5 flex justify-end">
+                    <div className="mt-6 border-t border-slate-200 pt-5">
+                      <h3 className="text-sm font-bold text-slate-900">สรุปข้อมูลก่อนสร้าง</h3>
+                      <div className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
+                        <StatCard
+                          label="จำนวนวัน"
+                          value={buildDateRange(startDate, endDate).filter(date => selectedWorkingDays.includes(new Date(`${date}T00:00:00Z`).getUTCDay() || 7)).length}
+                          tone="green"
+                        />
+                        <StatCard
+                          label="จำนวนรายการ"
+                          value={templateRows.length * buildDateRange(startDate, endDate).filter(date => selectedWorkingDays.includes(new Date(`${date}T00:00:00Z`).getUTCDay() || 7)).length}
+                          tone="purple"
+                        />
+                        <StatCard
+                          label="ทะเบียนรถ"
+                          value={new Set(templateRows.map(row => row.truckName).filter(Boolean)).size}
+                          tone="purple"
+                        />
+                        <StatCard
+                          label="กลุ่มงาน"
+                          value={new Set(templateRows.map(row => row.groupCode).filter(Boolean)).size}
+                          tone="blue"
+                        />
+                      </div>
+                    </div>
+                    <div className="mt-6 flex items-center justify-end gap-3">
+                      <button
+                        type="button"
+                        onClick={clearSource}
+                        disabled={createBusy}
+                        className="rounded-xl bg-slate-100 px-6 py-3 text-sm font-bold text-slate-700 transition hover:bg-slate-200 disabled:opacity-50"
+                      >
+                        ยกเลิก
+                      </button>
                       <button
                         type="button"
                         onClick={() => void handlePreview()}
                         disabled={!canPreview}
-                        className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white disabled:bg-slate-300"
+                        className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-6 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"
                       >
-                        {isPreviewing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-                        Preview Plan
+                        {isPreviewing ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                        {isPreviewing ? 'กำลังตรวจสอบ...' : 'ถัดไป'}
+                        {!isPreviewing && <span aria-hidden="true">→</span>}
                       </button>
                     </div>
                   </div>
