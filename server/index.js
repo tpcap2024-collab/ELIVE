@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '71';
+const API_VERSION = '72';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -5145,6 +5145,77 @@ app.delete('/api/plans/:codeRun', requireAuthentication, requireMinimumRole('SUP
   }
 });
 
+async function reconcileManualStampSiteGroup(trip, dailyPlan, realtime) {
+  const data = {
+    plan: Array.isArray(dailyPlan?.plan) ? dailyPlan.plan : [],
+    actual: Array.isArray(realtime?.actual) ? realtime.actual : [],
+    gps: Array.isArray(realtime?.gps) ? realtime.gps : [],
+  };
+  const targetPlate = normalizeLicensePlate(trip.planLicensePlate);
+  const gpsInputs = buildBackgroundGpsInputs(data)
+    .filter(input => normalizeLicensePlate(input.licensePlate) === targetPlate)
+    .sort((first, second) => {
+      const firstTime = parseBangkokDateTime(first.gpsTime, 'gpsTime').getTime();
+      const secondTime = parseBangkokDateTime(second.gpsTime, 'gpsTime').getTime();
+      return secondTime - firstTime;
+    });
+  const latestGps = gpsInputs[0] || null;
+  if (!latestGps) {
+    console.log(JSON.stringify({
+      logType: 'ELIVE_MANUAL_STAMP_SITE_GROUP',
+      event: 'MANUAL_STAMP_SITE_GROUP_SKIPPED_NO_GPS',
+      codeRun: trip.codeRun,
+      licensePlate: trip.planLicensePlate,
+      planDate: trip.planDate,
+      groupCode: trip.groupCode || null,
+    }));
+    return {
+      evaluated: false,
+      reason: 'NO_GPS_FOR_LICENSE_PLATE',
+      queuedNoWorkCount: 0,
+    };
+  }
+  const parsedInput = {
+    ...latestGps,
+    gpsTime: parseBangkokDateTime(latestGps.gpsTime, 'gpsTime'),
+    receivedAt: parseBangkokDateTime(latestGps.receivedAt, 'receivedAt'),
+    speedKmh: Number(latestGps.speedKmh ?? latestGps.speed),
+  };
+  const noWorkCollector = new Map();
+  const siteGroupResults = await reconcileSkippedRDockAfterLsp(
+    parsedInput,
+    data,
+    noWorkCollector
+  );
+  const noWorkSummary = await flushGpsNoWorkBatch(noWorkCollector, data);
+  const isInsideSite = isPointInsidePolygon(
+    parsedInput.latitude,
+    parsedInput.longitude
+  );
+  console.log(JSON.stringify({
+    logType: 'ELIVE_MANUAL_STAMP_SITE_GROUP',
+    event: 'MANUAL_STAMP_SITE_GROUP_RECONCILED',
+    codeRun: trip.codeRun,
+    licensePlate: trip.planLicensePlate,
+    planDate: trip.planDate,
+    groupCode: trip.groupCode || null,
+    gpsTime: parsedInput.gpsTime.toISOString(),
+    isInsideSite,
+    queuedNoWorkCount: noWorkCollector.size,
+    noWorkWrittenCount: Number(noWorkSummary?.written || 0),
+    noWorkAlreadyFinalCount: Number(noWorkSummary?.alreadyFinal || 0),
+    noWorkFailedCount: Number(noWorkSummary?.failed || 0),
+  }));
+  return {
+    evaluated: true,
+    gpsTime: parsedInput.gpsTime.toISOString(),
+    isInsideSite,
+    queuedNoWorkCount: noWorkCollector.size,
+    noWorkSummary,
+    siteGroupResultCount: Array.isArray(siteGroupResults) ? siteGroupResults.length : 0,
+  };
+}
+
 app.post('/api/plans/:codeRun/stamp', requireAuthentication, requireMinimumRole('OPERATOR'), async (req, res) => {
   try {
     const codeRun = normalizeCodeRun(req.params.codeRun);
@@ -5202,14 +5273,51 @@ app.post('/api/plans/:codeRun/stamp', requireAuthentication, requireMinimumRole(
     });
     const refresh = await refreshRealtimeAfterMutation();
     const confirmedActualRow = findActualRowByCodeRun(refresh.realtime?.actual, codeRun);
+    let siteGroupReconciliation = null;
+    try {
+      const refreshedTrip = findTripByCodeRun({
+        plan: dailyPlanResult.plan,
+        actual: refresh.realtime?.actual,
+        gps: refresh.realtime?.gps,
+      }, codeRun);
+      siteGroupReconciliation = await reconcileManualStampSiteGroup(
+        refreshedTrip,
+        dailyPlanResult,
+        refresh.realtime
+      );
+    } catch (siteGroupError) {
+      siteGroupReconciliation = {
+        evaluated: false,
+        reason: 'MANUAL_STAMP_SITE_GROUP_RECONCILIATION_FAILED',
+        error: getErrorMessage(siteGroupError),
+      };
+      console.error(JSON.stringify({
+        logType: 'ELIVE_MANUAL_STAMP_SITE_GROUP',
+        event: 'MANUAL_STAMP_SITE_GROUP_RECONCILIATION_FAILED',
+        codeRun,
+        stampType,
+        stampSource,
+        error: getErrorMessage(siteGroupError),
+      }));
+    }
     req.auditDetails = {
       stampType,
       stampSource,
       written: result?.result?.written !== false,
       reason: result?.result?.reason || null,
       snapshotRefreshed: refresh.snapshotRefreshed,
+      siteGroupEvaluated: siteGroupReconciliation?.evaluated === true,
+      siteGroupInsideSite: siteGroupReconciliation?.isInsideSite ?? null,
+      siteGroupQueuedNoWorkCount: Number(siteGroupReconciliation?.queuedNoWorkCount || 0),
     };
-    return res.status(200).json({ ...result, confirmedActualRow, snapshotRefreshed: refresh.snapshotRefreshed, realtimeSource: refresh.realtimeSource, timestamp: refresh.refreshedAt });
+    return res.status(200).json({
+      ...result,
+      confirmedActualRow,
+      snapshotRefreshed: refresh.snapshotRefreshed,
+      realtimeSource: refresh.realtimeSource,
+      siteGroupReconciliation,
+      timestamp: refresh.refreshedAt,
+    });
   } catch (error) {
     return sendRouteError(res, error, 'Unable to Stamp Actual data.');
   }
