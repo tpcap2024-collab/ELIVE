@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, DragEvent, FormEvent } from 'react';
 import {
   AlertTriangle,
@@ -1107,6 +1107,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
   return (
     <div className="min-h-full bg-slate-50 p-4 sm:p-6">
       <div className="mx-auto max-w-[1500px] space-y-5">
+        <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleFileInput} />
         <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-200 px-6 py-6 sm:px-8">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -1273,49 +1274,41 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
             <div className="p-5 sm:p-6">
               
               {!source ? (
-                <div className="grid gap-5 lg:grid-cols-2">
-                  <section className="rounded-2xl border border-blue-100 bg-gradient-to-br from-blue-50 to-white p-5">
-                    <div className="flex items-start gap-3">
-                      <div className="rounded-xl bg-blue-50 p-3 text-blue-600"><Sheet className="h-6 w-6" /></div>
-                      <div>
-                        <h2 className="text-lg font-bold text-slate-900">จัดการ Master Plan</h2>
-                        <p className="mt-1 text-sm text-slate-500">เพิ่ม แก้ไข และจัดการข้อมูลต้นแบบให้เป็นมาตรฐาน</p>
-                      </div>
-                    </div>
-                    <div className="mt-5 grid gap-3">
-                      <button type="button" onClick={() => void openMasterManagement()} className="flex items-center justify-between rounded-xl border border-slate-200 px-4 py-3 text-left font-semibold text-slate-800 transition hover:border-blue-300 hover:bg-blue-50">
-                        <span className="inline-flex items-center gap-3"><Settings2 className="h-5 w-5 text-blue-600" />เปิด Master Plan</span><span className="text-slate-400">›</span>
-                      </button>
-                      <button type="button" onClick={() => void downloadCurrentMasterPlan()} className="flex items-center justify-between rounded-xl border border-slate-200 px-4 py-3 text-left font-semibold text-slate-800 transition hover:border-emerald-300 hover:bg-emerald-50">
-                        <span className="inline-flex items-center gap-3"><Download className="h-5 w-5 text-emerald-600" />ดาวน์โหลด Master Plan ปัจจุบัน</span><span className="text-slate-400">›</span>
-                      </button>
-                      <button type="button" onClick={() => setShowMasterImport(true)} className="flex items-center justify-between rounded-xl border border-slate-200 px-4 py-3 text-left font-semibold text-slate-800 transition hover:border-amber-300 hover:bg-amber-50">
-                        <span className="inline-flex items-center gap-3"><Upload className="h-5 w-5 text-amber-600" />นำเข้า Master Plan</span><span className="text-slate-400">›</span>
-                      </button>
+                <div className="space-y-5">
+                  <section className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-blue-700 via-blue-600 to-sky-500 px-6 py-6 text-white shadow-lg">
+                    <div className="absolute -right-12 -top-20 h-64 w-64 rounded-full border-[36px] border-white/10" />
+                    <div className="relative flex items-center gap-4">
+                      <div className="rounded-2xl bg-white/15 p-4 ring-1 ring-white/20"><ClipboardList className="h-9 w-9" /></div>
+                      <div><h2 className="text-2xl font-black">Plan Management</h2><p className="mt-1 text-sm text-blue-50">จัดการ Master Plan และแผนรายวันอย่างมีประสิทธิภาพ</p></div>
                     </div>
                   </section>
-
-                  <section className="rounded-2xl border border-emerald-100 bg-gradient-to-br from-emerald-50 to-white p-5">
-                    <div className="flex items-start gap-3">
-                      <div className="rounded-xl bg-emerald-50 p-3 text-emerald-600"><CalendarDays className="h-6 w-6" /></div>
-                      <div>
-                        <h2 className="text-lg font-bold text-slate-900">จัดการแผนรายวัน</h2>
-                        <p className="mt-1 text-sm text-slate-500">สร้างแผนจาก Master Plan และดูแผนที่สร้างแล้ว</p>
-                      </div>
+                  <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+                    <StatCard label="แผนทั้งหมด" value={dailyResult?.rowCount || 0} tone="blue" />
+                    <StatCard label="งานปกติ" value={dailyResult?.regularCount || 0} tone="green" />
+                    <StatCard label="งานพิเศษ" value={dailyResult?.extraCount || 0} tone="purple" />
+                    <StatCard label="ยกเลิก" value={dailyResult?.cancelCount || 0} tone="red" />
+                    <StatCard label="Master Plan" value={masterRows.length || '-'} tone="amber" />
+                  </div>
+                  <div className="grid gap-5 xl:grid-cols-[1fr_360px]">
+                    <div className="space-y-5">
+                      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                        <div className="mb-4"><h3 className="font-bold text-slate-900">จัดการแผน</h3><p className="text-sm text-slate-500">เลือกการดำเนินการที่ต้องการ</p></div>
+                        <div className="grid gap-4 md:grid-cols-3">
+                          <button type="button" onClick={() => void handleLoadMasterPlan()} className="group rounded-2xl border border-blue-200 bg-blue-50 p-5 text-left transition hover:-translate-y-0.5 hover:shadow-md"><div className="mb-4 inline-flex rounded-xl bg-blue-600 p-3 text-white"><ClipboardList className="h-6 w-6" /></div><div className="font-bold text-slate-900">สร้างแผนตามช่วง</div><div className="mt-1 text-sm text-slate-500">สร้างแผนรายวันจาก Master Plan</div></button>
+                          <button type="button" onClick={() => fileInputRef.current?.click()} className="group rounded-2xl border border-emerald-200 bg-emerald-50 p-5 text-left transition hover:-translate-y-0.5 hover:shadow-md"><div className="mb-4 inline-flex rounded-xl bg-emerald-600 p-3 text-white"><Upload className="h-6 w-6" /></div><div className="font-bold text-slate-900">อัปโหลดไฟล์ Plan</div><div className="mt-1 text-sm text-slate-500">รองรับ .xlsx, .xls และ .csv</div></button>
+                          <button type="button" onClick={() => void openMasterManagement()} className="group rounded-2xl border border-amber-200 bg-amber-50 p-5 text-left transition hover:-translate-y-0.5 hover:shadow-md"><div className="mb-4 inline-flex rounded-xl bg-amber-500 p-3 text-white"><Settings2 className="h-6 w-6" /></div><div className="font-bold text-slate-900">จัดการ Master Plan</div><div className="mt-1 text-sm text-slate-500">เพิ่ม แก้ไข หรือลบข้อมูลต้นแบบ</div></button>
+                        </div>
+                      </section>
+                      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                        <div className="flex items-center justify-between"><div><h3 className="font-bold text-slate-900">แผนล่าสุด</h3><p className="text-sm text-slate-500">แสดงแผน 5 รายการล่าสุดของวันนี้</p></div><button type="button" onClick={() => setTab('daily')} className="rounded-xl border px-4 py-2 text-sm font-semibold text-blue-700">ดูทั้งหมด</button></div>
+                        <div className="mt-4 overflow-x-auto"><table className="min-w-full text-sm"><thead className="bg-slate-50 text-left text-xs uppercase text-slate-500"><tr>{['วันที่','Route','ทะเบียนรถ','จุดลงงาน','Plan ETA','ประเภท'].map(h=><th key={h} className="px-3 py-3">{h}</th>)}</tr></thead><tbody className="divide-y">{(dailyResult?.rows || []).slice(0,5).map(row=><tr key={row.codeRun}><td className="px-3 py-3">{row.date}</td><td className="px-3 py-3 font-semibold">{row.route}</td><td className="px-3 py-3">{row.truckName}</td><td className="px-3 py-3">{row.dropPoint}</td><td className="px-3 py-3 font-mono">{row.planEta}</td><td className="px-3 py-3"><RemarkBadge remark={row.remark}/></td></tr>)}{!(dailyResult?.rows?.length) && <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">ยังไม่มีข้อมูลแผนของวันนี้</td></tr>}</tbody></table></div>
+                      </section>
                     </div>
-                    <div className="mt-5 grid gap-3">
-                      <button type="button" onClick={() => void handleLoadMasterPlan()} disabled={isLoadingSource} className="flex items-center justify-center rounded-xl bg-blue-600 px-5 py-4 text-center font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:opacity-60">
-                        <span className="inline-flex items-center gap-3">{isLoadingSource ? <Loader2 className="h-5 w-5 animate-spin" /> : <ClipboardList className="h-5 w-5" />}สร้าง Plan</span><span>›</span>
-                      </button>
-                      <button type="button" onClick={() => setTab('daily')} className="flex items-center justify-between rounded-xl border border-slate-200 px-5 py-4 text-left font-semibold text-slate-800 transition hover:border-violet-300 hover:bg-violet-50">
-                        <span className="inline-flex items-center gap-3"><Search className="h-5 w-5 text-violet-600" />ดูและแก้ไข Plan</span><span className="text-slate-400">›</span>
-                      </button>
-                    </div>
-                    <div className="mt-5 rounded-xl bg-slate-50 p-4 text-sm text-slate-600">
-                      <div className="flex items-center justify-between"><span>ดูแผนได้สูงสุด</span><b className="text-slate-900">6 วัน</b></div>
-                      <div className="mt-2 flex items-center justify-between"><span>จัดการพร้อมกันสูงสุด</span><b className="text-slate-900">2,000 รายการ</b></div>
-                    </div>
-                  </section>
+                    <aside className="space-y-5">
+                      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex items-center gap-2 font-bold"><CalendarDays className="h-5 w-5 text-blue-600"/>เลือกช่วงวันที่</div><p className="mt-1 text-xs text-slate-500">ดูแผนได้สูงสุด 6 วัน</p><label className="mt-4 block text-sm">วันที่เริ่มต้น<input type="date" value={dailyDate} onChange={e=>{setDailyDate(e.target.value);setDailyEndDate(current=>clampDailyEndDate(e.target.value,current));}} className="mt-1 w-full rounded-xl border px-3 py-2.5"/></label><label className="mt-3 block text-sm">วันที่สิ้นสุด<input type="date" value={dailyEndDate} min={dailyDate} max={addCalendarDays(dailyDate,5)} onChange={e=>setDailyEndDate(clampDailyEndDate(dailyDate,e.target.value))} className="mt-1 w-full rounded-xl border px-3 py-2.5"/></label><button type="button" onClick={()=>{setTab('daily');void loadDailyPlans(dailyDate,dailyEndDate);}} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 font-semibold text-white"><Search className="h-4 w-4"/>ดูแผนหลายวัน</button></section>
+                      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><h3 className="font-bold">เครื่องมือด่วน</h3><div className="mt-4 grid grid-cols-2 gap-3"><button type="button" onClick={()=>void downloadCurrentMasterPlan()} className="rounded-xl border p-3 text-sm font-semibold hover:bg-blue-50"><Download className="mx-auto mb-2 h-5 w-5 text-blue-600"/>Export Plan</button><button type="button" onClick={downloadEmptyTemplate} className="rounded-xl border p-3 text-sm font-semibold hover:bg-emerald-50"><FileSpreadsheet className="mx-auto mb-2 h-5 w-5 text-emerald-600"/>Template</button><button type="button" onClick={()=>setShowMasterImport(true)} className="col-span-2 rounded-xl border p-3 text-sm font-semibold hover:bg-amber-50"><Upload className="mr-2 inline h-5 w-5 text-amber-600"/>นำเข้า Master Plan</button></div></section>
+                    </aside>
+                  </div>
                 </div>
               ) : (
                 <div className="space-y-5">
