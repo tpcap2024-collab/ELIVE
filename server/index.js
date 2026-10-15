@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '73';
+const API_VERSION = '74';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -1241,7 +1241,20 @@ function buildGpsPlanGroups(trips){
  return [...coded.values(),...timed].sort((a,b)=>a.startMinutes-b.startMinutes);
 }
 function selectRecoverableOutsideSiteGroup(groups){return [...groups].filter(g=>g.trips.some(t=>t.stampEta||t.stampEtd)&&g.trips.some(t=>!t.stampEta&&!t.stampEtd&&!t.noWorkAction)).sort((a,b)=>Math.max(0,...b.trips.map(t=>t.stampEtdTimeMs||0))-Math.max(0,...a.trips.map(t=>t.stampEtdTimeMs||0))||b.startMinutes-a.startMinutes)[0]||null;}
-function selectGpsSiteGroup(groups, detectedGeofenceId, closedGroupIds = []) {
+function groupHasEligibleTripForGeofence(group, detectedGeofenceId, nowMinutes) {
+  if (!group || !detectedGeofenceId) return false;
+  return getEligibleEtaTripsForVehicle(
+    group.trips,
+    detectedGeofenceId,
+    nowMinutes
+  ).length > 0;
+}
+function selectGpsSiteGroup(
+  groups,
+  detectedGeofenceId,
+  closedGroupIds = [],
+  nowMinutes = getBangkokMinuteOfDay(new Date())
+) {
   const closed = new Set(Array.isArray(closedGroupIds) ? closedGroupIds : []);
   const openGroups = groups
     .filter(group =>
@@ -1249,7 +1262,10 @@ function selectGpsSiteGroup(groups, detectedGeofenceId, closedGroupIds = []) {
       group.trips.some(trip => !trip.stampEta && !trip.stampEtd && !trip.noWorkAction)
     )
     .sort((first, second) => first.startMinutes - second.startMinutes);
-  return openGroups[0] || null;
+  if (!detectedGeofenceId) return openGroups[0] || null;
+  return openGroups.find(group =>
+    groupHasEligibleTripForGeofence(group, detectedGeofenceId, nowMinutes)
+  ) || null;
 }
 
 function compareTripsByPlanTime(first, second) {
@@ -1382,9 +1398,60 @@ async function resolveVehicleTrip(input, isInside, dataOverride = null, detected
   const storedCycle = await readVehicleCycleState(input.licensePlate);
   const previousCycle = storedCycle?.date === dateText ? storedCycle : null;
   const nowMinutes = getBangkokMinuteOfDay(new Date());
-  const siteGroupState = await readGpsSiteGroupState(input.licensePlate, dateText);
-  const selectableTrips = siteGroupState?.activeGroupId
-    ? trips.filter(trip => (siteGroupState.activeGroupCodeRuns || []).includes(trip.codeRun))
+  let siteGroupState = await readGpsSiteGroupState(input.licensePlate, dateText);
+  const groups = buildGpsPlanGroups(trips);
+  const closedGroupIds = Array.isArray(siteGroupState?.closedGroupIds)
+    ? siteGroupState.closedGroupIds
+    : [];
+  let activeGroup = groups.find(group => group.id === siteGroupState?.activeGroupId) || null;
+  const activeGroupMatchesDetectedGeofence = groupHasEligibleTripForGeofence(
+    activeGroup,
+    detectedGeofenceId,
+    nowMinutes
+  );
+  if (isInside && detectedGeofenceId && !activeGroupMatchesDetectedGeofence) {
+    const replacementGroup = selectGpsSiteGroup(
+      groups,
+      detectedGeofenceId,
+      closedGroupIds,
+      nowMinutes
+    );
+    if (replacementGroup && replacementGroup.id !== activeGroup?.id) {
+      const previousActiveGroupId = activeGroup?.id || siteGroupState?.activeGroupId || null;
+      activeGroup = replacementGroup;
+      siteGroupState = await writeGpsSiteGroupState(input.licensePlate, dateText, {
+        ...(siteGroupState || {}),
+        operationDate: dateText,
+        licensePlate: input.licensePlate,
+        normalizedLicensePlate: normalizeLicensePlate(input.licensePlate),
+        activeGroupId: replacementGroup.id,
+        activeGroupStartMinutes: replacementGroup.startMinutes,
+        activeGroupEndMinutes: replacementGroup.endMinutes,
+        activeGroupCode: replacementGroup.groupCode || null,
+        activeGroupGroupingMode: replacementGroup.groupingMode || null,
+        activeGroupCodeRuns: replacementGroup.trips.map(trip => trip.codeRun),
+        closedGroupIds,
+        isInsideSite: true,
+        detectedGeofenceId,
+        outsideStartedAt: null,
+        exitedSiteAt: null,
+        status: 'ACTIVE_GROUP_RECOVERED_BY_GEOFENCE',
+      });
+      console.log(JSON.stringify({
+        logType: 'ELIVE_GPS_SITE_GROUP',
+        event: 'ACTIVE_GROUP_SWITCHED_TO_MATCHING_GEOFENCE',
+        licensePlate: input.licensePlate,
+        operationDate: dateText,
+        detectedGeofenceId,
+        previousActiveGroupId,
+        activeGroupId: replacementGroup.id,
+        activeGroupCode: replacementGroup.groupCode || null,
+        activeGroupCodeRuns: replacementGroup.trips.map(trip => trip.codeRun),
+      }));
+    }
+  }
+  const selectableTrips = activeGroup
+    ? activeGroup.trips
     : trips;
   const selected = selectTripForVehicle(selectableTrips, nowMinutes, previousCycle, detectedGeofenceId);
   const completedTrips = trips.filter(trip => trip.completed).sort(compareTripsByPlanTime);
@@ -2059,19 +2126,66 @@ async function processPendingGpsStamp(pendingId) {
         pendingGeofenceId,
         currentBangkokMinutes
       );
-      const siteGroupState = await readGpsSiteGroupState(
+      let siteGroupState = await readGpsSiteGroupState(
         record.licensePlate,
         pendingDate
       );
-      const activeGroupCodeRuns = Array.isArray(siteGroupState?.activeGroupCodeRuns)
+      let activeGroupCodeRuns = Array.isArray(siteGroupState?.activeGroupCodeRuns)
         ? siteGroupState.activeGroupCodeRuns
         : [];
-      const eligibleActiveGroupCodeRuns = eligibleTrips
+      let eligibleActiveGroupCodeRuns = eligibleTrips
         .filter(item => activeGroupCodeRuns.includes(item.codeRun))
         .map(item => item.codeRun);
-      const pendingBelongsToActiveGroup =
+      let pendingBelongsToActiveGroup =
         activeGroupCodeRuns.includes(currentTrip.codeRun) &&
         eligibleActiveGroupCodeRuns.includes(currentTrip.codeRun);
+      if (!pendingBelongsToActiveGroup) {
+        const currentGroups = buildGpsPlanGroups(currentTrips);
+        const matchingGroup = currentGroups.find(group =>
+          group.trips.some(item => item.codeRun === currentTrip.codeRun) &&
+          groupHasEligibleTripForGeofence(group, pendingGeofenceId, currentBangkokMinutes)
+        ) || null;
+        if (matchingGroup) {
+          const previousActiveGroupId = siteGroupState?.activeGroupId || null;
+          siteGroupState = await writeGpsSiteGroupState(record.licensePlate, pendingDate, {
+            ...(siteGroupState || {}),
+            operationDate: pendingDate,
+            licensePlate: record.licensePlate,
+            normalizedLicensePlate: normalizeLicensePlate(record.licensePlate),
+            activeGroupId: matchingGroup.id,
+            activeGroupStartMinutes: matchingGroup.startMinutes,
+            activeGroupEndMinutes: matchingGroup.endMinutes,
+            activeGroupCode: matchingGroup.groupCode || null,
+            activeGroupGroupingMode: matchingGroup.groupingMode || null,
+            activeGroupCodeRuns: matchingGroup.trips.map(item => item.codeRun),
+            closedGroupIds: Array.isArray(siteGroupState?.closedGroupIds)
+              ? siteGroupState.closedGroupIds.filter(id => id !== matchingGroup.id)
+              : [],
+            isInsideSite: true,
+            detectedGeofenceId: pendingGeofenceId,
+            outsideStartedAt: null,
+            exitedSiteAt: null,
+            status: 'ACTIVE_GROUP_RECOVERED_DURING_PENDING_ETA',
+          });
+          activeGroupCodeRuns = siteGroupState.activeGroupCodeRuns;
+          eligibleActiveGroupCodeRuns = eligibleTrips
+            .filter(item => activeGroupCodeRuns.includes(item.codeRun))
+            .map(item => item.codeRun);
+          pendingBelongsToActiveGroup =
+            activeGroupCodeRuns.includes(currentTrip.codeRun) &&
+            eligibleActiveGroupCodeRuns.includes(currentTrip.codeRun);
+          console.log(JSON.stringify({
+            logType: 'ELIVE_GPS_STAMP',
+            event: 'PENDING_ETA_ACTIVE_GROUP_RECOVERED',
+            pendingId,
+            codeRun: record.codeRun,
+            detectedGeofenceId: pendingGeofenceId,
+            previousActiveGroupId,
+            activeGroupId: matchingGroup.id,
+            activeGroupCode: matchingGroup.groupCode || null,
+          }));
+        }
+      }
       if (!pendingBelongsToActiveGroup) {
         console.warn(JSON.stringify({
           logType: 'ELIVE_GPS_STAMP',
@@ -2288,7 +2402,12 @@ async function reconcileSkippedRDockAfterLsp(input, data, noWorkCollector = null
   if(!isInsideSite&&!activeGroup){activeGroup=selectRecoverableOutsideSiteGroup(groups);if(activeGroup){state={...state,activeGroupId:activeGroup.id,activeGroupStartMinutes:activeGroup.startMinutes,activeGroupEndMinutes:activeGroup.endMinutes,activeGroupCodeRuns:activeGroup.trips.map(t=>t.codeRun),status:'RECOVERED_OUTSIDE_SITE_GROUP'};console.warn(JSON.stringify({logType:'ELIVE_GPS_SITE_GROUP',event:'TPCAP_SITE_GROUP_RECOVERED_FROM_ACTUAL_WHILE_OUTSIDE',licensePlate:input.licensePlate,operationDate,groupId:activeGroup.id,groupCode:activeGroup.groupCode||null,groupCodeRuns:activeGroup.trips.map(t=>t.codeRun)}));}}
   if (isInsideSite) {
     if (!activeGroup || closedGroupIds.includes(activeGroup.id)) {
-      activeGroup = selectGpsSiteGroup(groups, detectedGeofenceId, closedGroupIds);
+      activeGroup = selectGpsSiteGroup(
+        groups,
+        detectedGeofenceId,
+        closedGroupIds,
+        getBangkokMinuteOfDay(new Date())
+      );
     }
     state = {
       ...state,
@@ -4649,8 +4768,10 @@ app.get(['/health', '/api/health'], (req, res) => {
       gpsStaleStatusBlocksEta: false,
       movementGraceSeconds: Math.floor(GPS_MOVEMENT_GRACE_MS / 1000),
       multipleTripsPerVehiclePerDay: true,
-      tripSelectionPolicy: 'IN_PROGRESS_THEN_ACTIVE_SHIFT_THEN_MATCHING_GEOFENCE_EARLIEST_UNSTAMPED_PLAN_SINGLE_CANDIDATE',
+      tripSelectionPolicy: 'MATCHING_GEOFENCE_GROUP_FIRST_THEN_EARLIEST_ELIGIBLE_PLAN',
       activeTripLockEnabled: true,
+      staleActiveGroupCanBeReplacedByMatchingGeofence: true,
+      pendingEtaCanRecoverMatchingActiveGroup: true,
       singleEtaCandidatePerVehicleCycle: true,
       lspStampCopyToM1Enabled: false,
       lspStampCopyTargets: [],
