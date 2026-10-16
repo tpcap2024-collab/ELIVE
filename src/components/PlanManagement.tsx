@@ -931,7 +931,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
         );
         setNotice({
           type: 'info',
-          message: `ลบสำเร็จ ${result.deletedPlanCount} รายการ แต่ดึงข้อมูลใหม่ไม่สำเร็จ กรุณากดโหลดแผนประจำวันอีกครั้ง`,
+          message: `ลบสำเร็จ ${result.deletedPlanCount} รายการ แต่ดึงข้อมูลใหม่ไม่สำเร็จ กรุณากดโหลดแผนอีกครั้ง`,
         });
         return;
       }
@@ -1119,12 +1119,6 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
       <div className="w-full space-y-3">
         <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleFileInput} />
         <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="border-b border-slate-200 px-5 py-4 sm:px-6">
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight text-slate-950">Plan Management</h1>
-              <p className="mt-1 text-sm text-slate-500">จัดการและอัปเดตแผนการวิ่งงาน</p>
-            </div>
-          </div>
           {tab === 'create' && createView === 'master' ? (
             <div className="space-y-3 px-3 py-4 sm:px-4">
               <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
@@ -1138,7 +1132,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                 </button>
                 <div className="min-w-[230px] xl:ml-1">
                   <h2 className="text-xl font-bold text-slate-900">จัดการ Master Plan</h2>
-                  <p className="text-sm text-slate-500">เพิ่ม แก้ไข หรือลบข้อมูลต้นแบบใน Google Sheets</p>
+                  <p className="text-sm text-slate-500">เพิ่ม แก้ไข หรือลบข้อมูลต้นแบบ</p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <div className="min-w-[104px] rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-amber-800">
@@ -1150,14 +1144,14 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                     <p className="text-base font-bold leading-tight tabular-nums">{filteredMasterRows.length}</p>
                   </div>
                   <div className={`min-w-[104px] rounded-lg border px-3 py-1.5 ${masterValidationErrors.length ? 'border-red-200 bg-red-50 text-red-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>
-                    <p className="text-[9px] font-bold uppercase tracking-wide opacity-70">Validation</p>
+                    <p className="text-[9px] font-bold uppercase tracking-wide opacity-70">ตรวจสอบ</p>
                     <p className="text-base font-bold leading-tight">{masterValidationErrors.length ? `${masterValidationErrors.length} แถว` : 'ผ่าน'}</p>
                   </div>
                 </div>
                 <div className="flex gap-2 xl:ml-auto">
                   <button type="button" onClick={() => void loadMasterRows(true)} disabled={isLoadingMaster || isSavingMaster} className="inline-flex h-10 items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold disabled:opacity-50">
                     {isLoadingMaster ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                    Refresh
+                    รีเฟรช
                   </button>
                   <button type="button" onClick={openCreateMasterDialog} disabled={isSavingMaster} className="inline-flex h-10 items-center gap-2 rounded-xl bg-amber-600 px-4 text-sm font-semibold text-white disabled:opacity-50">
                     <Plus className="h-4 w-4" />
@@ -1256,7 +1250,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                   </section>
                   <section className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                      <div className="flex items-center gap-3"><div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-50 text-blue-700"><Sheet className="h-5 w-5" /></div><div><h3 className="text-sm font-bold text-slate-800">Master Plan</h3><p className="text-xs text-slate-400">เครื่องมือข้อมูลต้นแบบ</p></div></div>
+                      <div className="flex items-center gap-3"><div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-50 text-blue-700"><Sheet className="h-5 w-5" /></div><div><h3 className="text-sm font-bold text-slate-800">Master Plan</h3></div></div>
                       <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
                         <button type="button" onClick={() => void openMasterManagement()} title="เปิด Master Plan" aria-label="เปิด Master Plan" className="flex h-11 w-11 items-center justify-center rounded-xl border border-blue-200 bg-blue-50 text-blue-700 transition hover:bg-blue-100"><Sheet className="h-5 w-5" /></button>
                         <button type="button" onClick={downloadEmptyTemplate} title="ดาวน์โหลด Template" className="inline-flex h-11 items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 text-sm font-bold text-emerald-700 transition hover:bg-emerald-100"><FileSpreadsheet className="h-5 w-5" />Template</button>
@@ -1415,9 +1409,9 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                 <div className="flex flex-wrap items-center gap-2">
                   <div className="min-w-[104px] rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-slate-800"><p className="text-[9px] font-bold uppercase tracking-wide text-slate-500">ทั้งหมด</p><p className="text-base font-bold leading-tight tabular-nums">{dailyResult.rowCount}</p></div>
                   <div className="min-w-[104px] rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-emerald-800"><p className="text-[9px] font-bold uppercase tracking-wide opacity-70">ใช้งาน</p><p className="text-base font-bold leading-tight tabular-nums">{dailyResult.activeCount}</p></div>
-                  <div className="min-w-[104px] rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-blue-800"><p className="text-[9px] font-bold uppercase tracking-wide opacity-70">Regular</p><p className="text-base font-bold leading-tight tabular-nums">{dailyResult.regularCount}</p></div>
-                  <div className="min-w-[104px] rounded-lg border border-purple-200 bg-purple-50 px-3 py-1.5 text-purple-800"><p className="text-[9px] font-bold uppercase tracking-wide opacity-70">Extra</p><p className="text-base font-bold leading-tight tabular-nums">{dailyResult.extraCount}</p></div>
-                  <div className="min-w-[104px] rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-red-800"><p className="text-[9px] font-bold uppercase tracking-wide opacity-70">Cancel</p><p className="text-base font-bold leading-tight tabular-nums">{dailyResult.cancelCount}</p></div>
+                  <div className="min-w-[104px] rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-blue-800"><p className="text-[9px] font-bold uppercase tracking-wide opacity-70">แผนปกติ</p><p className="text-base font-bold leading-tight tabular-nums">{dailyResult.regularCount}</p></div>
+                  <div className="min-w-[104px] rounded-lg border border-purple-200 bg-purple-50 px-3 py-1.5 text-purple-800"><p className="text-[9px] font-bold uppercase tracking-wide opacity-70">แผนพิเศษ</p><p className="text-base font-bold leading-tight tabular-nums">{dailyResult.extraCount}</p></div>
+                  <div className="min-w-[104px] rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-red-800"><p className="text-[9px] font-bold uppercase tracking-wide opacity-70">ยกเลิก</p><p className="text-base font-bold leading-tight tabular-nums">{dailyResult.cancelCount}</p></div>
                 </div>
               )}
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
@@ -1480,7 +1474,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                       className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
                     >
                       <Plus className="h-4 w-4" />
-                      เพิ่ม Extra Plan
+                      เพิ่มแผนพิเศษ
                     </button>
                   </div>
                 </div>
@@ -1699,7 +1693,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
           <form onSubmit={handleSavePlan} className="max-h-[92vh] w-full max-w-3xl overflow-auto rounded-2xl bg-white p-6 shadow-2xl">
             <div className="flex items-center justify-between">
               <div>
-                <h2 className="text-xl font-bold">{planDialogMode === 'extra' ? 'เพิ่ม Extra Plan' : `แก้ไข ${editingCodeRun}`}</h2>
+                <h2 className="text-xl font-bold">{planDialogMode === 'extra' ? 'เพิ่มแผนพิเศษ' : `แก้ไข ${editingCodeRun}`}</h2>
                 <p className="text-sm text-slate-500">Code run จะสร้างอัตโนมัติและไม่สามารถแก้ไขได้</p>
               </div>
               <button type="button" onClick={() => !isSavingPlan && setPlanDialogMode(null)} disabled={isSavingPlan} className="rounded-lg p-2 hover:bg-slate-100 disabled:opacity-50"><X className="h-5 w-5" /></button>
