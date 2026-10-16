@@ -1119,16 +1119,10 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
       <div className="w-full space-y-3">
         <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleFileInput} />
         <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="border-b border-slate-200 px-6 py-6 sm:px-8">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <h1 className="text-2xl font-bold tracking-tight text-slate-950">Plan Management</h1>
-                <p className="mt-1 text-sm text-slate-500">จัดการและอัปเดตแผนการวิ่งงาน</p>
-              </div>
-              <div className="flex items-center gap-2 text-xs text-slate-500">
-                <span className="rounded-full bg-emerald-50 px-3 py-1.5 font-semibold text-emerald-700">Master Plan พร้อมใช้งาน</span>
-                <span>{getBangkokDate()}</span>
-              </div>
+          <div className="border-b border-slate-200 px-5 py-4 sm:px-6">
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight text-slate-950">Plan Management</h1>
+              <p className="mt-1 text-sm text-slate-500">จัดการและอัปเดตแผนการวิ่งงาน</p>
             </div>
           </div>
           {tab === 'create' && createView === 'master' ? (
@@ -1416,9 +1410,18 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
               )}
             </div>
           ) : (
-            <div className="space-y-5 p-5 sm:p-6">
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <div className="flex flex-col gap-4 xl:flex-row xl:items-center">
+            <div className="space-y-3 p-3 sm:p-4">
+              {dailyResult && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="min-w-[104px] rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-slate-800"><p className="text-[9px] font-bold uppercase tracking-wide text-slate-500">ทั้งหมด</p><p className="text-base font-bold leading-tight tabular-nums">{dailyResult.rowCount}</p></div>
+                  <div className="min-w-[104px] rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-emerald-800"><p className="text-[9px] font-bold uppercase tracking-wide opacity-70">ใช้งาน</p><p className="text-base font-bold leading-tight tabular-nums">{dailyResult.activeCount}</p></div>
+                  <div className="min-w-[104px] rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-blue-800"><p className="text-[9px] font-bold uppercase tracking-wide opacity-70">Regular</p><p className="text-base font-bold leading-tight tabular-nums">{dailyResult.regularCount}</p></div>
+                  <div className="min-w-[104px] rounded-lg border border-purple-200 bg-purple-50 px-3 py-1.5 text-purple-800"><p className="text-[9px] font-bold uppercase tracking-wide opacity-70">Extra</p><p className="text-base font-bold leading-tight tabular-nums">{dailyResult.extraCount}</p></div>
+                  <div className="min-w-[104px] rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-red-800"><p className="text-[9px] font-bold uppercase tracking-wide opacity-70">Cancel</p><p className="text-base font-bold leading-tight tabular-nums">{dailyResult.cancelCount}</p></div>
+                </div>
+              )}
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
                   <button
                     type="button"
                     onClick={() => {
@@ -1485,13 +1488,6 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
 
               {dailyResult && (
                 <>
-                  <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-                    <StatCard label="ทั้งหมด" value={dailyResult.rowCount} />
-                    <StatCard label="ใช้งาน" value={dailyResult.activeCount} tone="green" />
-                    <StatCard label="REGULAR" value={dailyResult.regularCount} tone="blue" />
-                    <StatCard label="EXTRA" value={dailyResult.extraCount} tone="purple" />
-                    <StatCard label="CANCEL" value={dailyResult.cancelCount} tone="red" />
-                  </div>
                   <div className="flex flex-col gap-3 sm:flex-row">
                     <div className="relative flex-1">
                       <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
