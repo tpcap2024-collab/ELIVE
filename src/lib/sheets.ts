@@ -737,6 +737,7 @@ function mapMasterPlanRow(value: any): MasterPlanRow {
     dropPoint: String(value?.dropPoint || '').trim(),
     planEta: parseGoogleSheetsTime(value?.planEta),
     planEtd: parseGoogleSheetsTime(value?.planEtd),
+    groupCode: String(value?.groupCode ?? value?.GroupCode ?? value?.group_code ?? '').trim(),
   };
 }
 
