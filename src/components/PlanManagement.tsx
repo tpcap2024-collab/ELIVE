@@ -1262,51 +1262,27 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
             <div className="p-5 sm:p-6">
               
               {!source ? (
-                <div className="grid gap-6 lg:grid-cols-2">
-                  <section className="rounded-2xl border border-blue-100 bg-gradient-to-br from-blue-50 via-blue-50/70 to-white p-6 shadow-sm">
-                    <div className="flex items-start gap-4">
-                      <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-white shadow-sm">
-                        <Sheet className="h-7 w-7" />
+                <div className="space-y-4">
+                  <section className="rounded-2xl border border-emerald-100 bg-gradient-to-br from-emerald-50 via-white to-white p-5 shadow-sm">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
+                      <div className="flex items-start gap-4">
+                        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-emerald-600 text-white shadow-sm"><CalendarDays className="h-6 w-6" /></div>
+                        <div><h2 className="text-xl font-bold text-slate-950">จัดการแผนรายวัน</h2><p className="mt-1 text-sm text-slate-500">ยกเลิกเที่ยว เปลี่ยนทะเบียน และแก้ไขแผนระหว่างวัน</p></div>
                       </div>
-                      <div>
-                        <h2 className="text-xl font-bold text-slate-950">จัดการ Master Plan</h2>
-                        <p className="mt-1 text-sm text-slate-500">เพิ่ม แก้ไข และจัดการข้อมูลต้นแบบ</p>
+                      <div className="grid flex-1 gap-3 sm:grid-cols-2 lg:ml-auto lg:max-w-2xl">
+                        <button type="button" onClick={() => void handleLoadMasterPlan()} disabled={isLoadingSource} className="flex min-h-14 items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-base font-bold text-white shadow-sm transition hover:bg-blue-700 disabled:opacity-60">{isLoadingSource ? <Loader2 className="h-5 w-5 animate-spin" /> : <Plus className="h-5 w-5" />}สร้าง Plan</button>
+                        <button type="button" onClick={() => setTab('daily')} className="flex min-h-14 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-base font-bold text-white shadow-sm transition hover:bg-emerald-700"><Edit3 className="h-5 w-5" />ดูและแก้ไข Plan</button>
                       </div>
-                    </div>
-                    <div className="mt-6 grid gap-3">
-                      <button type="button" onClick={() => void openMasterManagement()} className="flex min-h-12 items-center gap-3 rounded-xl border border-blue-300 bg-white px-4 py-3 text-left text-sm font-bold text-blue-700 shadow-sm transition hover:border-blue-500 hover:bg-blue-50">
-                        <Settings2 className="h-5 w-5" />
-                        เปิด Master Plan
-                      </button>
-                      <button type="button" onClick={() => void downloadCurrentMasterPlan()} className="flex min-h-12 items-center gap-3 rounded-xl border border-blue-300 bg-white px-4 py-3 text-left text-sm font-bold text-blue-700 shadow-sm transition hover:border-blue-500 hover:bg-blue-50">
-                        <Download className="h-5 w-5" />
-                        ดาวน์โหลด Master Plan
-                      </button>
-                      <button type="button" onClick={() => setShowMasterImport(true)} className="flex min-h-12 items-center gap-3 rounded-xl border border-blue-300 bg-white px-4 py-3 text-left text-sm font-bold text-blue-700 shadow-sm transition hover:border-blue-500 hover:bg-blue-50">
-                        <Upload className="h-5 w-5" />
-                        นำเข้า Master Plan
-                      </button>
                     </div>
                   </section>
-
-                  <section className="rounded-2xl border border-emerald-100 bg-gradient-to-br from-emerald-50 via-emerald-50/70 to-white p-6 shadow-sm">
-                    <div className="flex items-start gap-4">
-                      <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-emerald-600 text-white shadow-sm">
-                        <Upload className="h-7 w-7" />
+                  <section className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                      <div className="flex items-center gap-3"><div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-50 text-blue-700"><Sheet className="h-5 w-5" /></div><div><h3 className="text-sm font-bold text-slate-800">Master Plan</h3><p className="text-xs text-slate-400">เครื่องมือข้อมูลต้นแบบ</p></div></div>
+                      <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+                        <button type="button" onClick={() => void openMasterManagement()} title="เปิด Master Plan" aria-label="เปิด Master Plan" className="flex h-11 w-11 items-center justify-center rounded-xl border border-blue-200 bg-blue-50 text-blue-700 transition hover:bg-blue-100"><Sheet className="h-5 w-5" /></button>
+                        <button type="button" onClick={downloadEmptyTemplate} title="ดาวน์โหลด Template" className="inline-flex h-11 items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 text-sm font-bold text-emerald-700 transition hover:bg-emerald-100"><FileSpreadsheet className="h-5 w-5" />Template</button>
+                        <button type="button" onClick={() => void downloadCurrentMasterPlan()} title="ดาวน์โหลด Master Plan" aria-label="ดาวน์โหลด Master Plan" className="relative flex h-11 w-11 items-center justify-center rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-700 transition hover:bg-emerald-100"><FileSpreadsheet className="h-5 w-5" /><Download className="absolute bottom-1 right-1 h-3 w-3 rounded-full bg-white" /></button>
                       </div>
-                      <div>
-                        <h2 className="text-xl font-bold text-slate-950">จัดการแผนรายวัน</h2>
-                        <p className="mt-1 text-sm text-emerald-700">สร้างแผนจาก Master Plan และดูแก้ไขแผนที่สร้างแล้ว</p>
-                      </div>
-                    </div>
-                    <div className="mt-6 grid gap-3">
-                      <button type="button" onClick={() => void handleLoadMasterPlan()} disabled={isLoadingSource} className="flex min-h-14 items-center justify-center rounded-xl bg-blue-600 px-5 py-3 text-base font-bold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60">
-                        {isLoadingSource ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : null}
-                        สร้าง Plan
-                      </button>
-                      <button type="button" onClick={() => setTab('daily')} className="flex min-h-14 items-center justify-center rounded-xl border border-blue-400 bg-white px-5 py-3 text-base font-bold text-blue-700 shadow-sm transition hover:bg-blue-50">
-                        ดูและแก้ไข Plan
-                      </button>
                     </div>
                   </section>
                 </div>
