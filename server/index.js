@@ -1357,6 +1357,7 @@ function getEligibleEtaTripsForVehicle(trips, geofenceId, nowMinutes) {
       trip.noWorkAction ||
       !Number.isFinite(trip.planEtaMinutes) ||
       !isPlanAllowedForGpsEtaShift(trip.planEtaMinutes, nowMinutes) ||
+      nowMinutes < trip.planEtaMinutes - GPS_NEXT_TRIP_EARLY_WINDOW_MINUTES ||
       getGeofenceIdForDropPoint(trip.dropPoint) !== geofenceId
     ) {
       return false;
@@ -1391,6 +1392,23 @@ function selectTripForVehicle(trips, nowMinutes, previousCycle = null, detectedG
   };
 }
 
+function groupHasOpenEtaTrip(group) {
+  return Boolean(group?.trips?.some(trip =>
+    Boolean(trip.stampEta) &&
+    !trip.stampEtd &&
+    !trip.noWorkAction
+  ));
+}
+function selectGroupWithOpenEtaTrip(groups, previousActiveCodeRun = null) {
+  const candidates = (Array.isArray(groups) ? groups : [])
+    .filter(groupHasOpenEtaTrip)
+    .sort((first, second) => first.startMinutes - second.startMinutes);
+  if (!candidates.length) return null;
+  const locked = candidates.find(group =>
+    group.trips.some(trip => trip.codeRun === previousActiveCodeRun)
+  );
+  return locked || candidates[0];
+}
 async function resolveVehicleTrip(input, isInside, dataOverride = null, detectedGeofenceId = null) {
   const truckResult = dataOverride ? { data: dataOverride, source: 'gps-worker-cycle' } : await getTruckDataWithCache(false);
   const dateText = getBangkokDateText(input.gpsTime);
@@ -1404,12 +1422,51 @@ async function resolveVehicleTrip(input, isInside, dataOverride = null, detected
     ? siteGroupState.closedGroupIds
     : [];
   let activeGroup = groups.find(group => group.id === siteGroupState?.activeGroupId) || null;
+  const openEtaGroup = selectGroupWithOpenEtaTrip(
+    groups,
+    previousCycle?.activeCodeRun || null
+  );
+  if (openEtaGroup && openEtaGroup.id !== activeGroup?.id) {
+    const previousActiveGroupId = activeGroup?.id || siteGroupState?.activeGroupId || null;
+    activeGroup = openEtaGroup;
+    siteGroupState = await writeGpsSiteGroupState(input.licensePlate, dateText, {
+      ...(siteGroupState || {}),
+      operationDate: dateText,
+      licensePlate: input.licensePlate,
+      normalizedLicensePlate: normalizeLicensePlate(input.licensePlate),
+      activeGroupId: openEtaGroup.id,
+      activeGroupStartMinutes: openEtaGroup.startMinutes,
+      activeGroupEndMinutes: openEtaGroup.endMinutes,
+      activeGroupCode: openEtaGroup.groupCode || null,
+      activeGroupGroupingMode: openEtaGroup.groupingMode || null,
+      activeGroupCodeRuns: openEtaGroup.trips.map(trip => trip.codeRun),
+      closedGroupIds: closedGroupIds.filter(id => id !== openEtaGroup.id),
+      isInsideSite: isPointInsidePolygon(input.latitude, input.longitude),
+      detectedGeofenceId: detectedGeofenceId || null,
+      status: 'ACTIVE_GROUP_RECOVERED_FROM_OPEN_ETA',
+    });
+    console.warn(JSON.stringify({
+      logType: 'ELIVE_GPS_SITE_GROUP',
+      event: 'ACTIVE_GROUP_RECOVERED_FROM_OPEN_ETA',
+      licensePlate: input.licensePlate,
+      operationDate: dateText,
+      previousActiveGroupId,
+      activeGroupId: openEtaGroup.id,
+      activeGroupCode: openEtaGroup.groupCode || null,
+      activeGroupCodeRuns: openEtaGroup.trips.map(trip => trip.codeRun),
+    }));
+  }
   const activeGroupMatchesDetectedGeofence = groupHasEligibleTripForGeofence(
     activeGroup,
     detectedGeofenceId,
     nowMinutes
   );
-  if (isInside && detectedGeofenceId && !activeGroupMatchesDetectedGeofence) {
+  if (
+    isInside &&
+    detectedGeofenceId &&
+    !activeGroupMatchesDetectedGeofence &&
+    !groupHasOpenEtaTrip(activeGroup)
+  ) {
     const replacementGroup = selectGpsSiteGroup(
       groups,
       detectedGeofenceId,
@@ -4768,9 +4825,11 @@ app.get(['/health', '/api/health'], (req, res) => {
       gpsStaleStatusBlocksEta: false,
       movementGraceSeconds: Math.floor(GPS_MOVEMENT_GRACE_MS / 1000),
       multipleTripsPerVehiclePerDay: true,
-      tripSelectionPolicy: 'MATCHING_GEOFENCE_GROUP_FIRST_THEN_EARLIEST_ELIGIBLE_PLAN',
+      tripSelectionPolicy: 'OPEN_ETA_GROUP_LOCK_THEN_MATCHING_GEOFENCE_WITHIN_EARLY_WINDOW',
       activeTripLockEnabled: true,
       staleActiveGroupCanBeReplacedByMatchingGeofence: true,
+      openEtaGroupLockEnabled: true,
+      futureGroupSelectionRespectsEarlyWindow: true,
       pendingEtaCanRecoverMatchingActiveGroup: true,
       singleEtaCandidatePerVehicleCycle: true,
       lspStampCopyToM1Enabled: false,
