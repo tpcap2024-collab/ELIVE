@@ -1229,7 +1229,7 @@ export default function App() {
         )}
 
         {canPlan && currentView === 'plan-management' ? (
-          <main className="min-h-0 flex-1 overflow-auto">
+          <main className="min-h-0 min-w-0 flex-1 overflow-auto">
             <PlanManagement
               onPlanCreated={async () => {
                 await loadData();
