@@ -1133,57 +1133,42 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
           </div>
           {tab === 'create' && createView === 'master' ? (
             <div className="space-y-3 px-3 py-4 sm:px-4">
-              <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+              <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
                 <button
                   type="button"
                   onClick={() => setCreateView('source')}
-                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                  className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-300 px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50"
                 >
                   <ArrowLeft className="h-4 w-4" />
-                  กลับไปสร้างแผนตามช่วง
+                  ย้อนกลับ
                 </button>
-                <div className="lg:ml-2">
+                <div className="min-w-[230px] xl:ml-1">
                   <h2 className="text-xl font-bold text-slate-900">จัดการ Master Plan</h2>
                   <p className="text-sm text-slate-500">เพิ่ม แก้ไข หรือลบข้อมูลต้นแบบใน Google Sheets</p>
                 </div>
-                <div className="flex gap-2 lg:ml-auto">
-                  <button
-                    type="button"
-                    onClick={() => void loadMasterRows(true)}
-                    disabled={isLoadingMaster || isSavingMaster}
-                    className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold disabled:opacity-50"
-                  >
-                    {isLoadingMaster ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <RefreshCw className="h-4 w-4" />
-                    )}
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="min-w-[104px] rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-amber-800">
+                    <p className="text-[9px] font-bold uppercase tracking-wide opacity-70">ทั้งหมด</p>
+                    <p className="text-base font-bold leading-tight tabular-nums">{masterRows.length}</p>
+                  </div>
+                  <div className="min-w-[104px] rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-blue-800">
+                    <p className="text-[9px] font-bold uppercase tracking-wide opacity-70">แสดงผล</p>
+                    <p className="text-base font-bold leading-tight tabular-nums">{filteredMasterRows.length}</p>
+                  </div>
+                  <div className={`min-w-[104px] rounded-lg border px-3 py-1.5 ${masterValidationErrors.length ? 'border-red-200 bg-red-50 text-red-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>
+                    <p className="text-[9px] font-bold uppercase tracking-wide opacity-70">Validation</p>
+                    <p className="text-base font-bold leading-tight">{masterValidationErrors.length ? `${masterValidationErrors.length} แถว` : 'ผ่าน'}</p>
+                  </div>
+                </div>
+                <div className="flex gap-2 xl:ml-auto">
+                  <button type="button" onClick={() => void loadMasterRows(true)} disabled={isLoadingMaster || isSavingMaster} className="inline-flex h-10 items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold disabled:opacity-50">
+                    {isLoadingMaster ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                     Refresh
                   </button>
-                  <button
-                    type="button"
-                    onClick={openCreateMasterDialog}
-                    disabled={isSavingMaster}
-                    className="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
-                  >
+                  <button type="button" onClick={openCreateMasterDialog} disabled={isSavingMaster} className="inline-flex h-10 items-center gap-2 rounded-xl bg-amber-600 px-4 text-sm font-semibold text-white disabled:opacity-50">
                     <Plus className="h-4 w-4" />
                     เพิ่มรายการ
                   </button>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="min-w-[150px] rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-800 shadow-sm">
-                  <p className="text-[10px] font-bold uppercase tracking-wide opacity-70">รายการทั้งหมด</p>
-                  <p className="mt-0.5 text-lg font-bold leading-none tabular-nums">{masterRows.length}</p>
-                </div>
-                <div className="min-w-[150px] rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-blue-800 shadow-sm">
-                  <p className="text-[10px] font-bold uppercase tracking-wide opacity-70">แสดงผล</p>
-                  <p className="mt-0.5 text-lg font-bold leading-none tabular-nums">{filteredMasterRows.length}</p>
-                </div>
-                <div className={`min-w-[150px] rounded-lg border px-3 py-2 shadow-sm ${masterValidationErrors.length ? 'border-red-200 bg-red-50 text-red-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>
-                  <p className="text-[10px] font-bold uppercase tracking-wide opacity-70">Validation</p>
-                  <p className="mt-0.5 text-lg font-bold leading-none">{masterValidationErrors.length ? `${masterValidationErrors.length} แถว` : 'ผ่าน'}</p>
                 </div>
               </div>
 
@@ -1444,7 +1429,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                     className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-100"
                   >
                     <ArrowLeft className="h-4 w-4" />
-                    กลับเมนูหลัก
+                    ย้อนกลับ
                   </button>
 
                   <div className="grid min-w-0 flex-1 gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(190px,240px)_minmax(190px,240px)_auto] lg:items-end">
