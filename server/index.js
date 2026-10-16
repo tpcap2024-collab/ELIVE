@@ -4476,6 +4476,7 @@ function normalizeMasterPlanRow(body) {
     dropPoint: cleanText(source.dropPoint),
     planEta: normalizeTimeText(source.planEta, 'Plan ETA'),
     planEtd: normalizeTimeText(source.planEtd, 'Plan ETD'),
+    groupCode: cleanText(source.groupCode || source.GroupCode || source.group_code).toUpperCase(),
   };
 
   if (!row.route) throw new Error('Route is required.');
