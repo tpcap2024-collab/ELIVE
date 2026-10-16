@@ -1432,50 +1432,70 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
             </div>
           ) : (
             <div className="space-y-5 p-5 sm:p-6">
-              <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 lg:flex-row lg:items-end">
-                <label className="block text-sm font-medium text-slate-700">
-                  วันที่เริ่มต้น
-                  <input
-                    type="date"
-                    value={dailyDate}
-                    onChange={event => {
-                      const nextStart = event.target.value;
-                      setDailyDate(nextStart);
-                      setDailyEndDate(current => clampDailyEndDate(nextStart, current));
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <div className="flex flex-col gap-4 xl:flex-row xl:items-center">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTab('create');
+                      setCreateView('source');
+                      setNotice(null);
                     }}
-                    className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 lg:w-44"
-                  />
-                </label>
-                <label className="block text-sm font-medium text-slate-700">
-                  วันที่สิ้นสุด
-                  <input
-                    type="date"
-                    value={dailyEndDate}
-                    min={dailyDate}
-                    max={addCalendarDays(dailyDate, MAX_DAILY_VIEW_DAYS - 1)}
-                    onChange={event => setDailyEndDate(clampDailyEndDate(dailyDate, event.target.value))}
-                    className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 lg:w-44"
-                  />
-                  <span className="mt-1 block text-xs text-slate-500">สูงสุด 6 วัน รวมวันเริ่มต้น</span>
-                </label>
-                <button
-                  type="button"
-                  onClick={() => void loadDailyPlans(dailyDate, dailyEndDate, { showMessage: true, clearResultOnError: true })}
-                  disabled={isLoadingDaily}
-                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-60"
-                >
-                  {isLoadingDaily ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                  โหลดแผนประจำวัน
-                </button>
-                <button
-                  type="button"
-                  onClick={openExtraDialog}
-                  disabled={isSavingPlan}
-                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-60 lg:ml-auto"
-                >
-                  <Plus className="h-4 w-4" />
-                  เพิ่ม Extra Plan
-                </button>
+                    className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-100"
+                  >
+                    <ArrowLeft className="h-4 w-4" />
+                    กลับเมนูหลัก
+                  </button>
+
+                  <div className="grid min-w-0 flex-1 gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(190px,240px)_minmax(190px,240px)_auto] lg:items-end">
+                    <label className="block text-sm font-medium text-slate-700">
+                      วันที่เริ่มต้น
+                      <input
+                        type="date"
+                        value={dailyDate}
+                        onChange={event => {
+                          const nextStart = event.target.value;
+                          setDailyDate(nextStart);
+                          setDailyEndDate(current => clampDailyEndDate(nextStart, current));
+                        }}
+                        className="mt-1.5 h-11 w-full rounded-xl border border-slate-300 bg-white px-3"
+                      />
+                    </label>
+                    <label className="block text-sm font-medium text-slate-700">
+                      วันที่สิ้นสุด
+                      <input
+                        type="date"
+                        value={dailyEndDate}
+                        min={dailyDate}
+                        max={addCalendarDays(dailyDate, MAX_DAILY_VIEW_DAYS - 1)}
+                        onChange={event => setDailyEndDate(clampDailyEndDate(dailyDate, event.target.value))}
+                        className="mt-1.5 h-11 w-full rounded-xl border border-slate-300 bg-white px-3"
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => void loadDailyPlans(dailyDate, dailyEndDate, { showMessage: true, clearResultOnError: true })}
+                      disabled={isLoadingDaily}
+                      className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-60 sm:col-span-2 lg:col-span-1"
+                    >
+                      {isLoadingDaily ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                      โหลดแผน
+                    </button>
+                  </div>
+
+                  <div className="flex shrink-0 flex-col gap-2 sm:flex-row xl:border-l xl:border-slate-200 xl:pl-4">
+                    <span className="self-center text-xs text-slate-500">เลือกได้สูงสุด 6 วัน</span>
+                    <button
+                      type="button"
+                      onClick={openExtraDialog}
+                      disabled={isSavingPlan}
+                      className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
+                    >
+                      <Plus className="h-4 w-4" />
+                      เพิ่ม Extra Plan
+                    </button>
+                  </div>
+                </div>
               </div>
 
               {dailyResult && (
