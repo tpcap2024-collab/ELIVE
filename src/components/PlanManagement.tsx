@@ -123,6 +123,7 @@ const EMPTY_MASTER_PLAN: EditableMasterPlanRow = {
   dropPoint: '',
   planEta: '',
   planEtd: '',
+  groupCode: '',
 };
 
 const PLAN_FORM_FIELDS: FormFieldConfig<keyof EditablePlan>[] = [
@@ -150,6 +151,7 @@ const MASTER_FORM_FIELDS: FormFieldConfig<keyof EditableMasterPlanRow>[] = [
   { field: 'dropPoint', label: 'Drop Point', type: 'text', required: true },
   { field: 'planEta', label: 'Plan ETA', type: 'time', required: true },
   { field: 'planEtd', label: 'Plan ETD', type: 'time', required: true },
+  { field: 'groupCode', label: 'Group Code', type: 'text', required: false },
 ];
 
 const HEADER_ALIASES: Record<
@@ -1053,6 +1055,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
       ...masterForm,
       planEta: normalizeTime(masterForm.planEta),
       planEtd: normalizeTime(masterForm.planEtd),
+      groupCode: String(masterForm.groupCode || '').trim().toUpperCase(),
     };
 
     setIsSavingMaster(true);
@@ -1210,7 +1213,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                 </div>
               )}
 
-              <div className="w-full overflow-x-auto rounded-lg border border-slate-200">
+              <div className="max-h-[calc(100vh-300px)] w-full overflow-auto rounded-lg border border-slate-200">
                 <table className="w-full min-w-[1220px] table-fixed divide-y divide-slate-200 text-[12px]">
                   <colgroup>
                     <col className="w-[52px]" /><col className="w-[88px]" /><col className="w-[72px]" />
@@ -1219,10 +1222,10 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                     <col className="w-[68px]" /><col className="w-[68px]" /><col className="w-[86px]" />
                     <col className="w-[76px]" />
                   </colgroup>
-                  <thead className="bg-slate-100 text-left text-[10px] font-bold uppercase text-slate-600">
+                  <thead className="sticky top-0 z-30 bg-slate-100 text-left text-[10px] font-bold uppercase text-slate-600 shadow-sm">
                     <tr>
                       {['Row','Route','Company','Truck Name','Truck Type','Driver','Tel','Project','Drop Point','ETA','ETD','Group Code','Action'].map((heading, index) => (
-                        <th key={heading} className={`whitespace-nowrap px-2 py-2 ${index >= 9 ? 'text-center' : ''} ${index === 12 ? 'sticky right-0 z-20 bg-slate-100' : ''}`}>{heading}</th>
+                        <th key={heading} className={`whitespace-nowrap px-2 py-2 ${index >= 9 ? 'text-center' : ''} ${index === 12 ? 'sticky right-0 top-0 z-40 bg-slate-100' : 'bg-slate-100'}`}>{heading}</th>
                       ))}
                     </tr>
                   </thead>
