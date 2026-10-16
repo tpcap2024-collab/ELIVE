@@ -1112,8 +1112,8 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
   };
 
   return (
-    <div className="min-h-full bg-slate-50 p-4 sm:p-6">
-      <div className="mx-auto max-w-[1500px] space-y-5">
+    <div className="min-h-full bg-slate-50 p-2 sm:p-3">
+      <div className="w-full space-y-3">
         <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleFileInput} />
         <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-200 px-6 py-6 sm:px-8">
@@ -1129,7 +1129,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
             </div>
           </div>
           {tab === 'create' && createView === 'master' ? (
-            <div className="space-y-5 p-5 sm:p-6">
+            <div className="space-y-3 px-3 py-4 sm:px-4">
               <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
                 <button
                   type="button"
@@ -1169,14 +1169,19 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                 </div>
               </div>
 
-              <div className="grid gap-3 sm:grid-cols-3">
-                <StatCard label="รายการทั้งหมด" value={masterRows.length} tone="amber" />
-                <StatCard label="แสดงผล" value={filteredMasterRows.length} tone="blue" />
-                <StatCard
-                  label="Validation"
-                  value={masterValidationErrors.length ? `${masterValidationErrors.length} แถว` : 'ผ่าน'}
-                  tone={masterValidationErrors.length ? 'red' : 'green'}
-                />
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="min-w-[150px] rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-800 shadow-sm">
+                  <p className="text-[10px] font-bold uppercase tracking-wide opacity-70">รายการทั้งหมด</p>
+                  <p className="mt-0.5 text-lg font-bold leading-none tabular-nums">{masterRows.length}</p>
+                </div>
+                <div className="min-w-[150px] rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-blue-800 shadow-sm">
+                  <p className="text-[10px] font-bold uppercase tracking-wide opacity-70">แสดงผล</p>
+                  <p className="mt-0.5 text-lg font-bold leading-none tabular-nums">{filteredMasterRows.length}</p>
+                </div>
+                <div className={`min-w-[150px] rounded-lg border px-3 py-2 shadow-sm ${masterValidationErrors.length ? 'border-red-200 bg-red-50 text-red-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>
+                  <p className="text-[10px] font-bold uppercase tracking-wide opacity-70">Validation</p>
+                  <p className="mt-0.5 text-lg font-bold leading-none">{masterValidationErrors.length ? `${masterValidationErrors.length} แถว` : 'ผ่าน'}</p>
+                </div>
               </div>
 
               <div className="relative">
@@ -1184,8 +1189,8 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                 <input
                   value={masterSearch}
                   onChange={event => setMasterSearch(event.target.value)}
-                  placeholder="ค้นหาแถว, Route, Company, Truck Name, Driver, Project หรือ Drop Point..."
-                  className="w-full rounded-xl border border-slate-300 py-2.5 pl-9 pr-3"
+                  placeholder="ค้นหาแถว, Route, Company, Truck Name, Driver, Project, Drop Point หรือ Group Code..."
+                  className="w-full rounded-lg border border-slate-300 py-2 pl-9 pr-3 text-sm"
                 />
               </div>
 
@@ -1205,76 +1210,47 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                 </div>
               )}
 
-              <div className="overflow-x-auto rounded-xl border border-slate-200">
-                <table className="min-w-full divide-y divide-slate-200 text-sm">
-                  <thead className="bg-slate-100 text-left text-xs font-semibold uppercase text-slate-600">
+              <div className="w-full overflow-x-auto rounded-lg border border-slate-200">
+                <table className="w-full min-w-[1220px] table-fixed divide-y divide-slate-200 text-[12px]">
+                  <colgroup>
+                    <col className="w-[52px]" /><col className="w-[88px]" /><col className="w-[72px]" />
+                    <col className="w-[92px]" /><col className="w-[88px]" /><col className="w-[150px]" />
+                    <col className="w-[112px]" /><col className="w-[82px]" /><col className="w-[76px]" />
+                    <col className="w-[68px]" /><col className="w-[68px]" /><col className="w-[86px]" />
+                    <col className="w-[76px]" />
+                  </colgroup>
+                  <thead className="bg-slate-100 text-left text-[10px] font-bold uppercase text-slate-600">
                     <tr>
-                      {[
-                        'Row',
-                        'Route',
-                        'Company',
-                        'Truck Name',
-                        'Truck Type',
-                        'Driver',
-                        'Tel',
-                        'Project',
-                        'Drop Point',
-                        'ETA',
-                        'ETD',
-                        'Group Code',
-                        'Action',
-                      ].map(heading => (
-                        <th key={heading} className="whitespace-nowrap px-4 py-3">{heading}</th>
+                      {['Row','Route','Company','Truck Name','Truck Type','Driver','Tel','Project','Drop Point','ETA','ETD','Group Code','Action'].map((heading, index) => (
+                        <th key={heading} className={`whitespace-nowrap px-2 py-2 ${index >= 9 ? 'text-center' : ''} ${index === 12 ? 'sticky right-0 z-20 bg-slate-100' : ''}`}>{heading}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 bg-white">
                     {filteredMasterRows.length === 0 ? (
-                      <tr>
-                        <td colSpan={13} className="px-4 py-12 text-center text-slate-500">
-                          {isLoadingMaster ? 'กำลังโหลด Master Plan...' : 'ไม่พบข้อมูล Master Plan'}
+                      <tr><td colSpan={13} className="px-3 py-10 text-center text-slate-500">{isLoadingMaster ? 'กำลังโหลด Master Plan...' : 'ไม่พบข้อมูล Master Plan'}</td></tr>
+                    ) : filteredMasterRows.map((row, index) => (
+                      <tr key={`${row.sheetRow ?? index}-${row.route}-${row.truckName}`} className="h-11 hover:bg-amber-50/40">
+                        <td className="whitespace-nowrap px-2 py-2 text-center font-mono text-slate-500">{row.sheetRow ?? '-'}</td>
+                        <td className="truncate px-2 py-2 font-semibold" title={row.route}>{row.route || '-'}</td>
+                        <td className="truncate px-2 py-2" title={row.company}>{row.company || '-'}</td>
+                        <td className="truncate px-2 py-2 font-medium text-blue-700" title={row.truckName}>{row.truckName || '-'}</td>
+                        <td className="truncate px-2 py-2" title={row.truckType}>{row.truckType || '-'}</td>
+                        <td className="truncate px-2 py-2" title={row.driverName || '-'}>{row.driverName || '-'}</td>
+                        <td className="truncate px-2 py-2" title={row.telDriver || '-'}>{row.telDriver || '-'}</td>
+                        <td className="truncate px-2 py-2" title={row.project}>{row.project || '-'}</td>
+                        <td className="truncate px-2 py-2" title={row.dropPoint}>{row.dropPoint || '-'}</td>
+                        <td className="whitespace-nowrap px-2 py-2 text-center font-mono">{row.planEta || '-'}</td>
+                        <td className="whitespace-nowrap px-2 py-2 text-center font-mono">{row.planEtd || '-'}</td>
+                        <td className="whitespace-nowrap px-2 py-2 text-center"><span className={row.groupCode ? 'rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700' : 'rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700'}>{row.groupCode || 'ไม่มี Group'}</span></td>
+                        <td className="sticky right-0 z-10 whitespace-nowrap bg-white px-2 py-2 group-hover:bg-amber-50/40">
+                          <div className="flex justify-center gap-1">
+                            <button type="button" title="แก้ไข" onClick={() => openEditMasterDialog(row)} disabled={!row.sheetRow || isSavingMaster} className="rounded-md bg-blue-50 p-1.5 text-blue-600 hover:bg-blue-100 disabled:opacity-40"><Edit3 className="h-3.5 w-3.5" /></button>
+                            <button type="button" title="ลบ" onClick={() => setDeleteMasterTarget(row)} disabled={!row.sheetRow || isSavingMaster} className="rounded-md bg-red-50 p-1.5 text-red-600 hover:bg-red-100 disabled:opacity-40"><Trash2 className="h-3.5 w-3.5" /></button>
+                          </div>
                         </td>
                       </tr>
-                    ) : (
-                      filteredMasterRows.map((row, index) => (
-                        <tr key={`${row.sheetRow ?? index}-${row.route}-${row.truckName}`} className="hover:bg-amber-50/40">
-                          <td className="whitespace-nowrap px-4 py-3 font-mono text-slate-500">{row.sheetRow ?? '-'}</td>
-                          <td className="whitespace-nowrap px-4 py-3 font-semibold">{row.route}</td>
-                          <td className="whitespace-nowrap px-4 py-3">{row.company}</td>
-                          <td className="whitespace-nowrap px-4 py-3 font-medium text-blue-700">{row.truckName}</td>
-                          <td className="whitespace-nowrap px-4 py-3">{row.truckType}</td>
-                          <td className="whitespace-nowrap px-4 py-3">{row.driverName || '-'}</td>
-                          <td className="whitespace-nowrap px-4 py-3">{row.telDriver || '-'}</td>
-                          <td className="whitespace-nowrap px-4 py-3">{row.project}</td>
-                          <td className="whitespace-nowrap px-4 py-3">{row.dropPoint}</td>
-                          <td className="whitespace-nowrap px-4 py-3 font-mono">{row.planEta}</td>
-                          <td className="whitespace-nowrap px-4 py-3 font-mono">{row.planEtd}</td>
-                          <td className="whitespace-nowrap px-4 py-3"><span className={row.groupCode ? 'rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-bold text-emerald-700' : 'text-slate-400'}>{row.groupCode || 'ไม่มี Group'}</span></td>
-                          <td className="whitespace-nowrap px-4 py-3">
-                            <div className="flex gap-2">
-                              <button
-                                type="button"
-                                title="แก้ไข"
-                                onClick={() => openEditMasterDialog(row)}
-                                disabled={!row.sheetRow || isSavingMaster}
-                                className="rounded-lg bg-blue-50 p-2 text-blue-600 disabled:opacity-40"
-                              >
-                                <Edit3 className="h-4 w-4" />
-                              </button>
-                              <button
-                                type="button"
-                                title="ลบ"
-                                onClick={() => setDeleteMasterTarget(row)}
-                                disabled={!row.sheetRow || isSavingMaster}
-                                className="rounded-lg bg-red-50 p-2 text-red-600 disabled:opacity-40"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))
-                    )}
+                    ))}
                   </tbody>
                 </table>
               </div>
@@ -1808,7 +1784,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
 
       {masterDialogMode && (
         <div className="fixed inset-0 z-[1100] flex items-center justify-center bg-slate-950/60 p-4">
-          <form onSubmit={handleSaveMaster} className="max-h-[92vh] w-full max-w-3xl overflow-auto rounded-2xl bg-white p-6 shadow-2xl">
+          <form onSubmit={handleSaveMaster} className="max-h-[92vh] w-full max-w-4xl overflow-auto rounded-2xl bg-white p-6 shadow-2xl">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-xl font-bold">{masterDialogMode === 'create' ? 'เพิ่ม Master Plan' : `แก้ไข Master Plan แถว ${editingMasterSheetRow}`}</h2>
@@ -1822,12 +1798,18 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                   {item.label}{item.required ? ' *' : ''}
                   <input
                     type={item.type}
+                    list={item.field === 'groupCode' ? 'master-group-code-options' : undefined}
                     value={String(masterForm[item.field] || '')}
                     onChange={event => setMasterFormField(item.field, event.target.value)}
                     required={item.required}
                     disabled={isSavingMaster}
                     className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 disabled:bg-slate-100"
                   />
+                  {item.field === 'groupCode' && (
+                    <datalist id="master-group-code-options">
+                      {planFieldOptions.groupCode.map(option => <option key={option} value={option} />)}
+                    </datalist>
+                  )}
                 </label>
               ))}
             </div>
