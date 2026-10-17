@@ -54,6 +54,7 @@ import type {
 
 type MainTab = 'create' | 'daily';
 type CreateView = 'source' | 'master';
+type CreateStep = 'select' | 'loading' | 'preview' | 'creating' | 'completed';
 type DailyFilter = 'ALL' | PlanRemark;
 type PlanDialogMode = 'extra' | 'edit';
 type MasterDialogMode = 'create' | 'edit';
@@ -423,6 +424,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
   const [workingDays, setWorkingDays] = useState<number[]>([1, 2, 3, 4, 5, 6]);
   const [preview, setPreview] = useState<PlanPeriodPreview | null>(null);
   const [creationResult, setCreationResult] = useState<PlanCreationResult | null>(null);
+  const [createStep, setCreateStep] = useState<CreateStep>('select');
   const [templateSearch, setTemplateSearch] = useState('');
   const [isLoadingSource, setIsLoadingSource] = useState(false);
   const [isPreviewing, setIsPreviewing] = useState(false);
@@ -593,6 +595,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
     setFileName('');
     setTemplateSearch('');
     setNotice(null);
+    setCreateStep('select');
     resetCreateResult();
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
@@ -644,32 +647,15 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
     }
   };
 
-  const handleLoadMasterPlan = async () => {
-    setIsLoadingSource(true);
+  const handleLoadMasterPlan = () => {
+    setSource('master-plan');
+    setTemplateRows([]);
+    setValidationErrors([]);
+    setFileName('Master Plan');
+    setCreateStep('select');
     setNotice(null);
     resetCreateResult();
-
-    try {
-      const result = await fetchMasterPlan(true);
-      setSource('master-plan');
-      setTemplateRows(result.rows);
-      setValidationErrors(result.validationErrors);
-      setMasterRows(result.rows);
-      setMasterValidationErrors(result.validationErrors);
-      setFileName('Master Plan');
-      setNotice({
-        type: result.validationErrors.length ? 'error' : 'success',
-        message: result.validationErrors.length
-          ? `Master Plan มีข้อมูลที่ต้องแก้ไข ${result.validationErrors.length} แถว`
-          : `โหลด Master Plan สำเร็จ ${result.rows.length} เที่ยวต่อวัน`,
-      });
-    } catch (error) {
-      setNotice({ type: 'error', message: getErrorMessage(error) });
-    } finally {
-      setIsLoadingSource(false);
-    }
   };
-
   const handleFile = async (file: File) => {
     setIsLoadingSource(true);
     setNotice(null);
@@ -726,48 +712,58 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
   });
 
   const handlePreview = async () => {
-    if (!canPreview) return;
+    if (!startDate || !endDate || !selectedWorkingDays.length || createBusy) return;
+    setCreateStep('loading');
     setIsPreviewing(true);
     setNotice(null);
+    setPreview(null);
     setCreationResult(null);
-
     try {
-      const result = await previewPlanPeriod(buildPeriodRequest());
-      setPreview(result);
-      setNotice({
-        type: result.newRowCount ? 'success' : 'info',
-        message: result.newRowCount
-          ? `Preview สำเร็จ พบรายการใหม่ ${result.newRowCount} รายการ`
-          : 'ไม่มีรายการใหม่ รายการทั้งหมดมีอยู่ใน Plan แล้ว',
+      let rows = templateRows;
+      let errors = validationErrors;
+      if (source === 'master-plan') {
+        const master = await fetchMasterPlan(true);
+        rows = master.rows;
+        errors = master.validationErrors;
+        setTemplateRows(rows);
+        setValidationErrors(errors);
+        setMasterRows(rows);
+        setMasterValidationErrors(errors);
+      }
+      if (!rows.length) throw new Error('ไม่พบข้อมูล Master Plan');
+      if (errors.length) throw new Error(`Master Plan มีข้อมูลที่ต้องแก้ไข ${errors.length} แถว`);
+      const result = await previewPlanPeriod({
+        startDate,
+        endDate,
+        workingDays: selectedWorkingDays,
+        source: source || 'master-plan',
+        templateRows: source === 'uploaded-file' ? rows : undefined,
+        fileName: source === 'uploaded-file' ? fileName : undefined,
       });
+      setPreview(result);
+      setCreateStep('preview');
     } catch (error) {
-      setPreview(null);
+      setCreateStep('select');
       setNotice({ type: 'error', message: getErrorMessage(error) });
     } finally {
       setIsPreviewing(false);
     }
   };
-
   const handleCreatePeriod = async () => {
     if (!preview || preview.newRowCount <= 0 || isCreating) return;
     setShowCreateConfirmation(false);
+    setCreateStep('creating');
     setIsCreating(true);
     setNotice(null);
 
     try {
       const result = await createPlanPeriod(buildPeriodRequest());
       setCreationResult(result);
-      try {
-        setPreview(await previewPlanPeriod(buildPeriodRequest()));
-      } catch (refreshError) {
-        console.error('Unable to refresh Plan preview:', refreshError);
-      }
-      setNotice({
-        type: 'success',
-        message: `สร้าง Plan สำเร็จ ${result.createdRowCount} รายการ`,
-      });
+      setCreateStep('completed');
+      setNotice(null);
       if (onPlanCreated) await onPlanCreated(result);
     } catch (error) {
+      setCreateStep('preview');
       setNotice({ type: 'error', message: getErrorMessage(error) });
     } finally {
       setIsCreating(false);
@@ -1243,7 +1239,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                         <div><h2 className="text-xl font-bold text-slate-950">จัดการแผนรายวัน</h2><p className="mt-1 text-sm text-slate-500">ยกเลิกเที่ยว เปลี่ยนทะเบียน และแก้ไขแผนระหว่างวัน</p></div>
                       </div>
                       <div className="grid flex-1 gap-3 sm:grid-cols-2 lg:ml-auto lg:max-w-2xl">
-                        <button type="button" onClick={() => void handleLoadMasterPlan()} disabled={isLoadingSource} className="flex min-h-14 items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-base font-bold text-white shadow-sm transition hover:bg-blue-700 disabled:opacity-60">{isLoadingSource ? <Loader2 className="h-5 w-5 animate-spin" /> : <Plus className="h-5 w-5" />}สร้าง Plan</button>
+                        <button type="button" onClick={handleLoadMasterPlan} disabled={isLoadingSource} className="flex min-h-14 items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-base font-bold text-white shadow-sm transition hover:bg-blue-700 disabled:opacity-60">{isLoadingSource ? <Loader2 className="h-5 w-5 animate-spin" /> : <Plus className="h-5 w-5" />}สร้าง Plan</button>
                         <button type="button" onClick={() => setTab('daily')} className="flex min-h-14 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-base font-bold text-white shadow-sm transition hover:bg-emerald-700"><Edit3 className="h-5 w-5" />ดูและแก้ไข Plan</button>
                       </div>
                     </div>
@@ -1260,142 +1256,76 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                   </section>
                 </div>
               ) : (
-                <div className="space-y-3">
-                  <div className="rounded-xl border border-slate-200 bg-white p-3">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                <div className="space-y-4">
+                  <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+                    <div className="flex items-start gap-3">
                       <button type="button" onClick={clearSource} disabled={createBusy} className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-300 px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50">
-                        <ArrowLeft className="h-4 w-4" />
-                        ย้อนกลับ
+                        <ArrowLeft className="h-4 w-4" />ย้อนกลับ
                       </button>
-                      <div className="grid min-w-0 flex-1 grid-cols-3 gap-2 text-center text-xs font-semibold sm:text-sm">
-                        <div className="rounded-lg bg-blue-600 px-3 py-2.5 text-white">1 เลือกช่วงวันที่</div>
-                        <div className={`rounded-lg px-3 py-2.5 ${preview ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500'}`}>2 ตรวจสอบข้อมูล</div>
-                        <div className={`rounded-lg px-3 py-2.5 ${creationResult ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-500'}`}>3 ยืนยันการสร้าง</div>
+                      <div className="flex min-w-0 flex-1 items-start justify-center px-2">
+                        {[
+                          { number: 1, label: 'เลือกช่วงวันที่' },
+                          { number: 2, label: createStep === 'loading' ? 'กำลังโหลดแผน' : 'ตรวจสอบข้อมูล' },
+                          { number: 3, label: createStep === 'creating' ? 'กำลังสร้างแผน' : createStep === 'completed' ? 'สร้างสำเร็จ' : 'ยืนยันการสร้าง' },
+                        ].map((item, index) => {
+                          const activeIndex = createStep === 'select' ? 0 : createStep === 'loading' || createStep === 'preview' ? 1 : 2;
+                          const completed = index < activeIndex;
+                          const active = index === activeIndex;
+                          return (
+                            <div key={item.number} className="flex min-w-0 flex-1 items-start">
+                              {index > 0 && <div className={`mt-5 h-1 min-w-4 flex-1 rounded-full ${completed || active ? 'bg-emerald-500' : 'bg-slate-200'}`} />}
+                              <div className="flex w-28 shrink-0 flex-col items-center text-center">
+                                <div className={`flex h-10 w-10 items-center justify-center rounded-full text-base font-black shadow-sm ring-4 ring-white ${active ? 'bg-blue-600 text-white' : completed ? 'bg-emerald-500 text-white' : 'bg-slate-200 text-slate-500'}`}>{item.number}</div>
+                                <span className={`mt-2 text-xs font-bold ${active ? 'text-blue-700' : completed ? 'text-emerald-700' : 'text-slate-400'}`}>{item.label}</span>
+                              </div>
+                              {index < 2 && <div className={`mt-5 h-1 min-w-4 flex-1 rounded-full ${completed ? 'bg-emerald-500' : 'bg-slate-200'}`} />}
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                    <div className={`flex h-9 w-9 items-center justify-center rounded-lg text-white ${source === 'master-plan' ? 'bg-blue-600' : 'bg-emerald-600'}`}>
-                      {source === 'master-plan' ? <Sheet className="h-5 w-5" /> : <FileSpreadsheet className="h-5 w-5" />}
-                    </div>
-                    <div className="min-w-[130px]">
-                      <p className="text-[10px] font-semibold text-slate-500">แหล่งข้อมูล</p>
-                      <p className="truncate text-sm font-bold text-slate-800">{source === 'master-plan' ? 'Master Plan' : fileName}</p>
-                    </div>
-                    <div className="min-w-[104px] rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-blue-800">
-                      <p className="text-[9px] font-bold uppercase tracking-wide opacity-70">เที่ยวต่อวัน</p>
-                      <p className="text-base font-bold leading-tight tabular-nums">{templateRows.length}</p>
-                    </div>
-                    <div className={`min-w-[104px] rounded-lg border px-3 py-1.5 ${validationErrors.length ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>
-                      <p className="text-[9px] font-bold uppercase tracking-wide opacity-70">ตรวจสอบ</p>
-                      <p className="text-base font-bold leading-tight">{validationErrors.length ? `${validationErrors.length} จุด` : 'ผ่าน'}</p>
-                    </div>
-                    {source === 'master-plan' && (
-                      <button type="button" onClick={() => void openMasterManagement()} className="inline-flex h-9 items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 text-xs font-semibold text-amber-800 hover:bg-amber-100">
-                        <Settings2 className="h-4 w-4" />
-                        จัดการ Master Plan
-                      </button>
-                    )}
-                    <button type="button" onClick={clearSource} disabled={createBusy} title="เปลี่ยนแหล่งข้อมูล" className="ml-auto rounded-lg p-2 text-slate-500 hover:bg-slate-200 disabled:opacity-50">
-                      <X className="h-5 w-5" />
-                    </button>
                   </div>
 
-                  <div className="rounded-xl border border-slate-200 p-4">
-                    <div className="flex items-center gap-2 font-semibold">
-                      <CalendarDays className="h-5 w-5 text-blue-600" />
-                      ช่วงวันที่สร้าง Plan
-                    </div>
-                    <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                      <label className="text-sm font-medium text-slate-700">
-                        วันที่เริ่มต้น
-                        <input
-                          type="date"
-                          value={startDate}
-                          onChange={event => {
-                            setStartDate(event.target.value);
-                            resetCreateResult();
-                          }}
-                          className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5"
-                        />
-                      </label>
-                      <label className="text-sm font-medium text-slate-700">
-                        วันที่สิ้นสุด
-                        <input
-                          type="date"
-                          value={endDate}
-                          min={startDate}
-                          onChange={event => {
-                            setEndDate(event.target.value);
-                            resetCreateResult();
-                          }}
-                          className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5"
-                        />
-                      </label>
-                    </div>
-                    <div className="mt-4 grid grid-cols-4 gap-2 sm:grid-cols-7">
-                      {WORKING_DAYS.map(day => (
-                        <button
-                          key={day.value}
-                          type="button"
-                          title={day.full}
-                          onClick={() => toggleWorkingDay(day.value)}
-                          className={`rounded-xl border px-2 py-2.5 text-sm font-semibold ${
-                            selectedWorkingDays.includes(day.value)
-                              ? 'border-blue-600 bg-blue-600 text-white'
-                              : 'border-slate-300 text-slate-700'
-                          }`}
-                        >
-                          {day.short}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="mt-6 border-t border-slate-200 pt-5">
-                      <h3 className="text-sm font-bold text-slate-900">สรุปข้อมูลก่อนสร้าง</h3>
-                      <div className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
-                        <StatCard
-                          label="จำนวนวัน"
-                          value={buildDateRange(startDate, endDate).filter(date => selectedWorkingDays.includes(new Date(`${date}T00:00:00Z`).getUTCDay() || 7)).length}
-                          tone="green"
-                        />
-                        <StatCard
-                          label="จำนวนรายการ"
-                          value={templateRows.length * buildDateRange(startDate, endDate).filter(date => selectedWorkingDays.includes(new Date(`${date}T00:00:00Z`).getUTCDay() || 7)).length}
-                          tone="purple"
-                        />
-                        <StatCard
-                          label="ทะเบียนรถ"
-                          value={new Set(templateRows.map(row => row.truckName).filter(Boolean)).size}
-                          tone="purple"
-                        />
-                        <StatCard
-                          label="กลุ่มงาน"
-                          value={new Set(templateRows.map(row => row.groupCode).filter(Boolean)).size}
-                          tone="blue"
-                        />
+                  {createStep === 'select' && (
+                    <div className="rounded-xl border border-slate-200 bg-white p-5">
+                      <div className="flex items-center gap-2 text-lg font-bold text-slate-900"><CalendarDays className="h-5 w-5 text-blue-600" />เลือกช่วงวันที่</div>
+                      <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                        <label className="text-sm font-medium text-slate-700">วันที่เริ่มต้น<input type="date" value={startDate} onChange={event => { setStartDate(event.target.value); resetCreateResult(); }} className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-3" /></label>
+                        <label className="text-sm font-medium text-slate-700">วันที่สิ้นสุด<input type="date" value={endDate} min={startDate} onChange={event => { setEndDate(event.target.value); resetCreateResult(); }} className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-3" /></label>
+                      </div>
+                      <div className="mt-4 grid grid-cols-4 gap-2 sm:grid-cols-7">{WORKING_DAYS.map(day => <button key={day.value} type="button" title={day.full} onClick={() => toggleWorkingDay(day.value)} className={`rounded-xl border px-2 py-3 text-sm font-semibold ${selectedWorkingDays.includes(day.value) ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-300 text-slate-700'}`}>{day.short}</button>)}</div>
+                      <div className="mt-5 flex items-center justify-between border-t border-slate-200 pt-4">
+                        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-emerald-800"><span className="text-xs font-semibold">จำนวนวัน </span><b className="ml-2 text-lg">{buildDateRange(startDate, endDate).filter(date => selectedWorkingDays.includes(new Date(`${date}T00:00:00Z`).getUTCDay() || 7)).length}</b></div>
+                        <button type="button" onClick={() => void handlePreview()} disabled={!startDate || !endDate || !selectedWorkingDays.length || createBusy} className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-6 py-3 text-sm font-bold text-white shadow-sm hover:bg-blue-700 disabled:bg-slate-300">ถัดไป <span aria-hidden="true">→</span></button>
                       </div>
                     </div>
-                    <div className="mt-6 flex items-center justify-end gap-3">
-                      <button
-                        type="button"
-                        onClick={clearSource}
-                        disabled={createBusy}
-                        className="rounded-xl bg-slate-100 px-6 py-3 text-sm font-bold text-slate-700 transition hover:bg-slate-200 disabled:opacity-50"
-                      >
-                        ยกเลิก
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void handlePreview()}
-                        disabled={!canPreview}
-                        className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-6 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-                      >
-                        {isPreviewing ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                        {isPreviewing ? 'กำลังตรวจสอบ...' : 'ถัดไป'}
-                        {!isPreviewing && <span aria-hidden="true">→</span>}
-                      </button>
+                  )}
+
+                  {createStep === 'loading' && (
+                    <div className="flex min-h-[360px] flex-col items-center justify-center rounded-xl border border-blue-200 bg-blue-50/50 p-8 text-center">
+                      <Loader2 className="h-12 w-12 animate-spin text-blue-600" /><h2 className="mt-5 text-xl font-bold text-slate-900">กำลังโหลดแผน</h2><p className="mt-2 text-sm text-slate-500">กำลังตรวจสอบ Master Plan และเตรียมข้อมูลตามช่วงวันที่</p>
                     </div>
-                  </div>
+                  )}
+
+                  {createStep === 'preview' && preview && (
+                    <div className="space-y-4">
+                      <div className="flex flex-wrap gap-2">
+                        {[['วันทำงาน', preview.workingDateCount, 'blue'], ['รายการทั้งหมด', preview.totalCandidateRows, 'slate'], ['รายการใหม่', preview.newRowCount, 'emerald'], ['รายการซ้ำ', preview.duplicateRowCount, 'amber'], ['ทะเบียนรถ', new Set(templateRows.map(row => row.truckName).filter(Boolean)).size, 'purple'], ['กลุ่มงาน', new Set(templateRows.map(row => row.groupCode).filter(Boolean)).size, 'cyan']].map(([label,value,tone]) => <div key={String(label)} className={`min-w-[120px] rounded-lg border px-3 py-2 ${tone === 'emerald' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : tone === 'amber' ? 'border-amber-200 bg-amber-50 text-amber-800' : tone === 'purple' ? 'border-purple-200 bg-purple-50 text-purple-800' : tone === 'cyan' ? 'border-cyan-200 bg-cyan-50 text-cyan-800' : tone === 'blue' ? 'border-blue-200 bg-blue-50 text-blue-800' : 'border-slate-200 bg-white text-slate-800'}`}><p className="text-[10px] font-bold uppercase opacity-70">{label}</p><p className="text-lg font-bold tabular-nums">{value}</p></div>)}
+                      </div>
+                      <div className="rounded-xl border border-slate-200 bg-white p-5">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-lg font-bold">ตัวอย่างแผนก่อนสร้าง</h2><p className="text-sm text-slate-500">ช่วงวันที่ {startDate} ถึง {endDate}</p></div><div className="flex gap-2"><button type="button" onClick={() => { setCreateStep('select'); setPreview(null); }} className="rounded-xl border px-5 py-2.5 font-semibold">ย้อนกลับ</button><button type="button" onClick={() => setShowCreateConfirmation(true)} disabled={preview.newRowCount <= 0} className="rounded-xl bg-emerald-600 px-5 py-2.5 font-semibold text-white disabled:bg-slate-300">สร้าง Plan</button></div></div>
+                        <div className="mt-4 grid gap-3 rounded-xl bg-slate-50 p-4 sm:grid-cols-3"><div><p className="text-xs text-slate-500">Code Run สูงสุด</p><b>{preview.currentMaximumCodeRun}</b></div><div><p className="text-xs text-slate-500">เริ่มต้น</p><b className="text-blue-700">{preview.startCodeRun}</b></div><div><p className="text-xs text-slate-500">สุดท้าย</p><b className="text-blue-700">{preview.endCodeRun}</b></div></div>
+                      </div>
+                    </div>
+                  )}
+
+                  {createStep === 'creating' && (
+                    <div className="flex min-h-[360px] flex-col items-center justify-center rounded-xl border border-emerald-200 bg-emerald-50/50 p-8 text-center"><Loader2 className="h-12 w-12 animate-spin text-emerald-600" /><h2 className="mt-5 text-xl font-bold text-slate-900">กำลังสร้าง Plan</h2><p className="mt-2 text-sm text-slate-500">กำลังบันทึกรายการลงแผนรายวัน กรุณารอสักครู่</p></div>
+                  )}
+
+                  {createStep === 'completed' && creationResult && (
+                    <div className="flex min-h-[360px] flex-col items-center justify-center rounded-xl border border-emerald-200 bg-emerald-50 p-8 text-center"><CheckCircle2 className="h-14 w-14 text-emerald-600" /><h2 className="mt-4 text-2xl font-bold text-emerald-900">สร้าง Plan สำเร็จ</h2><p className="mt-2 text-emerald-800">สร้าง {creationResult.createdRowCount} รายการ ข้ามรายการซ้ำ {creationResult.duplicateRowCount} รายการ</p><div className="mt-6 flex flex-wrap justify-center gap-3"><button type="button" onClick={() => { setTab('daily'); setDailyDate(startDate); setDailyEndDate(endDate); void loadDailyPlans(startDate, endDate); }} className="rounded-xl bg-blue-600 px-5 py-2.5 font-semibold text-white">ดูแผนที่สร้าง</button><button type="button" onClick={() => { setCreateStep('select'); setPreview(null); setCreationResult(null); }} className="rounded-xl border border-emerald-300 bg-white px-5 py-2.5 font-semibold text-emerald-700">สร้างแผนเพิ่ม</button><button type="button" onClick={clearSource} className="rounded-xl border px-5 py-2.5 font-semibold">กลับเมนูหลัก</button></div></div>
+                  )}
                 </div>
               )}
             </div>
@@ -1582,91 +1512,13 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
 
         {notice && <Notice notice={notice} />}
 
-        {tab === 'create' && createView === 'source' && validationErrors.length > 0 && (
-          <section className="rounded-2xl border border-red-200 bg-red-50 p-5">
-            <div className="flex items-center gap-2 font-semibold text-red-800">
-              <AlertTriangle className="h-5 w-5" />
-              กรุณาแก้ข้อมูลต้นแบบก่อน Preview
-            </div>
-            <div className="mt-3 max-h-56 space-y-2 overflow-auto">
-              {validationErrors.map(item => (
-                <div key={item.sheetRow} className="rounded-lg bg-white px-3 py-2 text-sm text-red-700">
-                  แถว {item.sheetRow}: {item.errors.join(', ')}
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
 
-        {tab === 'create' && createView === 'source' && preview && (
-          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
-            <h2 className="text-lg font-bold">ผล Preview</h2>
-            <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <StatCard label="วันทำงาน" value={preview.workingDateCount} tone="blue" />
-              <StatCard label="รายการทั้งหมด" value={preview.totalCandidateRows} />
-              <StatCard label="รายการใหม่" value={preview.newRowCount} tone="green" />
-              <StatCard label="รายการซ้ำ" value={preview.duplicateRowCount} tone="amber" />
-            </div>
-            <div className="mt-5 grid gap-3 rounded-xl bg-slate-50 p-4 sm:grid-cols-3">
-              <div><p className="text-xs text-slate-500">Code run สูงสุด</p><b>{preview.currentMaximumCodeRun}</b></div>
-              <div><p className="text-xs text-slate-500">เริ่มต้น</p><b className="text-blue-700">{preview.startCodeRun}</b></div>
-              <div><p className="text-xs text-slate-500">สุดท้าย</p><b className="text-blue-700">{preview.endCodeRun}</b></div>
-            </div>
-            <div className="mt-5 flex justify-end">
-              <button type="button" onClick={() => setShowCreateConfirmation(true)} disabled={preview.newRowCount <= 0 || createBusy} className="rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white disabled:bg-slate-300">
-                Create Plan
-              </button>
-            </div>
-          </section>
-        )}
 
-        {tab === 'create' && createView === 'source' && creationResult && (
-          <section className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 text-emerald-900">
-            <h2 className="font-bold">สร้าง Plan สำเร็จ</h2>
-            <p className="mt-1 text-sm">
-              สร้าง {creationResult.createdRowCount} รายการ ข้ามรายการซ้ำ {creationResult.duplicateRowCount} รายการ
-            </p>
-          </section>
-        )}
 
-        {tab === 'create' && createView === 'source' && source && (
-          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <h2 className="text-lg font-bold">ข้อมูลต้นแบบ</h2>
-                <p className="text-sm text-slate-500">แสดง {filteredTemplateRows.length} จาก {templateRows.length}</p>
-              </div>
-              <input value={templateSearch} onChange={event => setTemplateSearch(event.target.value)} placeholder="ค้นหาข้อมูลต้นแบบ..." className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm" />
-            </div>
-            <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200">
-              <table className="min-w-full divide-y divide-slate-200 text-sm">
-                <thead className="bg-slate-100 text-left text-xs font-semibold uppercase text-slate-600">
-                  <tr>
-                    {['Route', 'Company', 'Truck Name', 'Truck Type', 'Driver', 'Project', 'Drop Point', 'ETA', 'ETD', 'Group Code'].map(heading => (
-                      <th key={heading} className="whitespace-nowrap px-4 py-3">{heading}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {filteredTemplateRows.map((row, index) => (
-                    <tr key={`${row.sheetRow || index}-${row.route}-${row.truckName}`}>
-                      <td className="whitespace-nowrap px-4 py-3">{row.route}</td>
-                      <td className="whitespace-nowrap px-4 py-3">{row.company}</td>
-                      <td className="whitespace-nowrap px-4 py-3 font-medium text-blue-700">{row.truckName}</td>
-                      <td className="whitespace-nowrap px-4 py-3">{row.truckType}</td>
-                      <td className="whitespace-nowrap px-4 py-3">{row.driverName || '-'}</td>
-                      <td className="whitespace-nowrap px-4 py-3">{row.project}</td>
-                      <td className="whitespace-nowrap px-4 py-3">{row.dropPoint}</td>
-                      <td className="whitespace-nowrap px-4 py-3 font-mono">{row.planEta}</td>
-                      <td className="whitespace-nowrap px-4 py-3 font-mono">{row.planEtd}</td>
-                      <td className="whitespace-nowrap px-4 py-3">{row.groupCode || 'ไม่มี Group'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        )}
+
+
+
+
       </div>
 
       {showCreateConfirmation && preview && (
