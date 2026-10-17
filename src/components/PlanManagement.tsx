@@ -1390,7 +1390,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                     ย้อนกลับ
                   </button>
 
-                  <div className="grid min-w-0 flex-1 gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(190px,240px)_minmax(190px,240px)_auto] lg:items-end">
+                  <div className="grid min-w-0 flex-1 gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(190px,240px)_minmax(190px,240px)_180px] lg:items-end">
                     <label className="block text-sm font-medium text-slate-700">
                       วันที่เริ่มต้น
                       <input
@@ -1419,7 +1419,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                       type="button"
                       onClick={() => void loadDailyPlans(dailyDate, dailyEndDate, { showMessage: true, clearResultOnError: true })}
                       disabled={isLoadingDaily}
-                      className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-60 sm:col-span-2 lg:col-span-1"
+                      className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-60 sm:col-span-2 lg:col-span-1 lg:w-[180px]"
                     >
                       {isLoadingDaily ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                       โหลดแผน
@@ -1432,10 +1432,10 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                       type="button"
                       onClick={openExtraDialog}
                       disabled={isSavingPlan}
-                      className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
+                      className="inline-flex h-11 min-w-[112px] items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
                     >
                       <Plus className="h-4 w-4" />
-                      + EXTRA
+                      EXTRA
                     </button>
                   </div>
                 </div>
@@ -1476,15 +1476,22 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                       <button type="button" onClick={() => setShowBatchDeleteConfirmation(true)} disabled={!selectedPlanCodes.length || selectedPlanCodes.length > MAX_BATCH_DELETE_PLANS || isSavingPlan} className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-40"><Trash2 className="h-4 w-4" />ลบรายการที่เลือก ({selectedPlanCodes.length})</button>
                     </div>
                   </div>
-                  <div className="overflow-x-auto rounded-xl border border-slate-200">
-                    <table className="min-w-full divide-y divide-slate-200 text-sm">
-                      <thead className="bg-slate-100 text-left text-xs font-semibold uppercase text-slate-600">
+                  <div className="max-h-[calc(100dvh-430px)] min-h-[360px] w-full overflow-auto rounded-xl border border-slate-200">
+                    <table className="w-full min-w-[1390px] table-fixed divide-y divide-slate-200 text-[13px]">
+                      <colgroup>
+                        <col className="w-[44px]" /><col className="w-[88px]" /><col className="w-[100px]" />
+                        <col className="w-[96px]" /><col className="w-[135px]" /><col className="w-[92px]" />
+                        <col className="w-[105px]" /><col className="w-[92px]" /><col className="w-[100px]" />
+                        <col className="w-[165px]" /><col className="w-[68px]" /><col className="w-[68px]" />
+                        <col className="w-[112px]" />
+                      </colgroup>
+                      <thead className="sticky top-0 z-30 bg-slate-100 text-left text-[11px] font-semibold uppercase text-slate-600 shadow-sm">
                         <tr>
-                          <th className="w-12 px-4 py-3 text-center">
+                          <th className="sticky left-0 top-0 z-40 w-11 bg-slate-100 px-2 py-2.5 text-center">
                             <input type="checkbox" checked={allDisplayedPlansSelected} onChange={toggleSelectAllDisplayed} disabled={!displayedPlanCodes.length || isSavingPlan} className="h-4 w-4 rounded border-slate-300 text-blue-600" aria-label="เลือกทั้งหมดที่แสดง" />
                           </th>
-                          {['Code Run', 'Date', 'Type', 'Route', 'Company', 'Truck Name', 'Drop Point', 'Group Code', 'รายละเอียดงาน', 'ETA', 'ETD', 'Action'].map(heading => (
-                            <th key={heading} className="whitespace-nowrap px-4 py-3">{heading}</th>
+                          {['Code Run', 'วันที่', 'ประเภท', 'Route', 'บริษัท', 'ทะเบียนรถ', 'จุดลงงาน', 'กลุ่มงาน', 'รายละเอียดงาน', 'ETA', 'ETD', 'จัดการ'].map((heading, index) => (
+                            <th key={heading} className={`whitespace-nowrap px-2 py-2.5 ${index === 0 ? 'sticky left-11 top-0 z-40 bg-slate-100' : ''} ${index === 11 ? 'sticky right-0 top-0 z-40 bg-slate-100 text-center' : ''}`}>{heading}</th>
                           ))}
                         </tr>
                       </thead>
@@ -1494,26 +1501,26 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                         ) : (
                           filteredDailyRows.map(plan => (
                             <tr key={plan.codeRun} className={plan.remark === 'CANCEL' ? 'bg-red-50/50 text-slate-500' : 'hover:bg-blue-50/40'}>
-                              <td className="px-4 py-3 text-center">
+                              <td className="sticky left-0 z-10 bg-white px-2 py-2 text-center">
                                 <input type="checkbox" checked={selectedPlanCodes.includes(plan.codeRun)} onChange={() => toggleSelectPlan(plan.codeRun)} disabled={isSavingPlan} className="h-4 w-4 rounded border-slate-300 text-blue-600" aria-label={`เลือก ${plan.codeRun}`} />
                               </td>
-                              <td className="whitespace-nowrap px-4 py-3 font-bold text-slate-900">{plan.codeRun}</td>
-                              <td className="whitespace-nowrap px-4 py-3 font-mono text-slate-600">{plan.date}</td>
-                              <td className="whitespace-nowrap px-4 py-3"><RemarkBadge remark={plan.remark} /></td>
-                              <td className="whitespace-nowrap px-4 py-3">{plan.route}</td>
-                              <td className="whitespace-nowrap px-4 py-3">{plan.company}</td>
-                              <td className="whitespace-nowrap px-4 py-3 font-medium">{plan.truckName}</td>
-                              <td className="whitespace-nowrap px-4 py-3">{plan.dropPoint}</td>
-                              <td className="whitespace-nowrap px-4 py-3"><span className={plan.groupCode ? 'rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-bold text-emerald-700' : 'rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-700'}>{plan.groupCode || 'ไม่มี Group'}</span></td>
-                              <td className="max-w-[280px] px-4 py-3">
+                              <td className="sticky left-11 z-10 whitespace-nowrap bg-white px-2 py-2 font-bold text-slate-900">{plan.codeRun}</td>
+                              <td className="whitespace-nowrap px-2 py-2 font-mono text-slate-600">{plan.date}</td>
+                              <td className="whitespace-nowrap px-2 py-2"><RemarkBadge remark={plan.remark} /></td>
+                              <td className="whitespace-nowrap px-2 py-2">{plan.route}</td>
+                              <td className="whitespace-nowrap px-2 py-2">{plan.company}</td>
+                              <td className="whitespace-nowrap px-2 py-2 font-medium">{plan.truckName}</td>
+                              <td className="whitespace-nowrap px-2 py-2">{plan.dropPoint}</td>
+                              <td className="whitespace-nowrap px-2 py-2"><span className={plan.groupCode ? 'rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-bold text-emerald-700' : 'rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-700'}>{plan.groupCode || 'ไม่มี Group'}</span></td>
+                              <td className="max-w-[165px] px-2 py-2">
                                 <span className="block truncate" title={plan.workDetail || '-'}>
                                   {plan.workDetail || '-'}
                                 </span>
                               </td>
-                              <td className="whitespace-nowrap px-4 py-3 font-mono">{plan.planEta}</td>
-                              <td className="whitespace-nowrap px-4 py-3 font-mono">{plan.planEtd}</td>
-                              <td className="whitespace-nowrap px-4 py-3">
-                                <div className="flex gap-2">
+                              <td className="whitespace-nowrap px-2 py-2 font-mono">{plan.planEta}</td>
+                              <td className="whitespace-nowrap px-2 py-2 font-mono">{plan.planEtd}</td>
+                              <td className="sticky right-0 z-10 whitespace-nowrap bg-white px-2 py-2">
+                                <div className="flex justify-center gap-1">
                                   {plan.remark !== 'CANCEL' ? (
                                     <>
                                       <button type="button" onClick={() => openEditDialog(plan)} disabled={isSavingPlan} className="rounded-lg bg-blue-50 p-2 text-blue-600 disabled:opacity-50" title="แก้ไข">
