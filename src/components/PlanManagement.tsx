@@ -469,6 +469,24 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
     [workingDays]
   );
 
+  const previewRows = useMemo(() => {
+    if (!preview || !templateRows.length) return [];
+    const workingDates = buildDateRange(startDate, endDate).filter(date =>
+      selectedWorkingDays.includes(new Date(`${date}T00:00:00Z`).getUTCDay() || 7)
+    );
+    const startNumber = Number(String(preview.startCodeRun || '').replace(/\D/g, '')) || 0;
+    let sequence = 0;
+    return workingDates.flatMap(date =>
+      templateRows.map(row => {
+        const codeRun = startNumber
+          ? `A${String(startNumber + sequence).padStart(4, '0')}`
+          : '-';
+        sequence += 1;
+        return { date, codeRun, row };
+      })
+    );
+  }, [preview, templateRows, startDate, endDate, selectedWorkingDays]);
+
   const filteredTemplateRows = useMemo(() => {
     const query = templateSearch.trim().toLowerCase();
     if (!query) return templateRows;
@@ -1262,23 +1280,19 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                       <button type="button" onClick={clearSource} disabled={createBusy} className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-300 px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50">
                         <ArrowLeft className="h-4 w-4" />ย้อนกลับ
                       </button>
-                      <div className="flex min-w-0 flex-1 items-start justify-center px-2">
+                      <div className="relative grid min-w-0 flex-1 grid-cols-3 px-4">
+                        <div className="absolute left-[16.66%] right-[16.66%] top-5 h-1 -translate-y-1/2 bg-blue-600" />
                         {[
                           { number: 1, label: 'เลือกช่วงวันที่' },
                           { number: 2, label: createStep === 'loading' ? 'กำลังโหลดแผน' : 'ตรวจสอบข้อมูล' },
                           { number: 3, label: createStep === 'creating' ? 'กำลังสร้างแผน' : createStep === 'completed' ? 'สร้างสำเร็จ' : 'ยืนยันการสร้าง' },
                         ].map((item, index) => {
                           const activeIndex = createStep === 'select' ? 0 : createStep === 'loading' || createStep === 'preview' ? 1 : 2;
-                          const completed = index < activeIndex;
                           const active = index === activeIndex;
                           return (
-                            <div key={item.number} className="flex min-w-0 flex-1 items-start">
-                              {index > 0 && <div className={`mt-5 h-1 min-w-4 flex-1 rounded-full ${completed || active ? 'bg-emerald-500' : 'bg-slate-200'}`} />}
-                              <div className="flex w-28 shrink-0 flex-col items-center text-center">
-                                <div className={`flex h-10 w-10 items-center justify-center rounded-full text-base font-black shadow-sm ring-4 ring-white ${active ? 'bg-blue-600 text-white' : completed ? 'bg-emerald-500 text-white' : 'bg-slate-200 text-slate-500'}`}>{item.number}</div>
-                                <span className={`mt-2 text-xs font-bold ${active ? 'text-blue-700' : completed ? 'text-emerald-700' : 'text-slate-400'}`}>{item.label}</span>
-                              </div>
-                              {index < 2 && <div className={`mt-5 h-1 min-w-4 flex-1 rounded-full ${completed ? 'bg-emerald-500' : 'bg-slate-200'}`} />}
+                            <div key={item.number} className="relative z-10 flex flex-col items-center text-center">
+                              <div className={`flex h-10 w-10 items-center justify-center rounded-full border-2 border-black text-base font-black shadow-sm ${active ? 'bg-yellow-400 text-black' : 'bg-blue-600 text-white'}`}>{item.number}</div>
+                              <span className={`mt-2 text-xs font-bold ${active ? 'text-amber-700' : 'text-blue-700'}`}>{item.label}</span>
                             </div>
                           );
                         })}
@@ -1315,6 +1329,28 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                       <div className="rounded-xl border border-slate-200 bg-white p-5">
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-lg font-bold">ตัวอย่างแผนก่อนสร้าง</h2><p className="text-sm text-slate-500">ช่วงวันที่ {startDate} ถึง {endDate}</p></div><div className="flex gap-2"><button type="button" onClick={() => { setCreateStep('select'); setPreview(null); }} className="rounded-xl border px-5 py-2.5 font-semibold">ย้อนกลับ</button><button type="button" onClick={() => setShowCreateConfirmation(true)} disabled={preview.newRowCount <= 0} className="rounded-xl bg-emerald-600 px-5 py-2.5 font-semibold text-white disabled:bg-slate-300">สร้าง Plan</button></div></div>
                         <div className="mt-4 grid gap-3 rounded-xl bg-slate-50 p-4 sm:grid-cols-3"><div><p className="text-xs text-slate-500">Code Run สูงสุด</p><b>{preview.currentMaximumCodeRun}</b></div><div><p className="text-xs text-slate-500">เริ่มต้น</p><b className="text-blue-700">{preview.startCodeRun}</b></div><div><p className="text-xs text-slate-500">สุดท้าย</p><b className="text-blue-700">{preview.endCodeRun}</b></div></div>
+                        <div className="mt-4 max-h-[420px] overflow-auto rounded-xl border border-slate-200">
+                          <table className="min-w-[1050px] w-full divide-y divide-slate-200 text-sm">
+                            <thead className="sticky top-0 z-20 bg-slate-100 text-left text-xs font-bold uppercase text-slate-600">
+                              <tr>{['Code Run','วันที่','Route','Company','ทะเบียนรถ','จุดลงงาน','ETA','ETD','Group Code'].map(heading => <th key={heading} className="whitespace-nowrap px-3 py-3">{heading}</th>)}</tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100 bg-white">
+                              {previewRows.length ? previewRows.map(({ date, codeRun, row }, index) => (
+                                <tr key={`${date}-${row.sheetRow || index}-${codeRun}`} className="hover:bg-blue-50/40">
+                                  <td className="whitespace-nowrap px-3 py-2.5 font-bold text-blue-700">{codeRun}</td>
+                                  <td className="whitespace-nowrap px-3 py-2.5 font-mono text-slate-600">{date}</td>
+                                  <td className="whitespace-nowrap px-3 py-2.5 font-semibold">{row.route || '-'}</td>
+                                  <td className="whitespace-nowrap px-3 py-2.5">{row.company || '-'}</td>
+                                  <td className="whitespace-nowrap px-3 py-2.5">{row.truckName || '-'}</td>
+                                  <td className="whitespace-nowrap px-3 py-2.5">{row.dropPoint || '-'}</td>
+                                  <td className="whitespace-nowrap px-3 py-2.5 font-mono">{row.planEta || '-'}</td>
+                                  <td className="whitespace-nowrap px-3 py-2.5 font-mono">{row.planEtd || '-'}</td>
+                                  <td className="whitespace-nowrap px-3 py-2.5"><span className={row.groupCode ? 'rounded-full bg-emerald-100 px-2 py-1 text-xs font-bold text-emerald-700' : 'rounded-full bg-amber-100 px-2 py-1 text-xs font-bold text-amber-700'}>{row.groupCode || 'ไม่มี Group'}</span></td>
+                                </tr>
+                              )) : <tr><td colSpan={9} className="px-4 py-10 text-center text-slate-500">ไม่พบข้อมูลสำหรับแสดงตัวอย่าง</td></tr>}
+                            </tbody>
+                          </table>
+                        </div>
                       </div>
                     </div>
                   )}
