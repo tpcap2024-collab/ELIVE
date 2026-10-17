@@ -1135,7 +1135,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
         <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           {tab === 'create' && createView === 'master' ? (
             <div className="space-y-3 px-3 py-4 sm:px-4">
-              <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
+              <div className="flex flex-col gap-2 xl:flex-row xl:items-end">
                 <button
                   type="button"
                   onClick={() => setCreateView('source')}
@@ -1324,7 +1324,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                   {createStep === 'preview' && preview && (
                     <div className="flex min-h-0 flex-col gap-3 lg:h-[calc(100dvh-185px)]">
                       <div className="flex shrink-0 flex-wrap gap-2">
-                        {[['วันทำงาน', preview.workingDateCount, 'blue'], ['รายการทั้งหมด', preview.totalCandidateRows, 'slate'], ['รายการใหม่', preview.newRowCount, 'emerald'], ['รายการซ้ำ', preview.duplicateRowCount, 'amber'], ['ทะเบียนรถ', new Set(templateRows.map(row => row.truckName).filter(Boolean)).size, 'purple'], ['กลุ่มงาน', new Set(templateRows.map(row => row.groupCode).filter(Boolean)).size, 'cyan']].map(([label,value,tone]) => <div key={String(label)} className={`min-w-[112px] rounded-lg border px-3 py-1.5 ${tone === 'emerald' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : tone === 'amber' ? 'border-amber-200 bg-amber-50 text-amber-800' : tone === 'purple' ? 'border-purple-200 bg-purple-50 text-purple-800' : tone === 'cyan' ? 'border-cyan-200 bg-cyan-50 text-cyan-800' : tone === 'blue' ? 'border-blue-200 bg-blue-50 text-blue-800' : 'border-slate-200 bg-white text-slate-800'}`}><p className="text-[10px] font-bold uppercase opacity-70">{label}</p><p className="text-base font-bold tabular-nums">{value}</p></div>)}
+                        {[['วันทำงาน', preview.workingDateCount, 'blue'], ['รายการทั้งหมด', preview.totalCandidateRows, 'slate'], ['รายการใหม่', preview.newRowCount, 'emerald'], ['รายการซ้ำ', preview.duplicateRowCount, 'amber'], ['ทะเบียนรถ', new Set(templateRows.map(row => row.truckName).filter(Boolean)).size, 'purple'], ['กลุ่มงาน', new Set(templateRows.map(row => row.groupCode).filter(Boolean)).size, 'cyan']].map(([label,value,tone]) => <div key={String(label)} className={`min-w-[96px] rounded-lg border px-3 py-1.5 ${tone === 'emerald' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : tone === 'amber' ? 'border-amber-200 bg-amber-50 text-amber-800' : tone === 'purple' ? 'border-purple-200 bg-purple-50 text-purple-800' : tone === 'cyan' ? 'border-cyan-200 bg-cyan-50 text-cyan-800' : tone === 'blue' ? 'border-blue-200 bg-blue-50 text-blue-800' : 'border-slate-200 bg-white text-slate-800'}`}><p className="text-[10px] font-bold uppercase opacity-70">{label}</p><p className="text-base font-bold tabular-nums">{value}</p></div>)}
                       </div>
                       <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-slate-200 bg-white p-4">
                         <div className="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-lg font-bold">ตัวอย่างแผนก่อนสร้าง</h2><p className="text-sm text-slate-500">ช่วงวันที่ {startDate} ถึง {endDate}</p></div><div className="flex gap-2"><button type="button" onClick={() => { setCreateStep('select'); setPreview(null); }} className="rounded-xl border px-5 py-2.5 font-semibold">ย้อนกลับ</button><button type="button" onClick={() => setShowCreateConfirmation(true)} disabled={preview.newRowCount <= 0} className="rounded-xl bg-emerald-600 px-5 py-2.5 font-semibold text-white disabled:bg-slate-300">สร้าง Plan</button></div></div>
@@ -1366,15 +1366,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
             </div>
           ) : (
             <div className="space-y-3 p-3 sm:p-4">
-              {dailyResult && (
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className="min-w-[104px] rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-slate-800"><p className="text-[9px] font-bold uppercase tracking-wide text-slate-500">ทั้งหมด</p><p className="text-base font-bold leading-tight tabular-nums">{dailyResult.rowCount}</p></div>
-                  <div className="min-w-[104px] rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-emerald-800"><p className="text-[9px] font-bold uppercase tracking-wide opacity-70">ใช้งาน</p><p className="text-base font-bold leading-tight tabular-nums">{dailyResult.activeCount}</p></div>
-                  <div className="min-w-[104px] rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-blue-800"><p className="text-[9px] font-bold uppercase tracking-wide opacity-70">แผนปกติ</p><p className="text-base font-bold leading-tight tabular-nums">{dailyResult.regularCount}</p></div>
-                  <div className="min-w-[104px] rounded-lg border border-purple-200 bg-purple-50 px-3 py-1.5 text-purple-800"><p className="text-[9px] font-bold uppercase tracking-wide opacity-70">แผนพิเศษ</p><p className="text-base font-bold leading-tight tabular-nums">{dailyResult.extraCount}</p></div>
-                  <div className="min-w-[104px] rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-red-800"><p className="text-[9px] font-bold uppercase tracking-wide opacity-70">ยกเลิก</p><p className="text-base font-bold leading-tight tabular-nums">{dailyResult.cancelCount}</p></div>
-                </div>
-              )}
+
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                 <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
                   <button
@@ -1390,7 +1382,15 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                     ย้อนกลับ
                   </button>
 
-                  <div className="grid min-w-0 flex-1 gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(190px,240px)_minmax(190px,240px)_180px] lg:items-end">
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    <div className="min-w-[82px] rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-slate-800"><p className="text-[9px] font-bold uppercase tracking-wide text-slate-500">ทั้งหมด</p><p className="text-sm font-bold leading-tight tabular-nums">{dailyResult.rowCount}</p></div>
+                  <div className="min-w-[82px] rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-emerald-800"><p className="text-[9px] font-bold uppercase tracking-wide opacity-70">ใช้งาน</p><p className="text-sm font-bold leading-tight tabular-nums">{dailyResult.activeCount}</p></div>
+                  <div className="min-w-[82px] rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1 text-blue-800"><p className="text-[9px] font-bold uppercase tracking-wide opacity-70">แผนปกติ</p><p className="text-sm font-bold leading-tight tabular-nums">{dailyResult.regularCount}</p></div>
+                  <div className="min-w-[82px] rounded-lg border border-purple-200 bg-purple-50 px-2.5 py-1 text-purple-800"><p className="text-[9px] font-bold uppercase tracking-wide opacity-70">แผนพิเศษ</p><p className="text-sm font-bold leading-tight tabular-nums">{dailyResult.extraCount}</p></div>
+                  <div className="min-w-[82px] rounded-lg border border-red-200 bg-red-50 px-2.5 py-1 text-red-800"><p className="text-[9px] font-bold uppercase tracking-wide opacity-70">ยกเลิก</p><p className="text-sm font-bold leading-tight tabular-nums">{dailyResult.cancelCount}</p></div>
+                  </div>
+
+                  <div className="grid min-w-0 flex-1 gap-2 sm:grid-cols-2 lg:grid-cols-[150px_150px_130px] lg:items-end">
                     <label className="block text-sm font-medium text-slate-700">
                       วันที่เริ่มต้น
                       <input
@@ -1401,7 +1401,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                           setDailyDate(nextStart);
                           setDailyEndDate(current => clampDailyEndDate(nextStart, current));
                         }}
-                        className="mt-1.5 h-11 w-full rounded-xl border border-slate-300 bg-white px-3"
+                        className="mt-1 h-10 w-full rounded-lg border border-slate-300 bg-white px-2.5 text-sm"
                       />
                     </label>
                     <label className="block text-sm font-medium text-slate-700">
@@ -1412,14 +1412,14 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                         min={dailyDate}
                         max={addCalendarDays(dailyDate, MAX_DAILY_VIEW_DAYS - 1)}
                         onChange={event => setDailyEndDate(clampDailyEndDate(dailyDate, event.target.value))}
-                        className="mt-1.5 h-11 w-full rounded-xl border border-slate-300 bg-white px-3"
+                        className="mt-1 h-10 w-full rounded-lg border border-slate-300 bg-white px-2.5 text-sm"
                       />
                     </label>
                     <button
                       type="button"
                       onClick={() => void loadDailyPlans(dailyDate, dailyEndDate, { showMessage: true, clearResultOnError: true })}
                       disabled={isLoadingDaily}
-                      className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-60 sm:col-span-2 lg:col-span-1 lg:w-[180px]"
+                      className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-60 sm:col-span-2 lg:col-span-1 lg:w-[130px]"
                     >
                       {isLoadingDaily ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                       โหลดแผน
@@ -1476,60 +1476,59 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                       <button type="button" onClick={() => setShowBatchDeleteConfirmation(true)} disabled={!selectedPlanCodes.length || selectedPlanCodes.length > MAX_BATCH_DELETE_PLANS || isSavingPlan} className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-40"><Trash2 className="h-4 w-4" />ลบรายการที่เลือก ({selectedPlanCodes.length})</button>
                     </div>
                   </div>
-                  <div className="max-h-[calc(100dvh-430px)] min-h-[360px] w-full overflow-auto rounded-xl border border-slate-200">
-                    <table className="w-full min-w-[1390px] table-fixed divide-y divide-slate-200 text-[13px]">
+                  <div className="max-h-[calc(100dvh-365px)] min-h-[420px] w-full overflow-y-auto overflow-x-hidden rounded-xl border border-slate-200">
+                    <table className="w-full table-fixed divide-y divide-slate-200 text-[12px]">
                       <colgroup>
-                        <col className="w-[44px]" /><col className="w-[88px]" /><col className="w-[100px]" />
-                        <col className="w-[96px]" /><col className="w-[135px]" /><col className="w-[92px]" />
-                        <col className="w-[105px]" /><col className="w-[92px]" /><col className="w-[100px]" />
-                        <col className="w-[165px]" /><col className="w-[68px]" /><col className="w-[68px]" />
-                        <col className="w-[112px]" />
+                        <col className="w-[36px]" /><col className="w-[82px]" /><col className="w-[76px]" />
+                        <col className="w-[105px]" /><col className="w-[72px]" /><col className="w-[86px]" />
+                        <col className="w-[76px]" /><col className="w-[78px]" /><col className="w-[96px]" />
+                        <col className="w-[54px]" /><col className="w-[54px]" /><col className="w-[92px]" />
                       </colgroup>
-                      <thead className="sticky top-0 z-30 bg-slate-100 text-left text-[11px] font-semibold uppercase text-slate-600 shadow-sm">
+                      <thead className="sticky top-0 z-30 bg-slate-100 text-left text-[10px] font-semibold uppercase text-slate-600 shadow-sm">
                         <tr>
-                          <th className="sticky left-0 top-0 z-40 w-11 bg-slate-100 px-2 py-2.5 text-center">
+                          <th className="sticky left-0 top-0 z-40 bg-slate-100 px-1.5 py-2 text-center">
                             <input type="checkbox" checked={allDisplayedPlansSelected} onChange={toggleSelectAllDisplayed} disabled={!displayedPlanCodes.length || isSavingPlan} className="h-4 w-4 rounded border-slate-300 text-blue-600" aria-label="เลือกทั้งหมดที่แสดง" />
                           </th>
-                          {['Code Run', 'วันที่', 'ประเภท', 'Route', 'บริษัท', 'ทะเบียนรถ', 'จุดลงงาน', 'กลุ่มงาน', 'รายละเอียดงาน', 'ETA', 'ETD', 'จัดการ'].map((heading, index) => (
-                            <th key={heading} className={`whitespace-nowrap px-2 py-2.5 ${index === 0 ? 'sticky left-11 top-0 z-40 bg-slate-100' : ''} ${index === 11 ? 'sticky right-0 top-0 z-40 bg-slate-100 text-center' : ''}`}>{heading}</th>
+                          {['วันที่', 'ประเภท', 'Route', 'บริษัท', 'ทะเบียนรถ', 'จุดลงงาน', 'กลุ่มงาน', 'รายละเอียดงาน', 'ETA', 'ETD', 'จัดการ'].map((heading, index) => (
+                            <th key={heading} className={`whitespace-nowrap px-1.5 py-2 ${index === 10 ? 'sticky right-0 top-0 z-40 bg-slate-100 text-center' : ''}`}>{heading}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 bg-white">
                         {filteredDailyRows.length === 0 ? (
-                          <tr><td colSpan={13} className="px-4 py-10 text-center text-slate-500">ไม่พบแผนในวันที่เลือก</td></tr>
+                          <tr><td colSpan={12} className="px-4 py-10 text-center text-slate-500">ไม่พบแผนในวันที่เลือก</td></tr>
                         ) : (
                           filteredDailyRows.map(plan => (
                             <tr key={plan.codeRun} className={plan.remark === 'CANCEL' ? 'bg-red-50/50 text-slate-500' : 'hover:bg-blue-50/40'}>
-                              <td className="sticky left-0 z-10 bg-white px-2 py-2 text-center">
+                              <td className="sticky left-0 z-10 bg-white px-1.5 py-1.5 text-center">
                                 <input type="checkbox" checked={selectedPlanCodes.includes(plan.codeRun)} onChange={() => toggleSelectPlan(plan.codeRun)} disabled={isSavingPlan} className="h-4 w-4 rounded border-slate-300 text-blue-600" aria-label={`เลือก ${plan.codeRun}`} />
                               </td>
-                              <td className="sticky left-11 z-10 whitespace-nowrap bg-white px-2 py-2 font-bold text-slate-900">{plan.codeRun}</td>
-                              <td className="whitespace-nowrap px-2 py-2 font-mono text-slate-600">{plan.date}</td>
-                              <td className="whitespace-nowrap px-2 py-2"><RemarkBadge remark={plan.remark} /></td>
-                              <td className="whitespace-nowrap px-2 py-2">{plan.route}</td>
-                              <td className="whitespace-nowrap px-2 py-2">{plan.company}</td>
-                              <td className="whitespace-nowrap px-2 py-2 font-medium">{plan.truckName}</td>
-                              <td className="whitespace-nowrap px-2 py-2">{plan.dropPoint}</td>
-                              <td className="whitespace-nowrap px-2 py-2"><span className={plan.groupCode ? 'rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-bold text-emerald-700' : 'rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-700'}>{plan.groupCode || 'ไม่มี Group'}</span></td>
-                              <td className="max-w-[165px] px-2 py-2">
-                                <span className="block truncate" title={plan.workDetail || '-'}>
+                              
+                              <td className="whitespace-nowrap px-1.5 py-1.5 font-mono text-slate-600">{plan.date}</td>
+                              <td className="whitespace-nowrap px-1.5 py-1.5"><RemarkBadge remark={plan.remark} /></td>
+                              <td className="whitespace-nowrap px-1.5 py-1.5">{plan.route}</td>
+                              <td className="whitespace-nowrap px-1.5 py-1.5">{plan.company}</td>
+                              <td className="whitespace-nowrap px-1.5 py-1.5 font-medium">{plan.truckName}</td>
+                              <td className="whitespace-nowrap px-1.5 py-1.5">{plan.dropPoint}</td>
+                              <td className="whitespace-nowrap px-1.5 py-1.5"><span className={plan.groupCode ? 'rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-bold text-emerald-700' : 'rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-700'}>{plan.groupCode || 'ไม่มี Group'}</span></td>
+                              <td className="max-w-[96px] px-1.5 py-1.5">
+                                <span className="block max-w-[88px] truncate" title={plan.workDetail || '-'}>
                                   {plan.workDetail || '-'}
                                 </span>
                               </td>
-                              <td className="whitespace-nowrap px-2 py-2 font-mono">{plan.planEta}</td>
-                              <td className="whitespace-nowrap px-2 py-2 font-mono">{plan.planEtd}</td>
-                              <td className="sticky right-0 z-10 whitespace-nowrap bg-white px-2 py-2">
+                              <td className="whitespace-nowrap px-1.5 py-1.5 font-mono">{plan.planEta}</td>
+                              <td className="whitespace-nowrap px-1.5 py-1.5 font-mono">{plan.planEtd}</td>
+                              <td className="sticky right-0 z-10 whitespace-nowrap bg-white px-1 py-1.5">
                                 <div className="flex justify-center gap-1">
                                   {plan.remark !== 'CANCEL' ? (
                                     <>
-                                      <button type="button" onClick={() => openEditDialog(plan)} disabled={isSavingPlan} className="rounded-lg bg-blue-50 p-2 text-blue-600 disabled:opacity-50" title="แก้ไข">
+                                      <button type="button" onClick={() => openEditDialog(plan)} disabled={isSavingPlan} className="rounded-md bg-blue-50 p-1.5 text-blue-600 disabled:opacity-50" title="แก้ไข">
                                         <Edit3 className="h-4 w-4" />
                                       </button>
-                                      <button type="button" onClick={() => setCancelTarget(plan)} disabled={isSavingPlan} className="rounded-lg bg-amber-50 p-2 text-amber-700 disabled:opacity-50" title="ยกเลิกแผนโดยเปลี่ยนเป็น CANCEL">
+                                      <button type="button" onClick={() => setCancelTarget(plan)} disabled={isSavingPlan} className="rounded-md bg-amber-50 p-1.5 text-amber-700 disabled:opacity-50" title="ยกเลิกแผนโดยเปลี่ยนเป็น CANCEL">
                                         <XCircle className="h-4 w-4" />
                                       </button>
-                                      <button type="button" onClick={() => setDeletePlanTarget(plan)} disabled={isSavingPlan} className="rounded-lg bg-red-600 p-2 text-white disabled:opacity-50" title="ลบแผนถาวร">
+                                      <button type="button" onClick={() => setDeletePlanTarget(plan)} disabled={isSavingPlan} className="rounded-md bg-red-600 p-1.5 text-white disabled:opacity-50" title="ลบแผนถาวร">
                                         <Trash2 className="h-4 w-4" />
                                       </button>
                                     </>
