@@ -1427,7 +1427,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                   </div>
 
                   <div className="flex shrink-0 flex-col gap-2 sm:flex-row xl:border-l xl:border-slate-200 xl:pl-4">
-                    <span className="self-center text-xs text-slate-500">เลือกได้สูงสุด 6 วัน</span>
+                    
                     <button
                       type="button"
                       onClick={openExtraDialog}
@@ -1435,7 +1435,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                       className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
                     >
                       <Plus className="h-4 w-4" />
-                      เพิ่มแผนพิเศษ
+                      + EXTRA
                     </button>
                   </div>
                 </div>
