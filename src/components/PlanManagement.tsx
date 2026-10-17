@@ -1274,40 +1274,31 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                       </div>
                     </div>
                   </div>
-                  <div className="grid gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex min-w-0 items-center gap-3">
-                        <div className={`rounded-xl p-3 text-white ${source === 'master-plan' ? 'bg-blue-600' : 'bg-emerald-600'}`}>
-                          {source === 'master-plan' ? <Sheet className="h-6 w-6" /> : <FileSpreadsheet className="h-6 w-6" />}
-                        </div>
-                        <div className="min-w-0">
-                          <p className="font-semibold">{source === 'master-plan' ? 'Master Plan' : 'Uploaded File'}</p>
-                          <p className="truncate text-sm text-slate-500">{fileName}</p>
-                        </div>
-                      </div>
-                      <button type="button" onClick={clearSource} disabled={createBusy} className="rounded-lg p-2 text-slate-500 hover:bg-slate-200 disabled:opacity-50">
-                        <X className="h-5 w-5" />
-                      </button>
+                  <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                    <div className={`flex h-9 w-9 items-center justify-center rounded-lg text-white ${source === 'master-plan' ? 'bg-blue-600' : 'bg-emerald-600'}`}>
+                      {source === 'master-plan' ? <Sheet className="h-5 w-5" /> : <FileSpreadsheet className="h-5 w-5" />}
                     </div>
-                    <div className="mt-4 grid grid-cols-2 gap-3">
-                      <StatCard label="เที่ยวต่อวัน" value={templateRows.length} tone="blue" />
-                      <StatCard
-                        label="Validation"
-                        value={validationErrors.length ? `${validationErrors.length} จุด` : 'ผ่าน'}
-                        tone={validationErrors.length ? 'amber' : 'green'}
-                      />
+                    <div className="min-w-[130px]">
+                      <p className="text-[10px] font-semibold text-slate-500">แหล่งข้อมูล</p>
+                      <p className="truncate text-sm font-bold text-slate-800">{source === 'master-plan' ? 'Master Plan' : fileName}</p>
+                    </div>
+                    <div className="min-w-[104px] rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-blue-800">
+                      <p className="text-[9px] font-bold uppercase tracking-wide opacity-70">เที่ยวต่อวัน</p>
+                      <p className="text-base font-bold leading-tight tabular-nums">{templateRows.length}</p>
+                    </div>
+                    <div className={`min-w-[104px] rounded-lg border px-3 py-1.5 ${validationErrors.length ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>
+                      <p className="text-[9px] font-bold uppercase tracking-wide opacity-70">ตรวจสอบ</p>
+                      <p className="text-base font-bold leading-tight">{validationErrors.length ? `${validationErrors.length} จุด` : 'ผ่าน'}</p>
                     </div>
                     {source === 'master-plan' && (
-                      <button
-                        type="button"
-                        onClick={() => void openMasterManagement()}
-                        className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm font-semibold text-amber-800"
-                      >
+                      <button type="button" onClick={() => void openMasterManagement()} className="inline-flex h-9 items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 text-xs font-semibold text-amber-800 hover:bg-amber-100">
                         <Settings2 className="h-4 w-4" />
                         จัดการ Master Plan
                       </button>
                     )}
+                    <button type="button" onClick={clearSource} disabled={createBusy} title="เปลี่ยนแหล่งข้อมูล" className="ml-auto rounded-lg p-2 text-slate-500 hover:bg-slate-200 disabled:opacity-50">
+                      <X className="h-5 w-5" />
+                    </button>
                   </div>
 
                   <div className="rounded-xl border border-slate-200 p-4">
@@ -1404,7 +1395,6 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                         {!isPreviewing && <span aria-hidden="true">→</span>}
                       </button>
                     </div>
-                  </div>
                   </div>
                 </div>
               )}
