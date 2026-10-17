@@ -1139,7 +1139,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                 <button
                   type="button"
                   onClick={() => setCreateView('source')}
-                  className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-300 px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                  className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-300 px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50"
                 >
                   <ArrowLeft className="h-4 w-4" />
                   ย้อนกลับ
@@ -1246,7 +1246,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
               </div>
             </div>
           ) : tab === 'create' ? (
-            <div className="p-5 sm:p-6">
+            <div className="p-3 sm:p-4">
               
               {!source ? (
                 <div className="space-y-4">
@@ -1275,13 +1275,13 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                 </div>
               ) : (
                 <div className="space-y-4">
-                  <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
-                    <div className="flex items-start gap-3">
+                  <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
+                    <div className="flex items-center gap-3">
                       <button type="button" onClick={clearSource} disabled={createBusy} className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-300 px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50">
                         <ArrowLeft className="h-4 w-4" />ย้อนกลับ
                       </button>
                       <div className="relative grid min-w-0 flex-1 grid-cols-3 px-4">
-                        <div className="absolute left-[16.66%] right-[16.66%] top-5 h-1 -translate-y-1/2 bg-blue-600" />
+                        <div className="absolute left-[16.66%] right-[16.66%] top-[18px] h-1 -translate-y-1/2 bg-blue-600" />
                         {[
                           { number: 1, label: 'เลือกช่วงวันที่' },
                           { number: 2, label: createStep === 'loading' ? 'กำลังโหลดแผน' : 'ตรวจสอบข้อมูล' },
@@ -1291,8 +1291,8 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                           const active = index === activeIndex;
                           return (
                             <div key={item.number} className="relative z-10 flex flex-col items-center text-center">
-                              <div className={`flex h-10 w-10 items-center justify-center rounded-full border-2 border-black text-base font-black shadow-sm ${active ? 'bg-yellow-400 text-black' : 'bg-blue-600 text-white'}`}>{item.number}</div>
-                              <span className={`mt-2 text-xs font-bold ${active ? 'text-amber-700' : 'text-blue-700'}`}>{item.label}</span>
+                              <div className={`flex h-9 w-9 items-center justify-center rounded-full border-2 border-black text-base font-black shadow-sm ${active ? 'bg-yellow-400 text-black' : 'bg-blue-600 text-white'}`}>{item.number}</div>
+                              <span className={`mt-1 text-[11px] font-bold ${active ? 'text-amber-700' : 'text-blue-700'}`}>{item.label}</span>
                             </div>
                           );
                         })}
@@ -1322,28 +1322,28 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                   )}
 
                   {createStep === 'preview' && preview && (
-                    <div className="space-y-4">
-                      <div className="flex flex-wrap gap-2">
-                        {[['วันทำงาน', preview.workingDateCount, 'blue'], ['รายการทั้งหมด', preview.totalCandidateRows, 'slate'], ['รายการใหม่', preview.newRowCount, 'emerald'], ['รายการซ้ำ', preview.duplicateRowCount, 'amber'], ['ทะเบียนรถ', new Set(templateRows.map(row => row.truckName).filter(Boolean)).size, 'purple'], ['กลุ่มงาน', new Set(templateRows.map(row => row.groupCode).filter(Boolean)).size, 'cyan']].map(([label,value,tone]) => <div key={String(label)} className={`min-w-[120px] rounded-lg border px-3 py-2 ${tone === 'emerald' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : tone === 'amber' ? 'border-amber-200 bg-amber-50 text-amber-800' : tone === 'purple' ? 'border-purple-200 bg-purple-50 text-purple-800' : tone === 'cyan' ? 'border-cyan-200 bg-cyan-50 text-cyan-800' : tone === 'blue' ? 'border-blue-200 bg-blue-50 text-blue-800' : 'border-slate-200 bg-white text-slate-800'}`}><p className="text-[10px] font-bold uppercase opacity-70">{label}</p><p className="text-lg font-bold tabular-nums">{value}</p></div>)}
+                    <div className="flex min-h-0 flex-col gap-3 lg:h-[calc(100dvh-185px)]">
+                      <div className="flex shrink-0 flex-wrap gap-2">
+                        {[['วันทำงาน', preview.workingDateCount, 'blue'], ['รายการทั้งหมด', preview.totalCandidateRows, 'slate'], ['รายการใหม่', preview.newRowCount, 'emerald'], ['รายการซ้ำ', preview.duplicateRowCount, 'amber'], ['ทะเบียนรถ', new Set(templateRows.map(row => row.truckName).filter(Boolean)).size, 'purple'], ['กลุ่มงาน', new Set(templateRows.map(row => row.groupCode).filter(Boolean)).size, 'cyan']].map(([label,value,tone]) => <div key={String(label)} className={`min-w-[112px] rounded-lg border px-3 py-1.5 ${tone === 'emerald' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : tone === 'amber' ? 'border-amber-200 bg-amber-50 text-amber-800' : tone === 'purple' ? 'border-purple-200 bg-purple-50 text-purple-800' : tone === 'cyan' ? 'border-cyan-200 bg-cyan-50 text-cyan-800' : tone === 'blue' ? 'border-blue-200 bg-blue-50 text-blue-800' : 'border-slate-200 bg-white text-slate-800'}`}><p className="text-[10px] font-bold uppercase opacity-70">{label}</p><p className="text-base font-bold tabular-nums">{value}</p></div>)}
                       </div>
-                      <div className="rounded-xl border border-slate-200 bg-white p-5">
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-lg font-bold">ตัวอย่างแผนก่อนสร้าง</h2><p className="text-sm text-slate-500">ช่วงวันที่ {startDate} ถึง {endDate}</p></div><div className="flex gap-2"><button type="button" onClick={() => { setCreateStep('select'); setPreview(null); }} className="rounded-xl border px-5 py-2.5 font-semibold">ย้อนกลับ</button><button type="button" onClick={() => setShowCreateConfirmation(true)} disabled={preview.newRowCount <= 0} className="rounded-xl bg-emerald-600 px-5 py-2.5 font-semibold text-white disabled:bg-slate-300">สร้าง Plan</button></div></div>
-                        <div className="mt-4 max-h-[420px] overflow-auto rounded-xl border border-slate-200">
+                      <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-slate-200 bg-white p-4">
+                        <div className="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-lg font-bold">ตัวอย่างแผนก่อนสร้าง</h2><p className="text-sm text-slate-500">ช่วงวันที่ {startDate} ถึง {endDate}</p></div><div className="flex gap-2"><button type="button" onClick={() => { setCreateStep('select'); setPreview(null); }} className="rounded-xl border px-5 py-2.5 font-semibold">ย้อนกลับ</button><button type="button" onClick={() => setShowCreateConfirmation(true)} disabled={preview.newRowCount <= 0} className="rounded-xl bg-emerald-600 px-5 py-2.5 font-semibold text-white disabled:bg-slate-300">สร้าง Plan</button></div></div>
+                        <div className="mt-3 min-h-0 flex-1 overflow-auto rounded-xl border border-slate-200">
                           <table className="min-w-[1050px] w-full divide-y divide-slate-200 text-sm">
                             <thead className="sticky top-0 z-20 bg-slate-100 text-left text-xs font-bold uppercase text-slate-600">
-                              <tr>{['Code Run','วันที่','Route','Company','ทะเบียนรถ','จุดลงงาน','ETA','ETD','Group Code'].map(heading => <th key={heading} className="whitespace-nowrap px-3 py-3">{heading}</th>)}</tr>
+                              <tr>{['Code Run','วันที่','Route','Company','ทะเบียนรถ','จุดลงงาน','ETA','ETD','Group Code'].map(heading => <th key={heading} className="whitespace-nowrap px-3 py-2">{heading}</th>)}</tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100 bg-white">
                               {previewRows.length ? previewRows.map(({ date, codeRun, row }, index) => (
                                 <tr key={`${date}-${row.sheetRow || index}-${codeRun}`} className="hover:bg-blue-50/40">
-                                  <td className="whitespace-nowrap px-3 py-2.5 font-bold text-blue-700">{codeRun}</td>
-                                  <td className="whitespace-nowrap px-3 py-2.5 font-mono text-slate-600">{date}</td>
-                                  <td className="whitespace-nowrap px-3 py-2.5 font-semibold">{row.route || '-'}</td>
-                                  <td className="whitespace-nowrap px-3 py-2.5">{row.company || '-'}</td>
-                                  <td className="whitespace-nowrap px-3 py-2.5">{row.truckName || '-'}</td>
-                                  <td className="whitespace-nowrap px-3 py-2.5">{row.dropPoint || '-'}</td>
-                                  <td className="whitespace-nowrap px-3 py-2.5 font-mono">{row.planEta || '-'}</td>
-                                  <td className="whitespace-nowrap px-3 py-2.5 font-mono">{row.planEtd || '-'}</td>
+                                  <td className="whitespace-nowrap px-3 py-2 font-bold text-blue-700">{codeRun}</td>
+                                  <td className="whitespace-nowrap px-3 py-2 font-mono text-slate-600">{date}</td>
+                                  <td className="whitespace-nowrap px-3 py-2 font-semibold">{row.route || '-'}</td>
+                                  <td className="whitespace-nowrap px-3 py-2">{row.company || '-'}</td>
+                                  <td className="whitespace-nowrap px-3 py-2">{row.truckName || '-'}</td>
+                                  <td className="whitespace-nowrap px-3 py-2">{row.dropPoint || '-'}</td>
+                                  <td className="whitespace-nowrap px-3 py-2 font-mono">{row.planEta || '-'}</td>
+                                  <td className="whitespace-nowrap px-3 py-2 font-mono">{row.planEtd || '-'}</td>
                                   <td className="whitespace-nowrap px-3 py-2.5"><span className={row.groupCode ? 'rounded-full bg-emerald-100 px-2 py-1 text-xs font-bold text-emerald-700' : 'rounded-full bg-amber-100 px-2 py-1 text-xs font-bold text-amber-700'}>{row.groupCode || 'ไม่มี Group'}</span></td>
                                 </tr>
                               )) : <tr><td colSpan={9} className="px-4 py-10 text-center text-slate-500">ไม่พบข้อมูลสำหรับแสดงตัวอย่าง</td></tr>}
