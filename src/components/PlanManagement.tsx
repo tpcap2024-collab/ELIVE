@@ -922,39 +922,63 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
   const downloadCurrentMasterPlan=async()=>{const rows=masterRows.length?masterRows:(await loadMasterRows(false)).rows;XLSX.writeFile(buildMasterWorkbook(rows),`ELIVE_Master_Plan_${getBangkokDate()}.xlsx`);};
   const handleMasterImportFile=async(file:File)=>{try{const result=parseTemplateRows(await readPlanFile(file));setMasterImportRows(result.rows);setMasterImportErrors(result.validationErrors);}catch(error){setNotice({type:'error',message:getErrorMessage(error)});}};
   const handleImportMasterPlan=async()=>{if(!masterImportRows.length||masterImportErrors.length)return;setIsImportingMaster(true);try{if(masterImportMode==='replace'){const rows=masterRows.length?masterRows:(await loadMasterRows(false)).rows;for(const row of rows.filter(r=>r.sheetRow).sort((a,b)=>Number(b.sheetRow)-Number(a.sheetRow)))await deleteMasterPlanRow(Number(row.sheetRow));}await runInBatches(masterImportRows,row=>createMasterPlanRow(row as EditableMasterPlanRow));await loadMasterRows(false);setShowMasterImport(false);setNotice({type:'success',message:`นำเข้า Master Plan สำเร็จ ${masterImportRows.length} รายการ`});}catch(error){setNotice({type:'error',message:getErrorMessage(error)});}finally{setIsImportingMaster(false);}};
+  const waitForDeletedPlansToDisappear = async (
+    codeRuns: string[],
+    start = dailyDate,
+    end = dailyEndDate
+  ): Promise<DailyPlansResult> => {
+    const normalizedEnd = clampDailyEndDate(start, end);
+    const dates = buildDateRange(start, normalizedEnd);
+    if (!dates.length) throw new Error('ช่วงวันที่ดูแผนไม่ถูกต้อง');
+    const deletedCodes = new Set(codeRuns.map(codeRun => String(codeRun).trim().toUpperCase()));
+    let latestResult: DailyPlansResult | null = null;
+
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      if (attempt > 0) {
+        await new Promise(resolve => window.setTimeout(resolve, 700 + attempt * 250));
+      }
+      const dailyResults = await Promise.all(dates.map(date => fetchDailyPlans(date)));
+      const rows = dailyResults
+        .flatMap(result => result.rows || [])
+        .sort((first, second) =>
+          String(first.date || '').localeCompare(String(second.date || '')) ||
+          String(first.planEta || '').localeCompare(String(second.planEta || '')) ||
+          String(first.codeRun || '').localeCompare(String(second.codeRun || ''))
+        );
+      const firstResult = dailyResults[0];
+      latestResult = {
+        ...firstResult,
+        rows,
+        rowCount: rows.length,
+        activeCount: dailyResults.reduce((sum, item) => sum + Number(item.activeCount || 0), 0),
+        regularCount: dailyResults.reduce((sum, item) => sum + Number(item.regularCount || 0), 0),
+        extraCount: dailyResults.reduce((sum, item) => sum + Number(item.extraCount || 0), 0),
+        cancelCount: dailyResults.reduce((sum, item) => sum + Number(item.cancelCount || 0), 0),
+      };
+      const stillVisible = rows.some(row => deletedCodes.has(String(row.codeRun || '').trim().toUpperCase()));
+      if (!stillVisible) return latestResult;
+    }
+
+    throw new Error('ลบแผนแล้ว แต่ข้อมูลล่าสุดยังโหลดไม่เสร็จ กรุณารอสักครู่แล้วกดโหลดแผนอีกครั้ง');
+  };
+
   const handleBatchDeletePlans = async () => {
     if (!selectedPlanCodes.length || selectedPlanCodes.length > MAX_BATCH_DELETE_PLANS || isSavingPlan || batchDeleteRunningRef.current) return;
     const codeRuns = [...selectedPlanCodes];
     batchDeleteRunningRef.current = true;
     setShowBatchDeleteConfirmation(false);
     setIsSavingPlan(true);
-    setNotice(null);
+    setNotice({ type: 'info', message: 'กำลังลบและอัปเดตแผน กรุณารอสักครู่' });
     try {
       const result = await deleteDailyPlansBatch(codeRuns);
+      const refreshedResult = await waitForDeletedPlansToDisappear(codeRuns);
+      setDailyResult(refreshedResult);
       setSelectedPlanCodes([]);
-
-      try {
-        await loadDailyPlans(dailyDate, dailyEndDate, {
-          showMessage: false,
-          clearResultOnError: false,
-        });
-      } catch (refreshError) {
-        console.error(
-          'Unable to refresh daily Plans after batch delete:',
-          refreshError
-        );
-        setNotice({
-          type: 'info',
-          message: `ลบสำเร็จ ${result.deletedPlanCount} รายการ แต่ดึงข้อมูลใหม่ไม่สำเร็จ กรุณากดโหลดแผนอีกครั้ง`,
-        });
-        return;
-      }
-
       setNotice({
         type: result.notFoundCodeRuns.length ? 'info' : 'success',
         message: result.notFoundCodeRuns.length
-          ? `ลบสำเร็จ ${result.deletedPlanCount} รายการ ไม่พบ ${result.notFoundCodeRuns.length} Code run และอัปเดตข้อมูลล่าสุดแล้ว`
-          : `ลบแผนตาม Code run ที่เลือกสำเร็จ ${result.deletedPlanCount} รายการ และอัปเดตข้อมูลล่าสุดแล้ว`,
+          ? `ลบแผนแล้ว ${result.deletedPlanCount} รายการ และมี ${result.notFoundCodeRuns.length} รายการที่ไม่พบในแผนปัจจุบัน`
+          : `ลบแผนเรียบร้อยแล้ว ${result.deletedPlanCount} รายการ`,
       });
     } catch (error) {
       setNotice({ type: 'error', message: getErrorMessage(error) });
@@ -968,12 +992,14 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
     if (!deletePlanTarget || isSavingPlan) return;
     const target = deletePlanTarget;
     setIsSavingPlan(true);
-    setNotice(null);
+    setNotice({ type: 'info', message: 'กำลังลบและอัปเดตแผน กรุณารอสักครู่' });
     try {
       await deleteDailyPlan(target.codeRun);
+      const refreshedResult = await waitForDeletedPlansToDisappear([target.codeRun]);
+      setDailyResult(refreshedResult);
       setDeletePlanTarget(null);
-      await loadDailyPlans(dailyDate, dailyEndDate, { showMessage: false, clearResultOnError: false });
-      setNotice({ type: 'success', message: `ลบ ${target.codeRun} และข้อมูล Actual ที่เกี่ยวข้องสำเร็จ` });
+      setSelectedPlanCodes(current => current.filter(codeRun => codeRun !== target.codeRun));
+      setNotice({ type: 'success', message: 'ลบแผนเรียบร้อยแล้ว' });
     } catch (error) {
       setNotice({ type: 'error', message: getErrorMessage(error) });
     } finally {
@@ -1335,8 +1361,17 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                   )}
 
                   {createStep === 'preview' && preview && (
-                    <div className="flex min-h-0 flex-col gap-2 lg:h-[calc(100dvh-150px)]">
+                    <div className="flex min-h-0 flex-col gap-2 lg:h-[calc(100dvh-285px)]">
                       <div className="flex shrink-0 items-center gap-2 overflow-hidden rounded-xl border border-slate-200 bg-white px-3 py-2">
+                        <button
+                          type="button"
+                          onClick={() => setCreateStep('select')}
+                          disabled={createBusy}
+                          className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                        >
+                          <ArrowLeft className="h-4 w-4" />
+                          ย้อนกลับ
+                        </button>
                         {[['วันทำงาน', preview.workingDateCount, 'blue'], ['ทั้งหมด', preview.totalCandidateRows, 'slate'], ['รายการใหม่', preview.newRowCount, 'emerald'], ['รายการซ้ำ', preview.duplicateRowCount, 'amber'], ['ทะเบียนรถ', new Set(templateRows.map(row => row.truckName).filter(Boolean)).size, 'purple'], ['กลุ่มงาน', new Set(templateRows.map(row => row.groupCode).filter(Boolean)).size, 'cyan']].map(([label,value,tone]) => <div key={String(label)} className={`min-w-[82px] rounded-lg border px-2.5 py-1 ${tone === 'emerald' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : tone === 'amber' ? 'border-amber-200 bg-amber-50 text-amber-800' : tone === 'purple' ? 'border-purple-200 bg-purple-50 text-purple-800' : tone === 'cyan' ? 'border-cyan-200 bg-cyan-50 text-cyan-800' : tone === 'blue' ? 'border-blue-200 bg-blue-50 text-blue-800' : 'border-slate-200 bg-white text-slate-800'}`}><p className="text-[9px] font-bold uppercase opacity-70">{label}</p><p className="text-sm font-bold tabular-nums">{value}</p></div>)}
                         <button type="button" onClick={() => setShowCreateConfirmation(true)} disabled={preview.newRowCount <= 0} className="ml-auto shrink-0 rounded-xl bg-emerald-600 px-6 py-2.5 text-sm font-semibold text-white disabled:bg-slate-300">Create</button>
                       </div>
@@ -1579,7 +1614,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
         <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-slate-950/60 p-4">
           <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
             <h2 className="text-lg font-bold">ยืนยันการสร้าง Plan</h2>
-            <p className="mt-2 text-sm text-slate-500">ระบบจะเขียน {preview.newRowCount} รายการลงชีต Plan</p>
+            <p className="mt-2 text-sm text-slate-500">ต้องการสร้างแผน {preview.newRowCount} รายการใช่หรือไม่ กรุณาตรวจสอบข้อมูลก่อนยืนยัน</p>
             <div className="mt-6 flex justify-end gap-3">
               <button type="button" onClick={() => setShowCreateConfirmation(false)} disabled={isCreating} className="rounded-xl border px-5 py-2.5 disabled:opacity-50">ยกเลิก</button>
               <button type="button" onClick={() => void handleCreatePeriod()} disabled={isCreating} className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 font-semibold text-white disabled:opacity-60">
@@ -1596,7 +1631,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-xl font-bold">{planDialogMode === 'extra' ? 'เพิ่มแผนพิเศษ' : `แก้ไข ${editingCodeRun}`}</h2>
-                <p className="text-sm text-slate-500">Code run จะสร้างอัตโนมัติและไม่สามารถแก้ไขได้</p>
+                <p className="text-sm text-slate-500">เลขอ้างอิงจะถูกสร้างให้อัตโนมัติ</p>
               </div>
               <button type="button" onClick={() => !isSavingPlan && setPlanDialogMode(null)} disabled={isSavingPlan} className="rounded-lg p-2 hover:bg-slate-100 disabled:opacity-50"><X className="h-5 w-5" /></button>
             </div>
@@ -1722,17 +1757,17 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
         </div>
       )}
 
-      {showBatchCancelConfirmation&&selectedPlanCodes.length>0&&<div className="fixed inset-0 z-[1260] flex items-center justify-center bg-slate-950/70 p-4"><div className="w-full max-w-md rounded-2xl bg-white p-6"><h2 className="text-lg font-bold">ยกเลิกแผน {selectedPlanCodes.length} รายการ</h2><p className="mt-3 text-sm text-slate-600">เปลี่ยน Remark เป็น CANCEL โดยไม่ลบข้อมูล</p><div className="mt-6 flex justify-end gap-3"><button onClick={()=>setShowBatchCancelConfirmation(false)} className="rounded-xl border px-4 py-2">กลับ</button><button onClick={()=>void handleBatchCancelPlans()} className="rounded-xl bg-amber-500 px-4 py-2 font-semibold text-white">ยืนยัน</button></div></div></div>}
+      {showBatchCancelConfirmation&&selectedPlanCodes.length>0&&<div className="fixed inset-0 z-[1260] flex items-center justify-center bg-slate-950/70 p-4"><div className="w-full max-w-md rounded-2xl bg-white p-6"><h2 className="text-lg font-bold">ยกเลิกแผน {selectedPlanCodes.length} รายการ</h2><p className="mt-3 text-sm text-slate-600">รายการที่เลือกจะเปลี่ยนเป็นยกเลิก และสามารถคืนสถานะได้ภายหลัง</p><div className="mt-6 flex justify-end gap-3"><button onClick={()=>setShowBatchCancelConfirmation(false)} className="rounded-xl border px-4 py-2">กลับ</button><button onClick={()=>void handleBatchCancelPlans()} className="rounded-xl bg-amber-500 px-4 py-2 font-semibold text-white">ยืนยัน</button></div></div></div>}
       {showMasterImport&&<div className="fixed inset-0 z-[1300] flex items-center justify-center bg-slate-950/70 p-4"><div className="w-full max-w-2xl rounded-2xl bg-white p-6"><h2 className="text-xl font-bold">นำเข้า Master Plan</h2><input ref={masterImportInputRef} type="file" accept=".xlsx,.xls,.csv" className="mt-5" onChange={e=>{const f=e.target.files?.[0];if(f)void handleMasterImportFile(f);}} />{masterImportRows.length>0&&<div className="mt-4"><p>จำนวน {masterImportRows.length} รายการ | ผิดพลาด {masterImportErrors.length} แถว</p><div className="mt-3 flex gap-4"><label><input type="radio" checked={masterImportMode==='append'} onChange={()=>setMasterImportMode('append')} /> เพิ่มรายการ</label><label><input type="radio" checked={masterImportMode==='replace'} onChange={()=>setMasterImportMode('replace')} /> แทนที่ทั้งหมด</label></div></div>}<div className="mt-6 flex justify-end gap-3"><button onClick={()=>setShowMasterImport(false)} className="rounded-xl border px-4 py-2">ยกเลิก</button><button onClick={()=>void handleImportMasterPlan()} disabled={!masterImportRows.length||masterImportErrors.length>0||isImportingMaster} className="rounded-xl bg-blue-600 px-4 py-2 font-semibold text-white disabled:opacity-40">นำเข้า</button></div></div></div>}
       {showBatchDeleteConfirmation && selectedPlanCodes.length > 0 && (
         <div className="fixed inset-0 z-[1250] flex items-center justify-center bg-slate-950/70 p-4">
           <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
-            <h2 className="text-lg font-bold">ยืนยันลบตาม Code run {selectedPlanCodes.length} รายการ</h2>
-            <div className="mt-4 max-h-48 overflow-auto rounded-xl border bg-slate-50 p-3 font-mono text-sm">{selectedPlanCodes.join(', ')}</div>
-            <p className="mt-4 rounded-xl bg-red-50 p-4 text-sm text-red-800">ระบบลบเฉพาะแถวที่มี Code run ตรงกับรายการที่เลือก และลบ Actual data ที่เกี่ยวข้อง เลือกได้สูงสุด 2000 รายการต่อครั้ง</p>
+            <h2 className="text-lg font-bold">ลบแผนที่เลือก {selectedPlanCodes.length} รายการ?</h2>
+            
+            <p className="mt-4 rounded-xl bg-red-50 p-4 text-sm text-red-800">แผนที่ลบจะหายออกจากรายการและไม่สามารถนำกลับคืนได้ กรุณาตรวจสอบรายการที่เลือกก่อนยืนยัน</p>
             <div className="mt-6 flex justify-end gap-3">
               <button type="button" onClick={() => setShowBatchDeleteConfirmation(false)} disabled={isSavingPlan} className="rounded-xl border px-5 py-2.5">กลับ</button>
-              <button type="button" onClick={() => void handleBatchDeletePlans()} disabled={isSavingPlan || batchDeleteRunningRef.current || selectedPlanCodes.length > MAX_BATCH_DELETE_PLANS} className="rounded-xl bg-red-600 px-5 py-2.5 font-semibold text-white disabled:opacity-50">ยืนยันลบ {selectedPlanCodes.length} รายการ</button>
+              <button type="button" onClick={() => void handleBatchDeletePlans()} disabled={isSavingPlan || batchDeleteRunningRef.current || selectedPlanCodes.length > MAX_BATCH_DELETE_PLANS} className="rounded-xl bg-red-600 px-5 py-2.5 font-semibold text-white disabled:opacity-50">ลบ {selectedPlanCodes.length} รายการ</button>
             </div>
           </div>
         </div>
@@ -1743,17 +1778,17 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
             <div className="flex gap-3">
               <div className="rounded-full bg-red-100 p-2 text-red-700"><Trash2 className="h-6 w-6" /></div>
               <div>
-                <h2 className="text-lg font-bold text-slate-900">ยืนยันลบแผนถาวร</h2>
-                <p className="mt-1 text-sm text-slate-500">{deletePlanTarget.codeRun} | {deletePlanTarget.route} | {deletePlanTarget.truckName}</p>
+                <h2 className="text-lg font-bold text-slate-900">ลบแผนนี้?</h2>
+                <p className="mt-1 text-sm text-slate-500">{deletePlanTarget.date} | {deletePlanTarget.route} | {deletePlanTarget.truckName} | {deletePlanTarget.dropPoint}</p>
               </div>
             </div>
             <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
-              ระบบจะลบแถวจากชีต Plan และลบข้อมูล Actual data ที่มี Code run เดียวกัน การดำเนินการนี้ไม่สามารถย้อนกลับได้
+              แผนนี้จะถูกลบออกจากรายการและไม่สามารถนำกลับคืนได้ กรุณาตรวจสอบข้อมูลก่อนยืนยัน
             </div>
             <div className="mt-6 flex justify-end gap-3">
               <button type="button" onClick={() => !isSavingPlan && setDeletePlanTarget(null)} disabled={isSavingPlan} className="rounded-xl border px-5 py-2.5 disabled:opacity-50">กลับ</button>
               <button type="button" onClick={() => void handleDeletePlan()} disabled={isSavingPlan} className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-5 py-2.5 font-semibold text-white disabled:opacity-60">
-                {isSavingPlan && <Loader2 className="h-4 w-4 animate-spin" />} ยืนยันลบถาวร
+                {isSavingPlan && <Loader2 className="h-4 w-4 animate-spin" />} ลบแผน
               </button>
             </div>
           </div>
@@ -1764,7 +1799,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
             <h2 className="text-lg font-bold">ยืนยันยกเลิก Plan</h2>
             <p className="mt-2 text-sm text-slate-500">{cancelTarget.codeRun} | {cancelTarget.truckName}</p>
-            <p className="mt-4 rounded-xl bg-red-50 p-3 text-sm text-red-700">ระบบจะเปลี่ยน Remark เป็น CANCEL โดยไม่ลบแถวและไม่ลบ Actual data</p>
+            <p className="mt-4 rounded-xl bg-red-50 p-3 text-sm text-red-700">แผนนี้จะเปลี่ยนเป็นยกเลิก และสามารถคืนสถานะได้ภายหลัง</p>
             <div className="mt-6 flex justify-end gap-3">
               <button type="button" onClick={() => setCancelTarget(null)} disabled={isSavingPlan} className="rounded-xl border px-5 py-2.5 disabled:opacity-50">กลับ</button>
               <button type="button" onClick={() => void handleCancelPlan()} disabled={isSavingPlan} className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-5 py-2.5 font-semibold text-white disabled:opacity-60">
