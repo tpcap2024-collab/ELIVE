@@ -1276,10 +1276,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
               ) : (
                 <div className="space-y-4">
                   <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
-                    <div className="flex items-center gap-3">
-                      <button type="button" onClick={clearSource} disabled={createBusy} className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-300 px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50">
-                        <ArrowLeft className="h-4 w-4" />ย้อนกลับ
-                      </button>
+                    <div className="flex items-center">
                       <div className="relative grid min-w-0 flex-1 grid-cols-3 px-4">
                         <div className="absolute left-[16.66%] right-[16.66%] top-[18px] h-1 -translate-y-1/2 bg-blue-600" />
                         {[
@@ -1301,20 +1298,36 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                   </div>
 
                   {createStep === 'select' && (
-                    <div className="rounded-xl border border-slate-200 bg-white p-5">
-                      <div className="flex items-center gap-2 text-lg font-bold text-slate-900"><CalendarDays className="h-5 w-5 text-blue-600" />เลือกช่วงวันที่</div>
-                      <div className="mt-5 grid gap-4 sm:grid-cols-2">
-                        <label className="text-sm font-medium text-slate-700">วันที่เริ่มต้น<input type="date" value={startDate} onChange={event => { setStartDate(event.target.value); resetCreateResult(); }} className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-3" /></label>
-                        <label className="text-sm font-medium text-slate-700">วันที่สิ้นสุด<input type="date" value={endDate} min={startDate} onChange={event => { setEndDate(event.target.value); resetCreateResult(); }} className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-3" /></label>
-                      </div>
-                      <div className="mt-4 grid grid-cols-4 gap-2 sm:grid-cols-7">{WORKING_DAYS.map(day => <button key={day.value} type="button" title={day.full} onClick={() => toggleWorkingDay(day.value)} className={`rounded-xl border px-2 py-3 text-sm font-semibold ${selectedWorkingDays.includes(day.value) ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-300 text-slate-700'}`}>{day.short}</button>)}</div>
-                      <div className="mt-5 flex items-center justify-between border-t border-slate-200 pt-4">
-                        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-emerald-800"><span className="text-xs font-semibold">จำนวนวัน </span><b className="ml-2 text-lg">{buildDateRange(startDate, endDate).filter(date => selectedWorkingDays.includes(new Date(`${date}T00:00:00Z`).getUTCDay() || 7)).length}</b></div>
-                        <button type="button" onClick={() => void handlePreview()} disabled={!startDate || !endDate || !selectedWorkingDays.length || createBusy} className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-6 py-3 text-sm font-bold text-white shadow-sm hover:bg-blue-700 disabled:bg-slate-300">ถัดไป <span aria-hidden="true">→</span></button>
+                    <div className="rounded-xl border border-slate-200 bg-white px-3 py-3">
+                      <div className="flex flex-wrap items-end gap-2 xl:flex-nowrap">
+                        <button type="button" onClick={clearSource} disabled={createBusy} className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+                          <ArrowLeft className="h-4 w-4" />ย้อนกลับ
+                        </button>
+                        <label className="min-w-[165px] flex-1 text-xs font-semibold text-slate-600 xl:max-w-[220px]">
+                          วันที่เริ่มต้น
+                          <input type="date" value={startDate} onChange={event => { setStartDate(event.target.value); resetCreateResult(); }} className="mt-1 h-10 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-800" />
+                        </label>
+                        <label className="min-w-[165px] flex-1 text-xs font-semibold text-slate-600 xl:max-w-[220px]">
+                          วันที่สิ้นสุด
+                          <input type="date" value={endDate} min={startDate} onChange={event => { setEndDate(event.target.value); resetCreateResult(); }} className="mt-1 h-10 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-800" />
+                        </label>
+                        <div className="flex min-w-0 flex-1 items-end gap-1.5">
+                          {WORKING_DAYS.map(day => (
+                            <button key={day.value} type="button" title={day.full} onClick={() => toggleWorkingDay(day.value)} className={`h-10 min-w-[40px] flex-1 rounded-lg border px-2 text-xs font-bold ${selectedWorkingDays.includes(day.value) ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-300 bg-white text-slate-600'}`}>
+                              {day.short}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="flex h-10 shrink-0 items-center rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-emerald-800">
+                          <span className="text-[10px] font-semibold">จำนวนวัน</span>
+                          <b className="ml-2 text-base tabular-nums">{buildDateRange(startDate, endDate).filter(date => selectedWorkingDays.includes(new Date(`${date}T00:00:00Z`).getUTCDay() || 7)).length}</b>
+                        </div>
+                        <button type="button" onClick={() => void handlePreview()} disabled={!startDate || !endDate || !selectedWorkingDays.length || createBusy} className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 text-sm font-bold text-white shadow-sm hover:bg-blue-700 disabled:bg-slate-300">
+                          ถัดไป <span aria-hidden="true">→</span>
+                        </button>
                       </div>
                     </div>
                   )}
-
                   {createStep === 'loading' && (
                     <div className="flex min-h-[360px] flex-col items-center justify-center rounded-xl border border-blue-200 bg-blue-50/50 p-8 text-center">
                       <Loader2 className="h-12 w-12 animate-spin text-blue-600" /><h2 className="mt-5 text-xl font-bold text-slate-900">กำลังโหลดแผน</h2><p className="mt-2 text-sm text-slate-500">กำลังตรวจสอบ Master Plan และเตรียมข้อมูลตามช่วงวันที่</p>
