@@ -3,19 +3,16 @@ import {
   AlertTriangle,
   CheckCircle2,
   Clock3,
-  Filter,
   Laptop,
   Menu,
   RefreshCw,
-  Search,
   Truck as TruckIcon,
   WifiOff,
-  X,
 } from 'lucide-react';
 import { Truck } from '../types';
 import MobileTripCard from './MobileTripCard';
 
-type MobileFilter = 'ACTIVE' | 'PENDING' | 'ISSUE' | 'COMPLETED';
+type MobileFilter = 'ALL' | 'ACTIVE' | 'PENDING' | 'ISSUE' | 'COMPLETED';
 
 interface MobileOperationProps {
   trucks: Truck[];
@@ -145,9 +142,7 @@ export function MobileOperation({
   onOpenAction,
   onOpenWorkDetail,
 }: MobileOperationProps) {
-  const [filter, setFilter] = useState<MobileFilter>('ACTIVE');
-  const [searchText, setSearchText] = useState('');
-  const [showFilters, setShowFilters] = useState(false);
+  const [filter, setFilter] = useState<MobileFilter>('ALL');
   const [isOnline, setIsOnline] = useState(
     typeof navigator === 'undefined' ? true : navigator.onLine
   );
@@ -165,6 +160,7 @@ export function MobileOperation({
 
   const counts = useMemo(
     () => ({
+      ALL: trucks.length,
       ACTIVE: trucks.filter(isActiveTruck).length,
       PENDING: trucks.filter(isPendingTruck).length,
       ISSUE: trucks.filter(isIssueTruck).length,
@@ -174,33 +170,13 @@ export function MobileOperation({
   );
 
   const visibleTrucks = useMemo(() => {
-    const query = searchText.trim().toLowerCase();
-
     return trucks
       .filter(truck => {
+        if (filter === 'ALL') return true;
         if (filter === 'ACTIVE') return isActiveTruck(truck);
         if (filter === 'PENDING') return isPendingTruck(truck);
         if (filter === 'ISSUE') return isIssueTruck(truck);
         return isCompletedTruck(truck);
-      })
-      .filter(truck => {
-        if (!query) return true;
-        return [
-          truck.id,
-          truck.route,
-          truck.licensePlate,
-          truck.supplierName,
-          truck.dropPoint,
-          truck.project,
-          truck.groupCode,
-          truck.workDetail,
-          truck.actionProblem,
-          truck.status,
-          truck.performanceStatus,
-        ]
-          .join(' ')
-          .toLowerCase()
-          .includes(query);
       })
       .sort((first, second) => {
         if (filter !== 'COMPLETED' && isIssueTruck(first) !== isIssueTruck(second)) {
@@ -213,8 +189,7 @@ export function MobileOperation({
           numeric: true,
         });
       });
-  }, [filter, searchText, trucks]);
-
+  }, [filter, trucks]);
   const selectedFilter =
     MOBILE_FILTERS.find(item => item.value === filter) || MOBILE_FILTERS[0];
   const SelectedFilterIcon = selectedFilter.icon;
@@ -269,111 +244,46 @@ export function MobileOperation({
         )}
       </header>
 
-      <div className="shrink-0 border-b border-slate-200 bg-white px-3 py-3">
-        <div className="flex gap-2">
-          <div className="relative min-w-0 flex-1">
-            <Search className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
-            <input
-              type="search"
-              value={searchText}
-              onChange={event => setSearchText(event.target.value)}
-              placeholder="ค้นหาทะเบียน, Route, จุดลงงาน"
-              className="h-12 w-full rounded-xl border border-slate-300 bg-white pl-10 pr-10 text-sm text-slate-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
-            />
-            {searchText && (
+      <div className="shrink-0 border-b border-slate-200 bg-white px-3 py-2">
+        <div className="flex gap-2 overflow-x-auto pb-1" style={{ WebkitOverflowScrolling: 'touch' }}>
+          {MOBILE_FILTERS.map(item => {
+            const Icon = item.icon;
+            const active = filter === item.value;
+            return (
               <button
+                key={item.value}
                 type="button"
-                onClick={() => setSearchText('')}
-                className="absolute right-1 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-lg text-slate-400 active:bg-slate-100"
-                aria-label="ล้างการค้นหา"
+                onClick={() => setFilter(item.value)}
+                className={`flex min-h-10 shrink-0 items-center gap-2 rounded-full border px-3 py-2 text-xs font-bold ${
+                  active
+                    ? 'border-blue-600 bg-blue-600 text-white'
+                    : 'border-slate-200 bg-slate-50 text-slate-600'
+                }`}
               >
-                <X className="h-5 w-5" />
+                <Icon className="h-4 w-4" />
+                {item.label}
+                <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${active ? 'bg-white/20' : 'bg-white'}`}>
+                  {counts[item.value]}
+                </span>
               </button>
-            )}
-          </div>
-
-          <button
-            type="button"
-            onClick={() => setShowFilters(current => !current)}
-            className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border ${
-              showFilters
-                ? 'border-blue-600 bg-blue-600 text-white'
-                : 'border-slate-300 bg-white text-slate-600'
-            }`}
-            aria-label="แสดงตัวกรอง"
-            aria-expanded={showFilters}
-          >
-            <Filter className="h-5 w-5" />
-          </button>
-
+            );
+          })}
           <button
             type="button"
             onClick={() => void onRefresh()}
             disabled={isRefreshing || !isOnline}
-            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-slate-300 bg-white text-blue-600 disabled:cursor-not-allowed disabled:opacity-40"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-white text-blue-600 disabled:opacity-40"
             aria-label="โหลดข้อมูลใหม่"
           >
-            <RefreshCw className={`h-5 w-5 ${isRefreshing ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
           </button>
         </div>
-
-        {showFilters && (
-          <div className="mt-3 grid grid-cols-2 gap-2">
-            {MOBILE_FILTERS.map(item => {
-              const Icon = item.icon;
-              const active = filter === item.value;
-              return (
-                <button
-                  key={item.value}
-                  type="button"
-                  onClick={() => {
-                    setFilter(item.value);
-                    setShowFilters(false);
-                  }}
-                  className={`flex min-h-12 items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left ${
-                    active
-                      ? 'border-blue-600 bg-blue-600 text-white'
-                      : 'border-slate-200 bg-slate-50 text-slate-700'
-                  }`}
-                >
-                  <span className="flex min-w-0 items-center gap-2">
-                    <Icon className="h-4 w-4 shrink-0" />
-                    <span className="truncate text-xs font-bold">{item.label}</span>
-                  </span>
-                  <span
-                    className={`rounded-full px-2 py-0.5 text-xs font-black ${
-                      active ? 'bg-white/20 text-white' : 'bg-white text-slate-700'
-                    }`}
-                  >
-                    {counts[item.value]}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        )}
-
-        <div className="mt-3 flex items-center justify-between gap-3">
-          <div className="flex min-w-0 items-center gap-2">
-            <SelectedFilterIcon className="h-4 w-4 shrink-0 text-blue-600" />
-            <span className="truncate text-sm font-bold text-slate-700">
-              {selectedFilter.label}
-            </span>
-          </div>
-          <span className="shrink-0 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-600">
-            {visibleTrucks.length} รายการ
-          </span>
+        <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
+          <span>{selectedFilter.label}</span>
+          <span className="font-bold text-slate-700">{visibleTrucks.length} รายการ</span>
         </div>
       </div>
-
-      <main
-        className="mobile-operation-scroll min-h-0 flex-1 overflow-y-scroll overscroll-y-auto p-3"
-        style={{
-          touchAction: 'pan-y',
-          WebkitOverflowScrolling: 'touch',
-          overscrollBehaviorY: 'auto',
-        }}
-      >
+      <main className="mobile-operation-scroll min-h-0 flex-1 overflow-y-scroll overscroll-y-auto p-3" style={{ touchAction: 'pan-y', WebkitOverflowScrolling: 'touch', overscrollBehaviorY: 'auto' }}>
         {visibleTrucks.length > 0 ? (
           <div className="mx-auto flex w-full max-w-xl flex-col gap-3 pb-24">
             {visibleTrucks.map(truck => (
@@ -394,17 +304,9 @@ export function MobileOperation({
             </div>
             <h2 className="mt-4 font-bold text-slate-800">ไม่พบรายการ</h2>
             <p className="mt-2 text-sm leading-6 text-slate-500">
-              ไม่พบรถที่ตรงกับตัวกรองหรือข้อความค้นหาปัจจุบัน
+              ไม่พบรถที่ตรงกับสถานะที่เลือก
             </p>
-            {searchText && (
-              <button
-                type="button"
-                onClick={() => setSearchText('')}
-                className="mt-4 min-h-11 rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white"
-              >
-                ล้างการค้นหา
-              </button>
-            )}
+
           </div>
         )}
       </main>
