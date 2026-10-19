@@ -1563,6 +1563,7 @@ export default function App() {
                   initialTruckId={selectedGpsTruckId}
                   onRefresh={loadData}
                   isRefreshing={isRefreshing}
+                  showRouteSummary={currentView === 'mobile'}
                 />
               </div>
             </div>
