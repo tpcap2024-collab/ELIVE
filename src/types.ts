@@ -41,6 +41,7 @@ export interface Truck {
   driverName: string;
   phone: string;
   project?: string;
+  groupCode?: string;
   workDetail?: string;
   workDetailConfirmed?: boolean;
   status: TruckStatus;
@@ -106,3 +107,4 @@ export interface Incident {
   owner?: string;
   remarks: IncidentRemark[];
 }
+``
