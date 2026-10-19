@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '74';
+const API_VERSION = '75';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -1362,19 +1362,28 @@ function getEligibleEtaTripsForVehicle(trips, geofenceId, nowMinutes) {
     ) {
       return false;
     }
-    const previousSameDockTripUnfinished = sortedTrips
+    const tripGeofenceId = getGeofenceIdForDropPoint(trip.dropPoint);
+    const previousSameGeofenceTripUnfinished = sortedTrips
       .slice(0, tripIndex)
       .some(previousTrip =>
         !previousTrip.noWorkAction &&
-        previousTrip.dropPoint === trip.dropPoint &&
+        getGeofenceIdForDropPoint(previousTrip.dropPoint) === tripGeofenceId &&
         previousTrip.planEtaMinutes <= trip.planEtaMinutes &&
         !previousTrip.stampEtd
       );
-    return !previousSameDockTripUnfinished;
+    return !previousSameGeofenceTripUnfinished;
   });
 }
 function selectGpsEtaArrivalGroup(trips, activeTrip, geofenceId, nowMinutes) {
-  return getEligibleEtaTripsForVehicle(trips, geofenceId, nowMinutes);
+  const eligibleTrips = getEligibleEtaTripsForVehicle(trips, geofenceId, nowMinutes);
+  if (!eligibleTrips.length) return [];
+  if (activeTrip) {
+    const activeEligibleTrip = eligibleTrips.find(
+      trip => trip.codeRun === activeTrip.codeRun
+    );
+    if (activeEligibleTrip) return [activeEligibleTrip];
+  }
+  return [eligibleTrips[0]];
 }
 
 function selectTripForVehicle(trips, nowMinutes, previousCycle = null, detectedGeofenceId = null) {
@@ -1595,7 +1604,7 @@ async function resolveVehicleTrip(input, isInside, dataOverride = null, detected
       ? 'WAITING_FOR_EXIT_AFTER_ETD'
       : selected.selectionReason,
     tripCount: trips.length,
-    tripOrdering: 'ACTIVE_TRIP_THEN_LSP_ARRIVAL_GROUP_WITHIN_30_MINUTES',
+    tripOrdering: 'ONE_EARLIEST_ELIGIBLE_TRIP_PER_GPS_CYCLE',
     updatedAt: new Date().toISOString(),
   };
   await writeVehicleCycleState(input.licensePlate, state);
@@ -2377,8 +2386,10 @@ async function executeGpsAutoStampEtaBatch(state, trips) {
   if (!GPS_AUTO_STAMP_ETA_ENABLED || !state?.isInside || state.waitingForExit) {
     return [];
   }
+  const selectedTrip = [...trips].sort(compareTripsByPlanTime)[0] || null;
+  if (!selectedTrip) return [];
   const results = [];
-  for (const trip of trips) {
+  for (const trip of [selectedTrip]) {
     const tripState = {
       ...state,
       codeRun: trip.codeRun,
