@@ -41,7 +41,6 @@ interface LiveMapProps {
   initialTruckId?: string | null;
   onRefresh?: () => void | Promise<void>;
   isRefreshing?: boolean;
-  showRouteSummary?: boolean;
 }
 
 type GpsFreshness =
@@ -546,7 +545,6 @@ export function LiveMap({
   initialTruckId,
   onRefresh,
   isRefreshing = false,
-  showRouteSummary = false,
 }: LiveMapProps) {
   const mapContainerRef =
     useRef<HTMLDivElement | null>(
@@ -1487,52 +1485,6 @@ export function LiveMap({
         <button type="button" onClick={handleRefresh} disabled={isRefreshing || !onRefresh} className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-50"><RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />Refresh</button>
       </div>
 
-      {showRouteSummary && selectedGpsLocation && (
-        <div className="shrink-0 border-x border-t border-slate-200 bg-white px-3 py-3">
-          <div className="grid grid-cols-3 gap-2">
-            <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-center">
-              <div className="text-[10px] font-bold uppercase text-blue-600">ระยะทาง</div>
-              <div className="mt-1 text-sm font-black text-slate-900">
-                {isRouteLoading
-                  ? 'กำลังคำนวณ'
-                  : routeResult
-                    ? `${routeResult.distanceKilometers.toFixed(1)} km`
-                    : '-'}
-              </div>
-            </div>
-            <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-center">
-              <div className="text-[10px] font-bold uppercase text-indigo-600">เวลาเดินทาง</div>
-              <div className="mt-1 text-sm font-black text-slate-900">
-                {isRouteLoading
-                  ? '...'
-                  : routeResult
-                    ? formatDuration(routeResult.durationMinutes)
-                    : '-'}
-              </div>
-            </div>
-            <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-center">
-              <div className="text-[10px] font-bold uppercase text-emerald-700">คาดว่าจะถึง</div>
-              <div className="mt-1 text-sm font-black text-slate-900">
-                {isRouteLoading
-                  ? '...'
-                  : routeResult
-                    ? formatEta(routeResult.estimatedArrival).split(', ').pop()
-                    : '-'}
-              </div>
-            </div>
-          </div>
-          <div className="mt-2 flex items-center justify-between gap-3 text-[11px]">
-            <div className="min-w-0 truncate text-slate-500" title={stationName}>
-              GPS ล่าสุด {formatGpsDateTime(selectedGpsLocation.gpsTime)} · {gpsAgeText}
-            </div>
-            {routeError && (
-              <div className="shrink-0 font-bold text-red-600" title={routeError}>
-                คำนวณไม่สำเร็จ
-              </div>
-            )}
-          </div>
-        </div>
-      )}
       <div className="relative min-h-[420px] flex-1 overflow-hidden border-x border-slate-200 bg-slate-100">
         <div ref={mapContainerRef} className="h-full min-h-[420px] w-full" />
         {isRouteLoading && <div className="absolute right-3 top-3 z-[600] flex items-center gap-2 rounded-lg border border-blue-200 bg-white/95 px-3 py-2 text-xs font-semibold text-blue-700 shadow"><LoaderCircle className="h-4 w-4 animate-spin" />กำลังคำนวณเส้นทาง</div>}
