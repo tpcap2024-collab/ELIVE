@@ -14,6 +14,7 @@ import { PlatformDiagram } from './components/PlatformDiagram';
 import { IncidentCenter } from './components/IncidentCenter';
 import { StatusBadge } from './components/StatusBadge';
 import PlanManagement from './components/PlanManagement';
+import MobileOperation from './components/MobileOperation';
 
 import {
   GpsLocation,
@@ -75,7 +76,8 @@ type CurrentView =
   | 'warehouse'
   | 'diagram'
   | 'incident'
-  | 'plan-management';
+  | 'plan-management'
+  | 'mobile';
 
 interface ActionDialogState {
   isOpen: boolean;
@@ -89,6 +91,7 @@ const DOCK_FILTERS: DockFilter[] = ['ALL', 'M1', 'L1', 'L2', 'L3', 'R2', 'R1'];
 const ROWS_PER_PAGE = 20;
 const REFRESH_INTERVAL = 60000;
 const USER_ACTIVITY_THROTTLE_MS = 60000;
+const DISPLAY_MODE_STORAGE_KEY = 'elive-display-mode';
 
 const ROLE_LEVELS: Record<EliveUserRole, number> = {
   TV_VIEWER: 10,
@@ -189,7 +192,12 @@ function getPlanEtaSortValue(value?: string): number {
 export default function App() {
   const [trucks, setTrucks] = useState<Truck[]>(mockTrucks);
   const [gpsLocations, setGpsLocations] = useState<GpsLocation[]>([]);
-  const [currentView, setCurrentView] = useState<CurrentView>('dashboard');
+  const [currentView, setCurrentView] = useState<CurrentView>(() => {
+    if (typeof window === 'undefined') return 'dashboard';
+    return window.localStorage.getItem(DISPLAY_MODE_STORAGE_KEY) === 'mobile'
+      ? 'mobile'
+      : 'dashboard';
+  });
   const [selectedGpsTruckId, setSelectedGpsTruckId] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState(getBangkokTodayText);
   const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth >= 768);
@@ -249,6 +257,14 @@ export default function App() {
   useEffect(() => {
     trucksRef.current = trucks;
   }, [trucks]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(
+      DISPLAY_MODE_STORAGE_KEY,
+      currentView === 'mobile' ? 'mobile' : 'desktop'
+    );
+  }, [currentView]);
 
   useEffect(() => {
     const handleUnauthorized = (event: Event) => {
@@ -538,6 +554,22 @@ export default function App() {
     setIsDashboardFullscreen(false);
     setCurrentView(view);
     closeSidebarOnMobile();
+  };
+
+  const enterMobileMode = () => {
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(error => {
+        console.error('Unable to exit fullscreen before Mobile Mode:', error);
+      });
+    }
+    setIsDashboardFullscreen(false);
+    setCurrentView('mobile');
+    setIsSidebarOpen(false);
+  };
+
+  const exitMobileMode = () => {
+    setCurrentView('dashboard');
+    setIsSidebarOpen(window.innerWidth >= 768);
   };
 
   const handleOpenGps = (truckId: string) => {
@@ -1092,7 +1124,8 @@ export default function App() {
 
   return (
     <div className="flex min-h-screen flex-col bg-slate-50 font-sans md:flex-row">
-      <div className="sticky top-0 z-20 flex items-center justify-between border-b border-slate-200 bg-white p-4 md:hidden">
+      {currentView !== 'mobile' && (
+        <div className="sticky top-0 z-20 flex items-center justify-between border-b border-slate-200 bg-white p-4 md:hidden">
         <div className="flex items-center gap-2">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600">
             <span className="text-lg font-bold italic text-white">E</span>
@@ -1102,10 +1135,11 @@ export default function App() {
         <button type="button" onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="rounded-lg p-2 text-slate-600 hover:bg-slate-100">
           <Menu className="h-5 w-5" />
         </button>
-      </div>
+        </div>
+      )}
 
       <AnimatePresence>
-        {isSidebarOpen && (
+        {currentView !== 'mobile' && isSidebarOpen && (
           <motion.aside
             initial={{ width: 0, opacity: 0 }}
             animate={{ width: 256, opacity: 1 }}
@@ -1143,6 +1177,13 @@ export default function App() {
             </nav>
 
             <div className="w-64 border-t border-slate-100 p-4">
+              <button
+                type="button"
+                onClick={enterMobileMode}
+                className="mb-1 flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 hover:text-blue-700"
+              >
+                <TabletSmartphone className="h-5 w-5" /> Mobile Mode
+              </button>
               <button type="button" onClick={() => setShowSettings(true)} className="mb-1 flex w-full items-center gap-3 px-3 py-2 text-sm text-slate-500 hover:text-slate-700">
                 <Settings className="h-5 w-5" /> Settings
               </button>
@@ -1158,12 +1199,13 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {isSidebarOpen && (
+      {currentView !== 'mobile' && isSidebarOpen && (
         <div className="fixed inset-0 z-20 bg-slate-900/50 backdrop-blur-sm md:hidden" onClick={() => setIsSidebarOpen(false)} />
       )}
 
       <div className="flex h-screen min-w-0 flex-1 flex-col overflow-hidden">
-        <header className="sticky top-0 z-10 flex shrink-0 items-center justify-between border-b border-slate-200 bg-white px-4 py-4 md:px-6">
+        {currentView !== 'mobile' && (
+          <header className="sticky top-0 z-10 flex shrink-0 items-center justify-between border-b border-slate-200 bg-white px-4 py-4 md:px-6">
           <div className="flex flex-1 items-center gap-4">
             <button type="button" onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="hidden rounded-lg p-2 text-slate-600 hover:bg-slate-100 md:flex">
               <Menu className="h-5 w-5" />
@@ -1215,9 +1257,10 @@ export default function App() {
               </div>
             </div>
           </div>
-        </header>
+          </header>
+        )}
 
-        {sheetError && currentView !== 'dashboard' && currentView !== 'diagram' && (
+        {sheetError && currentView !== 'dashboard' && currentView !== 'diagram' && currentView !== 'mobile' && (
           <div className="z-10 flex items-center gap-3 border-b border-amber-200 bg-amber-50 px-6 py-3 text-sm text-amber-800">
             <AlertTriangle className="h-5 w-5 shrink-0" />
             <div>
@@ -1228,7 +1271,20 @@ export default function App() {
           </div>
         )}
 
-        {canPlan && currentView === 'plan-management' ? (
+        {currentView === 'mobile' ? (
+          <MobileOperation
+            trucks={inboundTrucks}
+            selectedDate={selectedDate}
+            lastUpdate={lastUpdate}
+            isRefreshing={isRefreshing}
+            canOperate={canOperate}
+            onRefresh={loadData}
+            onExitMobileMode={exitMobileMode}
+            onOpenGps={handleOpenGps}
+            onOpenAction={truck => setActionDialog({ isOpen: true, truck })}
+            onOpenWorkDetail={truck => setWorkDetailTruck(truck)}
+          />
+        ) : canPlan && currentView === 'plan-management' ? (
           <main className="min-h-0 min-w-0 flex-1 overflow-auto">
             <PlanManagement
               onPlanCreated={async () => {
@@ -1465,7 +1521,7 @@ export default function App() {
           </>
         )}
 
-        {currentView !== 'plan-management' && <footer className="z-10 flex h-12 shrink-0 items-center justify-between bg-slate-800 px-6 text-xs text-white">
+        {currentView !== 'plan-management' && currentView !== 'mobile' && <footer className="z-10 flex h-12 shrink-0 items-center justify-between bg-slate-800 px-6 text-xs text-white">
           <div className="flex items-center gap-4">
             <span className="rounded-full bg-red-500 px-2 py-0.5 text-[10px] font-bold">ALERT</span>
             <span className="hidden sm:inline">System running. Check the warning banner for connection status.</span>
