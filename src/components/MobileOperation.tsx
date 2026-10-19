@@ -220,7 +220,7 @@ export function MobileOperation({
   const SelectedFilterIcon = selectedFilter.icon;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-slate-100">
+    <div className="flex h-[100dvh] min-h-0 w-full flex-col overflow-hidden bg-slate-100">
       <header className="sticky top-0 z-30 shrink-0 border-b border-slate-200 bg-white shadow-sm">
         <div className="flex min-h-16 items-center justify-between gap-2 px-3 py-2">
           <div className="flex min-w-0 items-center gap-2">
@@ -366,9 +366,16 @@ export function MobileOperation({
         </div>
       </div>
 
-      <main className="mobile-operation-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain p-3">
+      <main
+        className="mobile-operation-scroll min-h-0 flex-1 overflow-y-scroll overscroll-y-auto p-3"
+        style={{
+          touchAction: 'pan-y',
+          WebkitOverflowScrolling: 'touch',
+          overscrollBehaviorY: 'auto',
+        }}
+      >
         {visibleTrucks.length > 0 ? (
-          <div className="mx-auto flex w-full max-w-xl flex-col gap-3 pb-6">
+          <div className="mx-auto flex w-full max-w-xl flex-col gap-3 pb-24">
             {visibleTrucks.map(truck => (
               <MobileTripCard
                 key={truck.id}
