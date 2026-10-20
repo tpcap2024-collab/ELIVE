@@ -268,7 +268,7 @@ export function MobileOperation({
 
             <div className="min-w-0">
               <h1 className="truncate text-base font-black text-slate-900">
-                Mobile Operation
+                ELIVE Mobile
               </h1>
               <p className="truncate text-[11px] text-slate-500">
                 {formatSelectedDate(selectedDate)}
@@ -306,7 +306,7 @@ export function MobileOperation({
               if (option) setFilter(option.value);
             }}
             aria-label="เลือกสถานะรถ"
-            className={`h-11 w-32 min-w-0 shrink-0 rounded-xl border px-2 text-sm font-black outline-none focus:ring-2 focus:ring-blue-500/30 ${
+            className={`h-11 w-44 min-w-0 shrink-0 rounded-xl border px-3 text-sm font-black outline-none focus:ring-2 focus:ring-blue-500/30 ${
               MOBILE_FILTER_STYLES[filter].select
             }`}
           >
