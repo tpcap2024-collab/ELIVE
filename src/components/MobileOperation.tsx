@@ -12,6 +12,7 @@ import {
   WifiOff,
 } from 'lucide-react';
 import { GpsLocation, Truck } from '../types';
+import { normalizeLicensePlate } from '../lib/sheets';
 import MobileTripCard from './MobileTripCard';
 
 type MobileFilter = 'ALL' | 'ACTIVE' | 'PENDING' | 'ISSUE' | 'COMPLETED';
@@ -43,13 +44,6 @@ const MOBILE_FILTERS: Array<{
   { value: 'COMPLETED', label: 'เสร็จแล้ว', icon: CheckCircle2 },
 ];
 
-
-function normalizePlate(value?: string): string {
-  return String(value || '')
-    .trim()
-    .toUpperCase()
-    .replace(/[^0-9A-Zก-ฮ]/g, '');
-}
 
 function parseGpsTimestamp(value?: string): number {
   const text = String(value || '').trim();
@@ -174,7 +168,7 @@ export function MobileOperation({
 
     const gpsByPlate = new Map<string, GpsLocation>();
     for (const location of gpsLocations) {
-      const plate = normalizePlate(location.licensePlate);
+      const plate = normalizeLicensePlate(location.licensePlate);
       if (!plate) continue;
 
       const existing = gpsByPlate.get(plate);
@@ -186,7 +180,7 @@ export function MobileOperation({
     }
 
     return trucks.map(truck => {
-      const plate = normalizePlate(truck.licensePlate);
+      const plate = normalizeLicensePlate(truck.licensePlate);
       const gpsLocation = plate ? gpsByPlate.get(plate) : undefined;
       return gpsLocation ? { ...truck, gpsLocation } : truck;
     });
