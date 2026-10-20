@@ -460,7 +460,6 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
   const [deleteMasterTarget, setDeleteMasterTarget] = useState<MasterPlanRow | null>(null);
   const [selectedMasterRows, setSelectedMasterRows] = useState<number[]>([]);
   const [showDeleteSelectedMaster, setShowDeleteSelectedMaster] = useState(false);
-  const [showClearAllMaster, setShowClearAllMaster] = useState(false);
   const [showMasterImport,setShowMasterImport]=useState(false);
   const [masterImportMode,setMasterImportMode]=useState<MasterImportMode>('append');
   const [masterImportRows,setMasterImportRows]=useState<MasterPlanRow[]>([]);
@@ -1177,16 +1176,12 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
     }
   };
 
-  const handleDeleteSelectedMaster = async (clearAll = false) => {
-    const sourceRows = clearAll
-      ? masterRows.map(row => Number(row.sheetRow))
-      : selectedMasterRows;
-    const sheetRows = [...new Set(sourceRows)]
+  const handleDeleteSelectedMaster = async () => {
+    const sheetRows = [...new Set(selectedMasterRows)]
       .filter(sheetRow => Number.isInteger(sheetRow) && sheetRow >= 2)
       .sort((first, second) => second - first);
     if (!sheetRows.length || isSavingMaster) return;
     setShowDeleteSelectedMaster(false);
-    setShowClearAllMaster(false);
     setIsSavingMaster(true);
     setNotice({ type: 'info', message: `กำลังลบ Master Plan ${sheetRows.length} รายการ กรุณาอย่าปิดหน้านี้` });
     try {
@@ -1195,12 +1190,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
       }
       setSelectedMasterRows([]);
       await loadMasterRows(false);
-      setNotice({
-        type: 'success',
-        message: clearAll
-          ? `ล้าง Master Plan เก่าทั้งหมดแล้ว ${sheetRows.length} รายการ พร้อมอัปโหลดแผนใหม่`
-          : `ลบ Master Plan ที่เลือกสำเร็จ ${sheetRows.length} รายการ`,
-      });
+      setNotice({ type: 'success', message: `ลบ Master Plan ที่เลือกสำเร็จ ${sheetRows.length} รายการ` });
     } catch (error) {
       try {
         await loadMasterRows(false);
@@ -1219,43 +1209,44 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
         <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           {tab === 'create' && createView === 'master' ? (
             <div className="space-y-3 px-3 py-4 sm:px-4">
-              <div className="flex flex-col gap-2 xl:flex-row xl:items-end">
-                <button
-                  type="button"
-                  onClick={() => setCreateView('source')}
-                  className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-300 px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                >
-                  <ArrowLeft className="h-4 w-4" />
-                  ย้อนกลับ
-                </button>
-                <div className="min-w-[230px] xl:ml-1">
-                  <h2 className="text-xl font-bold text-slate-900">จัดการ Master Plan</h2>
-                  <p className="text-sm text-slate-500">เพิ่ม แก้ไข หรือลบข้อมูลต้นแบบ</p>
+              <div className="grid gap-3 xl:grid-cols-[minmax(320px,1fr)_auto_auto] xl:items-center">
+                <div className="flex min-w-0 items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setCreateView('source')}
+                    className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-300 px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                  >
+                    <ArrowLeft className="h-4 w-4" />
+                    ย้อนกลับ
+                  </button>
+                  <div className="min-w-0">
+                    <h2 className="truncate text-xl font-bold text-slate-900">จัดการ Master Plan</h2>
+                    <p className="truncate text-sm text-slate-500">เพิ่ม แก้ไข หรือลบข้อมูลต้นแบบ</p>
+                  </div>
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className="min-w-[104px] rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-amber-800">
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="min-w-[92px] rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-amber-800">
                     <p className="text-[9px] font-bold uppercase tracking-wide opacity-70">ทั้งหมด</p>
                     <p className="text-base font-bold leading-tight tabular-nums">{masterRows.length}</p>
                   </div>
-                  <div className="min-w-[104px] rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-blue-800">
+                  <div className="min-w-[92px] rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-blue-800">
                     <p className="text-[9px] font-bold uppercase tracking-wide opacity-70">แสดงผล</p>
                     <p className="text-base font-bold leading-tight tabular-nums">{filteredMasterRows.length}</p>
                   </div>
-                  <div className={`min-w-[104px] rounded-lg border px-3 py-1.5 ${masterValidationErrors.length ? 'border-red-200 bg-red-50 text-red-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>
+                  <div className={`min-w-[92px] rounded-lg border px-3 py-1.5 ${masterValidationErrors.length ? 'border-red-200 bg-red-50 text-red-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>
                     <p className="text-[9px] font-bold uppercase tracking-wide opacity-70">ตรวจสอบ</p>
                     <p className="text-base font-bold leading-tight">{masterValidationErrors.length ? `${masterValidationErrors.length} แถว` : 'ผ่าน'}</p>
                   </div>
                 </div>
-                <div className="flex flex-wrap gap-2 xl:ml-auto">
+                <div className="flex flex-wrap items-center justify-start gap-2 xl:justify-end">
                   <button type="button" onClick={() => { setMasterImportMode('replace'); setMasterImportRows([]); setMasterImportErrors([]); setShowMasterImport(true); }} disabled={isSavingMaster} className="inline-flex h-10 items-center gap-2 rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white disabled:opacity-50">
                     <Upload className="h-4 w-4" /> อัปโหลดไฟล์
                   </button>
-                  <button type="button" onClick={() => setShowDeleteSelectedMaster(true)} disabled={!selectedMasterRows.length || isSavingMaster} className="inline-flex h-10 items-center gap-2 rounded-xl bg-red-600 px-4 text-sm font-semibold text-white disabled:opacity-40">
-                    <Trash2 className="h-4 w-4" /> ลบที่เลือก ({selectedMasterRows.length})
-                  </button>
-                  <button type="button" onClick={() => setShowClearAllMaster(true)} disabled={!masterRows.length || isSavingMaster} className="inline-flex h-10 items-center gap-2 rounded-xl border border-red-300 bg-red-50 px-4 text-sm font-semibold text-red-700 disabled:opacity-40">
-                    <Trash2 className="h-4 w-4" /> ลบทั้งหมด
-                  </button>
+                  {selectedMasterRows.length > 0 && (
+                    <button type="button" onClick={() => setShowDeleteSelectedMaster(true)} disabled={isSavingMaster} className="inline-flex h-10 items-center gap-2 rounded-xl bg-red-600 px-4 text-sm font-semibold text-white disabled:opacity-40">
+                      <Trash2 className="h-4 w-4" /> ลบที่เลือก ({selectedMasterRows.length})
+                    </button>
+                  )}
                   <button type="button" onClick={() => void loadMasterRows(true)} disabled={isLoadingMaster || isSavingMaster} className="inline-flex h-10 items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold disabled:opacity-50">
                     {isLoadingMaster ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                     รีเฟรช
@@ -1266,7 +1257,6 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                   </button>
                 </div>
               </div>
-
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                 <input
@@ -1838,20 +1828,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
             <p className="mt-3 rounded-xl bg-red-50 p-4 text-sm text-red-800">ระบบจะลบถาวร {selectedMasterRows.length} รายการ โดยไม่กระทบ Daily Plan ที่สร้างไว้แล้ว</p>
             <div className="mt-6 flex justify-end gap-3">
               <button type="button" onClick={() => setShowDeleteSelectedMaster(false)} className="rounded-xl border px-4 py-2">กลับ</button>
-              <button type="button" onClick={() => void handleDeleteSelectedMaster(false)} className="rounded-xl bg-red-600 px-4 py-2 font-semibold text-white">ยืนยันลบ</button>
-            </div>
-          </div>
-        </div>
-      )}
-      {showClearAllMaster && masterRows.length > 0 && (
-        <div className="fixed inset-0 z-[1310] flex items-center justify-center bg-slate-950/75 p-4">
-          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
-            <h2 className="text-xl font-bold text-red-700">ล้าง Master Plan เก่าทั้งหมด?</h2>
-            <p className="mt-3 text-sm text-slate-600">กำลังจะลบ Master Plan ทั้งหมด <b>{masterRows.length} รายการ</b> เพื่อเตรียมอัปโหลดแผนใหม่</p>
-            <p className="mt-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-800">การลบนี้ย้อนกลับไม่ได้ แต่จะไม่ลบ Daily Plan และ Actual ที่สร้างไว้แล้ว</p>
-            <div className="mt-6 flex justify-end gap-3">
-              <button type="button" onClick={() => setShowClearAllMaster(false)} className="rounded-xl border px-4 py-2">ยกเลิก</button>
-              <button type="button" onClick={() => void handleDeleteSelectedMaster(true)} className="rounded-xl bg-red-700 px-4 py-2 font-semibold text-white">ยืนยันลบทั้งหมด</button>
+              <button type="button" onClick={() => void handleDeleteSelectedMaster()} className="rounded-xl bg-red-600 px-4 py-2 font-semibold text-white">ยืนยันลบ</button>
             </div>
           </div>
         </div>
