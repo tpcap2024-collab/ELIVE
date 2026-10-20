@@ -128,11 +128,21 @@ export function MobileTripCard({
             onClick={() => setShowDetails(current => !current)}
             aria-expanded={showDetails}
             aria-label={`รายละเอียด ${truck.route} ${truck.licensePlate}`}
-            className="flex min-h-11 min-w-0 flex-1 items-center gap-1.5 text-left"
+            className="flex min-h-11 min-w-0 flex-1 items-center gap-2 text-left"
           >
-            <span className="shrink-0 font-mono text-sm font-black text-slate-900">{formatValue(truck.route)}</span>
-            <span className="min-w-0 truncate font-bold text-slate-800">{formatValue(truck.licensePlate)}</span>
-            <span className="min-w-0 truncate text-slate-500">{formatValue(truck.dropPoint)}</span>
+            <span className="shrink-0 rounded-md bg-blue-700 px-2 py-1 font-mono text-base font-black leading-none tracking-tight text-white shadow-sm">
+              {formatValue(truck.route)}
+            </span>
+            <span className="shrink-0 text-slate-300" aria-hidden="true">|</span>
+            <span className="min-w-0 truncate text-lg font-black leading-none tracking-tight text-slate-950">
+              {formatValue(truck.licensePlate)}
+            </span>
+            <span
+              className="min-w-0 truncate rounded-md bg-slate-100 px-1.5 py-1 text-xs font-bold leading-none text-slate-600"
+              title={formatValue(truck.dropPoint)}
+            >
+              {formatValue(truck.dropPoint)}
+            </span>
             {hasPendingWorkDetail && <ClipboardCheck className="h-4 w-4 shrink-0 text-amber-600" aria-label="มีงานรอตรวจสอบ เปิดรายละเอียด" />}
             {showDetails ? <ChevronUp className="h-3 w-3 shrink-0 text-slate-400" /> : <ChevronDown className="h-3 w-3 shrink-0 text-slate-400" />}
           </button>
