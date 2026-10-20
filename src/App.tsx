@@ -713,6 +713,32 @@ export default function App() {
     });
   }, [inboundTrucks, gpsLocations]);
 
+  const mobileTrucks = useMemo(() => {
+    if (inboundTrucks.length === 0) return [];
+    if (gpsLocations.length === 0) return inboundTrucks;
+
+    const gpsById = new Map<string, GpsLocation>();
+    const gpsByLicensePlate = new Map<string, GpsLocation>();
+
+    for (const location of gpsLocations) {
+      const gpsId = String(location.gpsId || '').trim();
+      const normalizedPlate = normalizeLicensePlate(location.licensePlate);
+
+      if (gpsId) gpsById.set(gpsId, location);
+      if (normalizedPlate) gpsByLicensePlate.set(normalizedPlate, location);
+    }
+
+    return inboundTrucks.map(truck => {
+      const gpsId = String(truck.gpsId || '').trim();
+      const normalizedPlate = normalizeLicensePlate(truck.licensePlate);
+      const gpsLocation =
+        (gpsId ? gpsById.get(gpsId) : undefined) ||
+        (normalizedPlate ? gpsByLicensePlate.get(normalizedPlate) : undefined);
+
+      return gpsLocation ? { ...truck, gpsLocation } : truck;
+    });
+  }, [inboundTrucks, gpsLocations]);
+
   const kpiTrucks = useMemo(
     () =>
       inboundTrucks.filter(truck =>
@@ -1277,7 +1303,7 @@ export default function App() {
 
         {currentView === 'mobile' ? (
           <MobileOperation
-            trucks={inboundTrucks}
+            trucks={mobileTrucks}
             selectedDate={selectedDate}
             lastUpdate={lastUpdate}
             isRefreshing={isRefreshing}
