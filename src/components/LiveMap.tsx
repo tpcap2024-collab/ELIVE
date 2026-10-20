@@ -1470,7 +1470,7 @@ export function LiveMap({
         <div className="flex min-w-fit items-center gap-2">
           <h2 className="font-bold tracking-tight text-slate-900">Live Map</h2>
           <span className="h-2 w-2 rounded-full bg-emerald-500" />
-          <span className="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700">OPERATION</span>
+          <span className="rounded-full bg-emerald-50 px-2 py-1 text-xs font-black text-emerald-700">OPERATION</span>
         </div>
         <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -1503,41 +1503,41 @@ export function LiveMap({
       </div>
 
       {showRouteSummary ? (
-        <div className="shrink-0 rounded-b-xl border border-t-0 border-slate-200 bg-white px-3 py-2 shadow-sm">
+        <div className="shrink-0 rounded-b-xl border border-t-0 border-slate-200 bg-white px-4 py-3 shadow-md">
           {!selectedGpsLocation ? (
             <div className="py-3 text-center text-sm font-semibold text-slate-500">
               ไม่พบข้อมูล GPS ของรถคันนี้
             </div>
           ) : (
-            <div className="grid grid-cols-3 gap-2 text-center">
-              <div className="min-w-0 rounded-lg bg-blue-50 px-2 py-2">
-                <div className="text-[10px] font-bold text-blue-600">ระยะทาง</div>
-                <div className="mt-0.5 truncate text-sm font-black text-slate-900">
+            <div className="grid grid-cols-3 gap-3 text-center">
+              <div className="min-w-0 rounded-xl border border-blue-200 bg-blue-50 px-3 py-3 shadow-sm">
+                <div className="text-xs font-black text-blue-700">ระยะทาง</div>
+                <div className="mt-1 truncate text-lg font-black leading-tight text-slate-950">
                   {routeResult ? `${routeResult.distanceKilometers.toFixed(1)} กม.` : isRouteLoading ? '...' : '-'}
                 </div>
               </div>
-              <div className="min-w-0 rounded-lg bg-indigo-50 px-2 py-2">
-                <div className="text-[10px] font-bold text-indigo-600">เวลาเดินทาง</div>
-                <div className="mt-0.5 truncate text-sm font-black text-slate-900">
+              <div className="min-w-0 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-3 shadow-sm">
+                <div className="text-xs font-black text-indigo-700">เวลาเดินทาง</div>
+                <div className="mt-1 truncate text-lg font-black leading-tight text-slate-950">
                   {routeResult ? formatDuration(routeResult.durationMinutes) : isRouteLoading ? '...' : '-'}
                 </div>
               </div>
-              <div className="min-w-0 rounded-lg bg-emerald-50 px-2 py-2">
-                <div className="text-[10px] font-bold text-emerald-700">คาดว่าจะถึง</div>
-                <div className="mt-0.5 truncate text-sm font-black text-slate-900">
+              <div className="min-w-0 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-3 shadow-sm">
+                <div className="text-xs font-black text-emerald-700">คาดว่าจะถึง</div>
+                <div className="mt-1 truncate text-lg font-black leading-tight text-slate-950">
                   {routeResult ? formatEta(routeResult.estimatedArrival).split(', ').pop() : isRouteLoading ? '...' : '-'}
                 </div>
               </div>
-              <div className="col-span-3 flex min-w-0 items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 text-left">
+              <div className="col-span-3 flex min-w-0 items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-left shadow-sm">
                 <div className="min-w-0">
-                  <div className="truncate text-sm font-black text-slate-900">
+                  <div className="truncate text-base font-black text-slate-950">
                     {selectedTruck?.route || '-'} · {selectedTruck?.licensePlate || selectedGpsLocation.licensePlate || '-'}
                   </div>
-                  <div className="truncate text-xs font-semibold text-slate-600" title={stationName}>
+                  <div className="mt-1 truncate text-sm font-semibold text-slate-700" title={stationName}>
                     {stationName}
                   </div>
                 </div>
-                <span className={`shrink-0 rounded-full border px-2 py-1 text-[10px] font-black ${
+                <span className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-black ${
                   selectedFreshness
                     ? getFreshnessClasses(selectedFreshness)
                     : 'border-slate-200 bg-slate-100 text-slate-600'
