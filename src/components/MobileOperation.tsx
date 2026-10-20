@@ -11,13 +11,14 @@ import {
   Truck as TruckIcon,
   WifiOff,
 } from 'lucide-react';
-import { Truck } from '../types';
+import { GpsLocation, Truck } from '../types';
 import MobileTripCard from './MobileTripCard';
 
 type MobileFilter = 'ALL' | 'ACTIVE' | 'PENDING' | 'ISSUE' | 'COMPLETED';
 
 interface MobileOperationProps {
   trucks: Truck[];
+  gpsLocations?: GpsLocation[];
   selectedDate: string;
   lastUpdate: string;
   isRefreshing: boolean;
@@ -41,6 +42,23 @@ const MOBILE_FILTERS: Array<{
   { value: 'ISSUE', label: 'ผิดปกติ', icon: AlertTriangle },
   { value: 'COMPLETED', label: 'เสร็จแล้ว', icon: CheckCircle2 },
 ];
+
+
+function normalizePlate(value?: string): string {
+  return String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^0-9A-Zก-ฮ]/g, '');
+}
+
+function parseGpsTimestamp(value?: string): number {
+  const text = String(value || '').trim();
+  if (!text) return 0;
+  const isoText = text.includes('T') ? text : text.replace(' ', 'T');
+  const hasTimeZone = isoText.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(isoText);
+  const timestamp = Date.parse(hasTimeZone ? isoText : `${isoText}+07:00`);
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
 
 function hasGpsLostAction(truck: Truck): boolean {
   const status = String(truck.status || '').trim().toUpperCase();
@@ -134,6 +152,7 @@ function formatSelectedDate(value: string): string {
 
 export function MobileOperation({
   trucks,
+  gpsLocations = [],
   selectedDate,
   lastUpdate,
   isRefreshing,
@@ -150,6 +169,28 @@ export function MobileOperation({
   const [isOnline, setIsOnline] = useState(
     typeof navigator === 'undefined' ? true : navigator.onLine
   );
+  const trucksWithGps = useMemo(() => {
+    if (gpsLocations.length === 0) return trucks;
+
+    const gpsByPlate = new Map<string, GpsLocation>();
+    for (const location of gpsLocations) {
+      const plate = normalizePlate(location.licensePlate);
+      if (!plate) continue;
+
+      const existing = gpsByPlate.get(plate);
+      const existingTime = parseGpsTimestamp(existing?.gpsTime || existing?.receivedAt);
+      const candidateTime = parseGpsTimestamp(location.gpsTime || location.receivedAt);
+      if (!existing || candidateTime >= existingTime) {
+        gpsByPlate.set(plate, location);
+      }
+    }
+
+    return trucks.map(truck => {
+      const plate = normalizePlate(truck.licensePlate);
+      const gpsLocation = plate ? gpsByPlate.get(plate) : undefined;
+      return gpsLocation ? { ...truck, gpsLocation } : truck;
+    });
+  }, [gpsLocations, trucks]);
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -164,18 +205,18 @@ export function MobileOperation({
 
   const counts = useMemo(
     () => ({
-      ALL: trucks.length,
-      ACTIVE: trucks.filter(isActiveTruck).length,
-      PENDING: trucks.filter(isPendingTruck).length,
-      ISSUE: trucks.filter(isIssueTruck).length,
-      COMPLETED: trucks.filter(isCompletedTruck).length,
+      ALL: trucksWithGps.length,
+      ACTIVE: trucksWithGps.filter(isActiveTruck).length,
+      PENDING: trucksWithGps.filter(isPendingTruck).length,
+      ISSUE: trucksWithGps.filter(isIssueTruck).length,
+      COMPLETED: trucksWithGps.filter(isCompletedTruck).length,
     }),
-    [trucks]
+    [trucksWithGps]
   );
 
   const visibleTrucks = useMemo(() => {
     const query = searchText.trim().toLocaleLowerCase('th');
-    return trucks
+    return trucksWithGps
       .filter(truck => {
         if (filter === 'ALL') return true;
         if (filter === 'ACTIVE') return isActiveTruck(truck);
@@ -199,7 +240,7 @@ export function MobileOperation({
           numeric: true,
         });
       });
-  }, [filter, searchText, trucks]);
+  }, [filter, searchText, trucksWithGps]);
   const selectedFilter =
     MOBILE_FILTERS.find(item => item.value === filter) || MOBILE_FILTERS[0];
   const SelectedFilterIcon = selectedFilter.icon;
