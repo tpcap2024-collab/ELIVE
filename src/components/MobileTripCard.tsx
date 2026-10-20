@@ -167,7 +167,7 @@ export function MobileTripCard({
             >
               <path
                 d="M16 1.5C8.27 1.5 2 7.77 2 15.5c0 10.5 14 22.5 14 22.5s14-12 14-22.5C30 7.77 23.73 1.5 16 1.5Z"
-                fill="#991b1b"
+                fill="#ff0000"
                 stroke="#111827"
                 strokeWidth="2.8"
                 strokeLinejoin="round"
