@@ -203,57 +203,45 @@ export function MobileTripCard({
               </button>
             )}
           </div>
-          <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+          <dl className="grid grid-cols-2 gap-x-5 gap-y-3">
             <div>
-              <dt className="text-[10px] font-medium text-slate-400">Code Run</dt>
-              <dd className="mt-0.5 truncate font-mono font-bold text-slate-800">
-                {formatValue(truck.id)}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-[10px] font-medium text-slate-400">Group Code</dt>
-              <dd className="mt-0.5 truncate font-bold text-slate-800">
-                {formatValue(truck.groupCode)}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-[10px] font-medium text-slate-400">สังกัด</dt>
-              <dd className="mt-0.5 truncate font-medium text-slate-800">
+              <dt className="text-xs font-semibold text-slate-500">สังกัด</dt>
+              <dd className="mt-1 truncate text-sm font-semibold leading-5 text-slate-900">
                 {formatValue(truck.supplierName)}
               </dd>
             </div>
             <div>
-              <dt className="text-[10px] font-medium text-slate-400">Project</dt>
-              <dd className="mt-0.5 truncate font-medium text-slate-800">
+              <dt className="text-xs font-semibold text-slate-500">Project</dt>
+              <dd className="mt-1 truncate text-sm font-semibold leading-5 text-slate-900">
                 {formatValue(truck.project)}
               </dd>
             </div>
             <div>
-              <dt className="text-[10px] font-medium text-slate-400">Plan ETD</dt>
-              <dd className="mt-0.5 font-mono font-bold text-slate-800">
+              <dt className="text-xs font-semibold text-slate-500">Plan ETD</dt>
+              <dd className="mt-1 font-mono text-sm font-bold leading-5 text-slate-900">
                 {formatValue(truck.planEtd)}
               </dd>
             </div>
             <div>
-              <dt className="text-[10px] font-medium text-slate-400">ประเภทรถ</dt>
-              <dd className="mt-0.5 truncate font-medium text-slate-800">
+              <dt className="text-xs font-semibold text-slate-500">ประเภทรถ</dt>
+              <dd className="mt-1 truncate text-sm font-semibold leading-5 text-slate-900">
                 {formatValue(truck.truckType)}
               </dd>
             </div>
             <div>
-              <dt className="text-[10px] font-medium text-slate-400">ผู้ขับรถ</dt>
-              <dd className="mt-0.5 truncate font-medium text-slate-800">
+              <dt className="text-xs font-semibold text-slate-500">ผู้ขับรถ</dt>
+              <dd className="mt-1 truncate text-sm font-semibold leading-5 text-slate-900">
                 {formatValue(truck.driverName)}
               </dd>
             </div>
             <div>
-              <dt className="text-[10px] font-medium text-slate-400">โทรศัพท์</dt>
-              <dd className="mt-0.5 font-medium text-slate-800">
+              <dt className="text-xs font-semibold text-slate-500">โทรศัพท์</dt>
+              <dd className="mt-1 text-sm font-semibold leading-5 text-slate-900">
                 {truck.phone ? (
                   <button
                     type="button"
                     onClick={() => callPhone(truck.phone)}
-                    className="inline-flex items-center gap-1 font-bold text-blue-700 underline active:text-blue-900"
+                    className="inline-flex min-h-6 items-center gap-1 text-sm font-bold text-blue-700 underline underline-offset-2 active:text-blue-900"
                   >
                     <Phone className="h-3.5 w-3.5" />
                     {truck.phone}
@@ -267,11 +255,11 @@ export function MobileTripCard({
 
           {truck.workDetail && (
             <div className="mt-3 rounded-lg border border-slate-200 bg-white p-2.5">
-              <p className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">
+              <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-slate-600">
                 <Route className="h-3.5 w-3.5" />
                 รายละเอียดงาน
               </p>
-              <p className="mt-1.5 whitespace-pre-wrap break-words text-sm leading-5 text-slate-700">
+              <p className="mt-1.5 whitespace-pre-wrap break-words text-sm font-medium leading-6 text-slate-800">
                 {truck.workDetail}
               </p>
             </div>
