@@ -4,11 +4,11 @@ import {
   ChevronDown,
   ChevronUp,
   ClipboardCheck,
-  Clock3,
   MapPin,
   MessageSquare,
   Navigation,
   PackageCheck,
+  Phone,
   Route,
   Truck as TruckIcon,
 } from 'lucide-react';
@@ -116,6 +116,12 @@ function formatValue(value?: string): string {
   return text || '-';
 }
 
+function callPhone(phone?: string): void {
+  const number = String(phone || '').trim();
+  if (!number) return;
+  window.location.href = 'tel:' + number;
+}
+
 export function MobileTripCard({
   truck,
   canOperate,
@@ -131,235 +137,189 @@ export function MobileTripCard({
   const hasPendingWorkDetail = Boolean(
     canOperate && truck.workDetail && !truck.workDetailConfirmed
   );
+  const actualEta = formatValue(truck.stampEta || truck.actualEta);
+  const actualEtd = formatValue(truck.stampEtd);
 
   return (
     <article
-      className={`overflow-hidden rounded-2xl border border-l-4 border-slate-200 bg-white shadow-sm ${getCardAccentClass(
+      className={`overflow-hidden rounded-xl border border-l-4 border-slate-200 bg-white shadow-sm ${getCardAccentClass(
         truck
       )}`}
     >
-      <div className="p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="font-mono text-lg font-black text-slate-900">
-                {formatValue(truck.route)}
-              </span>
-              {truck.planRemark === 'EXTRA' && (
-                <span className="rounded-md border border-violet-200 bg-violet-100 px-2 py-0.5 text-[10px] font-black text-violet-700">
-                  EXTRA
-                </span>
-              )}
-            </div>
-            <div className="mt-1 flex items-center gap-2 text-slate-700">
-              <TruckIcon className="h-4 w-4 shrink-0 text-blue-600" />
-              <span className="truncate text-base font-bold">
-                {formatValue(truck.licensePlate)}
-              </span>
-            </div>
-          </div>
-
-          <div className="shrink-0 text-right">
-            <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">
-              Plan ETA
-            </p>
-            <p className="font-mono text-xl font-black text-blue-700">
-              {formatValue(truck.planEta)}
-            </p>
-          </div>
+      <div className="p-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="shrink-0 font-mono text-base font-black text-slate-900">
+            {formatValue(truck.route)}
+          </span>
+          <span className="h-4 w-px shrink-0 bg-slate-200" />
+          <span className="flex min-w-0 items-center gap-1.5 font-bold text-slate-800">
+            <TruckIcon className="h-4 w-4 shrink-0 text-blue-600" />
+            <span className="truncate">{formatValue(truck.licensePlate)}</span>
+          </span>
+          {truck.planRemark === 'EXTRA' && (
+            <span className="shrink-0 rounded border border-violet-200 bg-violet-100 px-1.5 py-0.5 text-[9px] font-black text-violet-700">
+              EXTRA
+            </span>
+          )}
+          <span className="ml-auto shrink-0 font-mono text-sm font-black text-blue-700">
+            {formatValue(truck.planEta)}
+          </span>
         </div>
 
-        <div className="mt-4 grid grid-cols-2 gap-2">
-          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-            <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-400">
-              <MapPin className="h-3.5 w-3.5" />
-              จุดลงงาน
-            </p>
-            <p className="mt-1 truncate font-bold text-slate-800">
-              {formatValue(truck.dropPoint)}
-            </p>
-          </div>
-
-          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-            <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-400">
-              <Clock3 className="h-3.5 w-3.5" />
-              Actual
-            </p>
-            <p className="mt-1 font-mono text-sm font-bold text-slate-800">
-              {formatValue(truck.stampEta || truck.actualEta)}
-              <span className="mx-1 text-slate-300">/</span>
-              {formatValue(truck.stampEtd)}
-            </p>
-          </div>
-        </div>
-
-        <div className="mt-3 flex flex-wrap items-center gap-2">
+        <div className="mt-2 flex min-w-0 items-center gap-2 text-sm">
+          <MapPin className="h-4 w-4 shrink-0 text-slate-400" />
+          <span className="min-w-0 flex-1 truncate font-bold text-slate-700">
+            {formatValue(truck.dropPoint)}
+          </span>
           <span
-            className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-black ${performance.className}`}
+            className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-black ${performance.className}`}
           >
             {performance.label}
           </span>
-
-          {gpsLost ? (
-            <span
-              className="inline-flex rounded-full border border-orange-300 bg-slate-700 px-2.5 py-1 text-[11px] font-black text-orange-400"
-              title={truck.actionProblem || 'GPS มีปัญหา'}
-            >
-              GPS LOST
-            </span>
-          ) : noWork ? (
-            <span
-              className="inline-flex rounded-full border border-slate-700 bg-slate-700 px-2.5 py-1 text-[11px] font-black text-white"
-              title={truck.actionProblem || 'ไม่มีงาน'}
-            >
-              NO WORK
-            </span>
-          ) : (
-            <StatusBadge status={truck.status} />
-          )}
-
+          {!gpsLost && !noWork && <StatusBadge status={truck.status} />}
           {completed && !gpsLost && !noWork && (
-            <PackageCheck className="h-5 w-5 text-emerald-600" />
+            <PackageCheck className="h-4 w-4 shrink-0 text-emerald-600" />
           )}
         </div>
 
-        {gpsLost && (
-          <div className="mt-3 flex items-start gap-2 rounded-xl border border-orange-200 bg-orange-50 p-3 text-sm text-orange-800">
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-            <span className="break-words">
-              {truck.actionProblem || 'GPS มีปัญหา'}
-            </span>
-          </div>
-        )}
-
-        {noWork && (
-          <div className="mt-3 flex items-start gap-2 rounded-xl border border-slate-300 bg-slate-100 p-3 text-sm text-slate-700">
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-            <span className="break-words">
-              {truck.actionProblem || 'ไม่มีงานลง'}
-            </span>
-          </div>
-        )}
+        <div className="mt-2 flex min-w-0 items-center gap-2 rounded-lg bg-slate-50 px-2.5 py-2">
+          {gpsLost || noWork ? (
+            <>
+              <AlertTriangle
+                className={`h-4 w-4 shrink-0 ${gpsLost ? 'text-orange-500' : 'text-slate-500'}`}
+              />
+              <span className="min-w-0 flex-1 truncate text-xs font-bold text-slate-700">
+                {truck.actionProblem || (gpsLost ? 'GPS มีปัญหา' : 'ไม่มีงานลง')}
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="shrink-0 text-[10px] font-bold text-slate-400">ACTUAL</span>
+              <span className="min-w-0 flex-1 truncate font-mono text-xs font-bold text-slate-700">
+                {actualEta} / {actualEtd}
+              </span>
+              {truck.actionProblem && (
+                <span className="min-w-0 truncate text-xs font-bold text-amber-700">
+                  {truck.actionProblem}
+                </span>
+              )}
+            </>
+          )}
+        </div>
 
         {hasPendingWorkDetail && (
           <button
             type="button"
             onClick={() => onOpenWorkDetail(truck)}
-            className="mt-3 flex min-h-12 w-full items-center justify-between gap-3 rounded-xl border-2 border-amber-500 bg-yellow-300 px-4 py-3 text-left text-amber-950 shadow-sm active:scale-[0.99]"
+            className="mt-2 flex min-h-11 w-full items-center justify-between gap-2 rounded-lg border border-amber-400 bg-yellow-300 px-3 py-2 text-left text-amber-950 active:scale-[0.99]"
           >
             <span className="flex min-w-0 items-center gap-2">
-              <ClipboardCheck className="h-5 w-5 shrink-0" />
-              <span className="font-bold">มีรายละเอียดงานที่ต้องตรวจสอบ</span>
+              <ClipboardCheck className="h-4 w-4 shrink-0" />
+              <span className="truncate text-xs font-bold">มีรายละเอียดงานที่ต้องตรวจสอบ</span>
             </span>
-            <span className="shrink-0 text-xs font-black">เปิดดู</span>
+            <span className="shrink-0 text-[10px] font-black">เปิดดู</span>
           </button>
         )}
 
-        <div className="mt-4 grid grid-cols-2 gap-2">
+        <div className="mt-2 flex items-center gap-2">
           <button
             type="button"
             onClick={() => onOpenGps(truck.id)}
-            className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-red-700 px-3 py-3 text-sm font-bold text-white shadow-sm active:scale-[0.98]"
+            className="flex min-h-11 flex-1 items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold text-white shadow-sm active:scale-[0.98]"
           >
-            <Navigation className="h-5 w-5" />
-            GPS พิกัด
+            <Navigation className="h-4 w-4" />
+            ติดตามรถ
           </button>
 
-          {canOperate ? (
-            <button
-              type="button"
-              onClick={() => onOpenAction(truck)}
-              className={`flex min-h-12 items-center justify-center gap-2 rounded-xl px-3 py-3 text-sm font-bold text-white shadow-sm active:scale-[0.98] ${
-                truck.actionProblem ? 'bg-red-700' : 'bg-amber-500'
-              }`}
-            >
-              <MessageSquare className="h-5 w-5" />
-              Action
-            </button>
-          ) : (
-            <button
-              type="button"
-              disabled
-              className="flex min-h-12 cursor-not-allowed items-center justify-center gap-2 rounded-xl bg-slate-200 px-3 py-3 text-sm font-bold text-slate-400"
-            >
-              <MessageSquare className="h-5 w-5" />
-              ดูอย่างเดียว
-            </button>
-          )}
-        </div>
+          <button
+            type="button"
+            onClick={() => onOpenAction(truck)}
+            disabled={!canOperate}
+            className={`flex min-h-11 w-11 shrink-0 items-center justify-center rounded-lg border shadow-sm active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 ${
+              truck.actionProblem
+                ? 'border-red-600 bg-red-600 text-white'
+                : 'border-slate-300 bg-white text-slate-600'
+            }`}
+            aria-label={canOperate ? 'เปิด Action' : 'ดูอย่างเดียว'}
+            title={canOperate ? 'Action' : 'ดูอย่างเดียว'}
+          >
+            <MessageSquare className="h-5 w-5" />
+          </button>
 
-        <button
-          type="button"
-          onClick={() => setShowDetails(current => !current)}
-          aria-expanded={showDetails}
-          className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-bold text-slate-600 active:bg-slate-100"
-        >
-          {showDetails ? (
-            <>
-              <ChevronUp className="h-4 w-4" />
-              ซ่อนรายละเอียด
-            </>
-          ) : (
-            <>
-              <ChevronDown className="h-4 w-4" />
-              ดูรายละเอียด
-            </>
-          )}
-        </button>
+          <button
+            type="button"
+            onClick={() => setShowDetails(current => !current)}
+            aria-expanded={showDetails}
+            className="flex min-h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-600 active:bg-slate-100"
+            aria-label={showDetails ? 'ซ่อนรายละเอียด' : 'ดูรายละเอียด'}
+            title={showDetails ? 'ซ่อนรายละเอียด' : 'ดูรายละเอียด'}
+          >
+            {showDetails ? (
+              <ChevronUp className="h-5 w-5" />
+            ) : (
+              <ChevronDown className="h-5 w-5" />
+            )}
+          </button>
+        </div>
       </div>
 
       {showDetails && (
-        <div className="border-t border-slate-200 bg-slate-50 p-4">
-          <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+        <div className="border-t border-slate-200 bg-slate-50 p-3">
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
             <div>
-              <dt className="text-xs font-medium text-slate-400">Code Run</dt>
-              <dd className="mt-0.5 font-mono font-bold text-slate-800">
+              <dt className="text-[10px] font-medium text-slate-400">Code Run</dt>
+              <dd className="mt-0.5 truncate font-mono font-bold text-slate-800">
                 {formatValue(truck.id)}
               </dd>
             </div>
             <div>
-              <dt className="text-xs font-medium text-slate-400">Group Code</dt>
-              <dd className="mt-0.5 font-bold text-slate-800">
+              <dt className="text-[10px] font-medium text-slate-400">Group Code</dt>
+              <dd className="mt-0.5 truncate font-bold text-slate-800">
                 {formatValue(truck.groupCode)}
               </dd>
             </div>
             <div>
-              <dt className="text-xs font-medium text-slate-400">สังกัด</dt>
-              <dd className="mt-0.5 break-words font-medium text-slate-800">
+              <dt className="text-[10px] font-medium text-slate-400">สังกัด</dt>
+              <dd className="mt-0.5 truncate font-medium text-slate-800">
                 {formatValue(truck.supplierName)}
               </dd>
             </div>
             <div>
-              <dt className="text-xs font-medium text-slate-400">Project</dt>
-              <dd className="mt-0.5 font-medium text-slate-800">
+              <dt className="text-[10px] font-medium text-slate-400">Project</dt>
+              <dd className="mt-0.5 truncate font-medium text-slate-800">
                 {formatValue(truck.project)}
               </dd>
             </div>
             <div>
-              <dt className="text-xs font-medium text-slate-400">Plan ETD</dt>
+              <dt className="text-[10px] font-medium text-slate-400">Plan ETD</dt>
               <dd className="mt-0.5 font-mono font-bold text-slate-800">
                 {formatValue(truck.planEtd)}
               </dd>
             </div>
             <div>
-              <dt className="text-xs font-medium text-slate-400">ประเภทรถ</dt>
-              <dd className="mt-0.5 font-medium text-slate-800">
+              <dt className="text-[10px] font-medium text-slate-400">ประเภทรถ</dt>
+              <dd className="mt-0.5 truncate font-medium text-slate-800">
                 {formatValue(truck.truckType)}
               </dd>
             </div>
             <div>
-              <dt className="text-xs font-medium text-slate-400">ผู้ขับรถ</dt>
-              <dd className="mt-0.5 break-words font-medium text-slate-800">
+              <dt className="text-[10px] font-medium text-slate-400">ผู้ขับรถ</dt>
+              <dd className="mt-0.5 truncate font-medium text-slate-800">
                 {formatValue(truck.driverName)}
               </dd>
             </div>
             <div>
-              <dt className="text-xs font-medium text-slate-400">โทรศัพท์</dt>
+              <dt className="text-[10px] font-medium text-slate-400">โทรศัพท์</dt>
               <dd className="mt-0.5 font-medium text-slate-800">
                 {truck.phone ? (
-                  <a className="text-blue-700 underline" href={`tel:${truck.phone}`}>
+                  <button
+                    type="button"
+                    onClick={() => callPhone(truck.phone)}
+                    className="inline-flex items-center gap-1 font-bold text-blue-700 underline active:text-blue-900"
+                  >
+                    <Phone className="h-3.5 w-3.5" />
                     {truck.phone}
-                  </a>
+                  </button>
                 ) : (
                   '-'
                 )}
@@ -368,20 +328,20 @@ export function MobileTripCard({
           </dl>
 
           {truck.workDetail && (
-            <div className="mt-4 rounded-xl border border-slate-200 bg-white p-3">
-              <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-slate-400">
-                <Route className="h-4 w-4" />
+            <div className="mt-3 rounded-lg border border-slate-200 bg-white p-2.5">
+              <p className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                <Route className="h-3.5 w-3.5" />
                 รายละเอียดงาน
               </p>
-              <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-slate-700">
+              <p className="mt-1.5 whitespace-pre-wrap break-words text-sm leading-5 text-slate-700">
                 {truck.workDetail}
               </p>
             </div>
           )}
 
           {truck.actionProblem && (
-            <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
-              <p className="text-xs font-bold uppercase tracking-wide text-amber-700">
+            <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2.5">
+              <p className="text-[10px] font-bold uppercase tracking-wide text-amber-700">
                 Action / Problem
               </p>
               <p className="mt-1 whitespace-pre-wrap break-words text-sm text-amber-900">
