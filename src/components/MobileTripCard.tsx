@@ -4,7 +4,6 @@ import {
   ChevronUp,
   ClipboardCheck,
   MessageSquare,
-  MapPin,
   Phone,
   Route,
 } from 'lucide-react';
@@ -159,10 +158,29 @@ export function MobileTripCard({
             type="button"
             onClick={() => onOpenGps(truck.id)}
             aria-label={`เปิดแผนที่ ${truck.route} ${truck.licensePlate}`}
-            className="flex min-h-11 shrink-0 items-center justify-center gap-1.5 rounded-lg border-2 border-red-500 bg-red-100 px-2.5 text-sm font-black text-red-700 shadow-sm active:bg-red-200"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border-2 border-red-800 bg-red-50 shadow-sm active:bg-red-100"
           >
-            <MapPin className="h-5 w-5 text-[#ff0000]" strokeWidth={3} />
-            แผนที่
+            <svg
+              viewBox="0 0 32 40"
+              className="h-8 w-7 shrink-0"
+              aria-hidden="true"
+            >
+              <path
+                d="M16 1.5C8.27 1.5 2 7.77 2 15.5c0 10.5 14 22.5 14 22.5s14-12 14-22.5C30 7.77 23.73 1.5 16 1.5Z"
+                fill="#991b1b"
+                stroke="#111827"
+                strokeWidth="2.8"
+                strokeLinejoin="round"
+              />
+              <circle
+                cx="16"
+                cy="15.5"
+                r="6.5"
+                fill="#ffffff"
+                stroke="#111827"
+                strokeWidth="2.5"
+              />
+            </svg>
           </button>
         </div>
       </div>
