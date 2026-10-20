@@ -458,6 +458,9 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
   const [editingMasterSheetRow, setEditingMasterSheetRow] = useState<number | null>(null);
   const [masterForm, setMasterForm] = useState<EditableMasterPlanRow>({ ...EMPTY_MASTER_PLAN });
   const [deleteMasterTarget, setDeleteMasterTarget] = useState<MasterPlanRow | null>(null);
+  const [selectedMasterRows, setSelectedMasterRows] = useState<number[]>([]);
+  const [showDeleteSelectedMaster, setShowDeleteSelectedMaster] = useState(false);
+  const [showClearAllMaster, setShowClearAllMaster] = useState(false);
   const [showMasterImport,setShowMasterImport]=useState(false);
   const [masterImportMode,setMasterImportMode]=useState<MasterImportMode>('append');
   const [masterImportRows,setMasterImportRows]=useState<MasterPlanRow[]>([]);
@@ -563,6 +566,26 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
         .includes(query)
     );
   }, [masterRows, masterSearch]);
+  const displayedMasterSheetRows = useMemo(
+    () => filteredMasterRows
+      .map(row => Number(row.sheetRow))
+      .filter(sheetRow => Number.isInteger(sheetRow) && sheetRow >= 2),
+    [filteredMasterRows]
+  );
+  const allDisplayedMasterSelected = displayedMasterSheetRows.length > 0 &&
+    displayedMasterSheetRows.every(sheetRow => selectedMasterRows.includes(sheetRow));
+  const toggleSelectMasterRow = (sheetRow?: number) => {
+    if (!sheetRow) return;
+    setSelectedMasterRows(current => current.includes(sheetRow)
+      ? current.filter(item => item !== sheetRow)
+      : [...current, sheetRow]);
+  };
+  const toggleSelectAllDisplayedMaster = () => {
+    setSelectedMasterRows(current => allDisplayedMasterSelected
+      ? current.filter(sheetRow => !displayedMasterSheetRows.includes(sheetRow))
+      : [...new Set([...current, ...displayedMasterSheetRows])]);
+  };
+
 
   const planFieldOptions = useMemo(() => {
     const sources = [
@@ -1154,6 +1177,41 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
     }
   };
 
+  const handleDeleteSelectedMaster = async (clearAll = false) => {
+    const sourceRows = clearAll
+      ? masterRows.map(row => Number(row.sheetRow))
+      : selectedMasterRows;
+    const sheetRows = [...new Set(sourceRows)]
+      .filter(sheetRow => Number.isInteger(sheetRow) && sheetRow >= 2)
+      .sort((first, second) => second - first);
+    if (!sheetRows.length || isSavingMaster) return;
+    setShowDeleteSelectedMaster(false);
+    setShowClearAllMaster(false);
+    setIsSavingMaster(true);
+    setNotice({ type: 'info', message: `กำลังลบ Master Plan ${sheetRows.length} รายการ กรุณาอย่าปิดหน้านี้` });
+    try {
+      for (const sheetRow of sheetRows) {
+        await deleteMasterPlanRow(sheetRow);
+      }
+      setSelectedMasterRows([]);
+      await loadMasterRows(false);
+      setNotice({
+        type: 'success',
+        message: clearAll
+          ? `ล้าง Master Plan เก่าทั้งหมดแล้ว ${sheetRows.length} รายการ พร้อมอัปโหลดแผนใหม่`
+          : `ลบ Master Plan ที่เลือกสำเร็จ ${sheetRows.length} รายการ`,
+      });
+    } catch (error) {
+      try {
+        await loadMasterRows(false);
+      } catch (refreshError) {
+        console.error('Unable to refresh Master Plan after bulk delete:', refreshError);
+      }
+      setNotice({ type: 'error', message: getErrorMessage(error) });
+    } finally {
+      setIsSavingMaster(false);
+    }
+  };
   return (
     <div className="min-h-full bg-slate-50 p-2 sm:p-3">
       <div className="w-full space-y-3">
@@ -1188,7 +1246,16 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                     <p className="text-base font-bold leading-tight">{masterValidationErrors.length ? `${masterValidationErrors.length} แถว` : 'ผ่าน'}</p>
                   </div>
                 </div>
-                <div className="flex gap-2 xl:ml-auto">
+                <div className="flex flex-wrap gap-2 xl:ml-auto">
+                  <button type="button" onClick={() => { setMasterImportMode('replace'); setMasterImportRows([]); setMasterImportErrors([]); setShowMasterImport(true); }} disabled={isSavingMaster} className="inline-flex h-10 items-center gap-2 rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white disabled:opacity-50">
+                    <Upload className="h-4 w-4" /> อัปโหลด Master Plan
+                  </button>
+                  <button type="button" onClick={() => setShowDeleteSelectedMaster(true)} disabled={!selectedMasterRows.length || isSavingMaster} className="inline-flex h-10 items-center gap-2 rounded-xl bg-red-600 px-4 text-sm font-semibold text-white disabled:opacity-40">
+                    <Trash2 className="h-4 w-4" /> ลบที่เลือก ({selectedMasterRows.length})
+                  </button>
+                  <button type="button" onClick={() => setShowClearAllMaster(true)} disabled={!masterRows.length || isSavingMaster} className="inline-flex h-10 items-center gap-2 rounded-xl border border-red-300 bg-red-50 px-4 text-sm font-semibold text-red-700 disabled:opacity-40">
+                    <Trash2 className="h-4 w-4" /> ล้างทั้งหมด
+                  </button>
                   <button type="button" onClick={() => void loadMasterRows(true)} disabled={isLoadingMaster || isSavingMaster} className="inline-flex h-10 items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold disabled:opacity-50">
                     {isLoadingMaster ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                     รีเฟรช
@@ -1229,7 +1296,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
               <div className="max-h-[calc(100vh-300px)] w-full overflow-auto rounded-lg border border-slate-200">
                 <table className="w-full min-w-[1220px] table-fixed divide-y divide-slate-200 text-[12px]">
                   <colgroup>
-                    <col className="w-[52px]" /><col className="w-[88px]" /><col className="w-[72px]" />
+                    <col className="w-[38px]" /><col className="w-[52px]" /><col className="w-[88px]" /><col className="w-[72px]" />
                     <col className="w-[92px]" /><col className="w-[88px]" /><col className="w-[150px]" />
                     <col className="w-[112px]" /><col className="w-[82px]" /><col className="w-[76px]" />
                     <col className="w-[68px]" /><col className="w-[68px]" /><col className="w-[86px]" />
@@ -1237,6 +1304,9 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                   </colgroup>
                   <thead className="sticky top-0 z-30 bg-slate-100 text-left text-[10px] font-bold uppercase text-slate-600 shadow-sm">
                     <tr>
+                      <th className="sticky left-0 top-0 z-40 bg-slate-100 px-1 py-2 text-center">
+                        <input type="checkbox" checked={allDisplayedMasterSelected} onChange={toggleSelectAllDisplayedMaster} disabled={!displayedMasterSheetRows.length || isSavingMaster} className="h-4 w-4 rounded border-slate-300 text-blue-600" aria-label="เลือก Master Plan ทั้งหมดที่แสดง" />
+                      </th>
                       {['Row','Route','Company','Truck Name','Truck Type','Driver','Tel','Project','Drop Point','ETA','ETD','Group Code','Action'].map((heading, index) => (
                         <th key={heading} className={`whitespace-nowrap px-2 py-2 ${index >= 9 ? 'text-center' : ''} ${index === 12 ? 'sticky right-0 top-0 z-40 bg-slate-100' : 'bg-slate-100'}`}>{heading}</th>
                       ))}
@@ -1244,9 +1314,12 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                   </thead>
                   <tbody className="divide-y divide-slate-100 bg-white">
                     {filteredMasterRows.length === 0 ? (
-                      <tr><td colSpan={13} className="px-3 py-10 text-center text-slate-500">{isLoadingMaster ? 'กำลังโหลด Master Plan...' : 'ไม่พบข้อมูล Master Plan'}</td></tr>
+                      <tr><td colSpan={14} className="px-3 py-10 text-center text-slate-500">{isLoadingMaster ? 'กำลังโหลด Master Plan...' : 'ไม่พบข้อมูล Master Plan'}</td></tr>
                     ) : filteredMasterRows.map((row, index) => (
                       <tr key={`${row.sheetRow ?? index}-${row.route}-${row.truckName}`} className="h-11 hover:bg-amber-50/40">
+                        <td className="sticky left-0 z-10 bg-white px-1 py-2 text-center">
+                          <input type="checkbox" checked={Boolean(row.sheetRow && selectedMasterRows.includes(row.sheetRow))} onChange={() => toggleSelectMasterRow(row.sheetRow)} disabled={!row.sheetRow || isSavingMaster} className="h-4 w-4 rounded border-slate-300 text-blue-600" aria-label={`เลือก Master Plan แถว ${row.sheetRow ?? '-'}`} />
+                        </td>
                         <td className="whitespace-nowrap px-2 py-2 text-center font-mono text-slate-500">{row.sheetRow ?? '-'}</td>
                         <td className="truncate px-2 py-2 font-semibold" title={row.route}>{row.route || '-'}</td>
                         <td className="truncate px-2 py-2" title={row.company}>{row.company || '-'}</td>
@@ -1758,6 +1831,31 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
       )}
 
       {showBatchCancelConfirmation&&selectedPlanCodes.length>0&&<div className="fixed inset-0 z-[1260] flex items-center justify-center bg-slate-950/70 p-4"><div className="w-full max-w-md rounded-2xl bg-white p-6"><h2 className="text-lg font-bold">ยกเลิกแผน {selectedPlanCodes.length} รายการ</h2><p className="mt-3 text-sm text-slate-600">รายการที่เลือกจะเปลี่ยนเป็นยกเลิก และสามารถคืนสถานะได้ภายหลัง</p><div className="mt-6 flex justify-end gap-3"><button onClick={()=>setShowBatchCancelConfirmation(false)} className="rounded-xl border px-4 py-2">กลับ</button><button onClick={()=>void handleBatchCancelPlans()} className="rounded-xl bg-amber-500 px-4 py-2 font-semibold text-white">ยืนยัน</button></div></div></div>}
+      {showDeleteSelectedMaster && selectedMasterRows.length > 0 && (
+        <div className="fixed inset-0 z-[1300] flex items-center justify-center bg-slate-950/70 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
+            <h2 className="text-lg font-bold">ลบ Master Plan ที่เลือก?</h2>
+            <p className="mt-3 rounded-xl bg-red-50 p-4 text-sm text-red-800">ระบบจะลบถาวร {selectedMasterRows.length} รายการ โดยไม่กระทบ Daily Plan ที่สร้างไว้แล้ว</p>
+            <div className="mt-6 flex justify-end gap-3">
+              <button type="button" onClick={() => setShowDeleteSelectedMaster(false)} className="rounded-xl border px-4 py-2">กลับ</button>
+              <button type="button" onClick={() => void handleDeleteSelectedMaster(false)} className="rounded-xl bg-red-600 px-4 py-2 font-semibold text-white">ยืนยันลบ</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {showClearAllMaster && masterRows.length > 0 && (
+        <div className="fixed inset-0 z-[1310] flex items-center justify-center bg-slate-950/75 p-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
+            <h2 className="text-xl font-bold text-red-700">ล้าง Master Plan เก่าทั้งหมด?</h2>
+            <p className="mt-3 text-sm text-slate-600">กำลังจะลบ Master Plan ทั้งหมด <b>{masterRows.length} รายการ</b> เพื่อเตรียมอัปโหลดแผนใหม่</p>
+            <p className="mt-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-800">การลบนี้ย้อนกลับไม่ได้ แต่จะไม่ลบ Daily Plan และ Actual ที่สร้างไว้แล้ว</p>
+            <div className="mt-6 flex justify-end gap-3">
+              <button type="button" onClick={() => setShowClearAllMaster(false)} className="rounded-xl border px-4 py-2">ยกเลิก</button>
+              <button type="button" onClick={() => void handleDeleteSelectedMaster(true)} className="rounded-xl bg-red-700 px-4 py-2 font-semibold text-white">ยืนยันล้างทั้งหมด</button>
+            </div>
+          </div>
+        </div>
+      )}
       {showMasterImport&&<div className="fixed inset-0 z-[1300] flex items-center justify-center bg-slate-950/70 p-4"><div className="w-full max-w-2xl rounded-2xl bg-white p-6"><h2 className="text-xl font-bold">นำเข้า Master Plan</h2><input ref={masterImportInputRef} type="file" accept=".xlsx,.xls,.csv" className="mt-5" onChange={e=>{const f=e.target.files?.[0];if(f)void handleMasterImportFile(f);}} />{masterImportRows.length>0&&<div className="mt-4"><p>จำนวน {masterImportRows.length} รายการ | ผิดพลาด {masterImportErrors.length} แถว</p><div className="mt-3 flex gap-4"><label><input type="radio" checked={masterImportMode==='append'} onChange={()=>setMasterImportMode('append')} /> เพิ่มรายการ</label><label><input type="radio" checked={masterImportMode==='replace'} onChange={()=>setMasterImportMode('replace')} /> แทนที่ทั้งหมด</label></div></div>}<div className="mt-6 flex justify-end gap-3"><button onClick={()=>setShowMasterImport(false)} className="rounded-xl border px-4 py-2">ยกเลิก</button><button onClick={()=>void handleImportMasterPlan()} disabled={!masterImportRows.length||masterImportErrors.length>0||isImportingMaster} className="rounded-xl bg-blue-600 px-4 py-2 font-semibold text-white disabled:opacity-40">นำเข้า</button></div></div></div>}
       {showBatchDeleteConfirmation && selectedPlanCodes.length > 0 && (
         <div className="fixed inset-0 z-[1250] flex items-center justify-center bg-slate-950/70 p-4">
