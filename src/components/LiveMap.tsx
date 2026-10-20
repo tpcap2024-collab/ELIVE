@@ -41,6 +41,7 @@ interface LiveMapProps {
   initialTruckId?: string | null;
   onRefresh?: () => void | Promise<void>;
   isRefreshing?: boolean;
+  showRouteSummary?: boolean;
 }
 
 type GpsFreshness =
@@ -545,6 +546,7 @@ export function LiveMap({
   initialTruckId,
   onRefresh,
   isRefreshing = false,
+  showRouteSummary = false,
 }: LiveMapProps) {
   const mapContainerRef =
     useRef<HTMLDivElement | null>(
@@ -1463,7 +1465,8 @@ export function LiveMap({
   const etdStatus = hasStampedEtd ? 'STAMPED' : gpsDockResult?.readyForGpsStampEtd ? 'READY' : 'WAITING';
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-slate-50 p-2 md:p-3">
-      <div className="flex shrink-0 flex-col gap-3 rounded-t-xl border border-b-0 border-slate-200 bg-white p-3 shadow-sm lg:flex-row lg:items-center">
+      {!showRouteSummary && (
+        <div className="flex shrink-0 flex-col gap-3 rounded-t-xl border border-b-0 border-slate-200 bg-white p-3 shadow-sm lg:flex-row lg:items-center">
         <div className="flex min-w-fit items-center gap-2">
           <h2 className="font-bold tracking-tight text-slate-900">Live Map</h2>
           <span className="h-2 w-2 rounded-full bg-emerald-500" />
@@ -1484,8 +1487,13 @@ export function LiveMap({
         <button type="button" onClick={clearSelection} disabled={!selectedTruckId && !searchText} className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50"><X className="h-3.5 w-3.5" />ล้างการเลือก</button>
         <button type="button" onClick={handleRefresh} disabled={isRefreshing || !onRefresh} className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-50"><RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />Refresh</button>
       </div>
+      )}
 
-      <div className="relative min-h-[420px] flex-1 overflow-hidden border-x border-slate-200 bg-slate-100">
+      <div
+        className={`relative min-h-[420px] flex-1 overflow-hidden border-slate-200 bg-slate-100 ${
+          showRouteSummary ? 'rounded-t-xl border' : 'border-x'
+        }`}
+      >
         <div ref={mapContainerRef} className="h-full min-h-[420px] w-full" />
         {isRouteLoading && <div className="absolute right-3 top-3 z-[600] flex items-center gap-2 rounded-lg border border-blue-200 bg-white/95 px-3 py-2 text-xs font-semibold text-blue-700 shadow"><LoaderCircle className="h-4 w-4 animate-spin" />กำลังคำนวณเส้นทาง</div>}
         {routeError && <div className="absolute right-3 top-3 z-[600] max-w-sm rounded-lg border border-red-200 bg-white/95 px-3 py-2 text-xs text-red-700 shadow"><AlertTriangle className="mr-1 inline h-4 w-4" />{routeError}</div>}
@@ -1494,6 +1502,53 @@ export function LiveMap({
         {showSelectTruckMessage && <div className="absolute inset-0 z-[500] flex items-center justify-center"><div className="rounded-xl border bg-white p-6 text-center shadow-lg"><TruckIcon className="mx-auto h-8 w-8 text-blue-500" /><div className="mt-3 font-bold">เลือกรถที่ต้องการติดตาม</div><div className="mt-1 text-xs text-slate-500">พบรถที่จับคู่ GPS ได้ {matchedTrucks.length} คัน</div></div></div>}
       </div>
 
+      {showRouteSummary ? (
+        <div className="shrink-0 rounded-b-xl border border-t-0 border-slate-200 bg-white px-3 py-2 shadow-sm">
+          {!selectedGpsLocation ? (
+            <div className="py-3 text-center text-sm font-semibold text-slate-500">
+              ไม่พบข้อมูล GPS ของรถคันนี้
+            </div>
+          ) : (
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <div className="min-w-0 rounded-lg bg-blue-50 px-2 py-2">
+                <div className="text-[10px] font-bold text-blue-600">ระยะทาง</div>
+                <div className="mt-0.5 truncate text-sm font-black text-slate-900">
+                  {routeResult ? `${routeResult.distanceKilometers.toFixed(1)} กม.` : isRouteLoading ? '...' : '-'}
+                </div>
+              </div>
+              <div className="min-w-0 rounded-lg bg-indigo-50 px-2 py-2">
+                <div className="text-[10px] font-bold text-indigo-600">เวลาเดินทาง</div>
+                <div className="mt-0.5 truncate text-sm font-black text-slate-900">
+                  {routeResult ? formatDuration(routeResult.durationMinutes) : isRouteLoading ? '...' : '-'}
+                </div>
+              </div>
+              <div className="min-w-0 rounded-lg bg-emerald-50 px-2 py-2">
+                <div className="text-[10px] font-bold text-emerald-700">คาดว่าจะถึง</div>
+                <div className="mt-0.5 truncate text-sm font-black text-slate-900">
+                  {routeResult ? formatEta(routeResult.estimatedArrival).split(', ').pop() : isRouteLoading ? '...' : '-'}
+                </div>
+              </div>
+              <div className="col-span-3 flex min-w-0 items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 text-left">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-black text-slate-900">
+                    {selectedTruck?.route || '-'} · {selectedTruck?.licensePlate || selectedGpsLocation.licensePlate || '-'}
+                  </div>
+                  <div className="truncate text-xs font-semibold text-slate-600" title={stationName}>
+                    {stationName}
+                  </div>
+                </div>
+                <span className={`shrink-0 rounded-full border px-2 py-1 text-[10px] font-black ${
+                  selectedFreshness
+                    ? getFreshnessClasses(selectedFreshness)
+                    : 'border-slate-200 bg-slate-100 text-slate-600'
+                }`}>
+                  {Number(selectedGpsLocation.speed) > 0 ? 'กำลังวิ่ง' : 'รถจอด'}
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+      ) : (
       <div className="shrink-0 overflow-x-auto rounded-b-xl border border-slate-200 bg-white shadow-sm">
         {!selectedGpsLocation ? (
           <div className="flex h-28 items-center justify-center text-sm text-slate-500">ข้อมูล Operation จะแสดงหลังเลือกรถ</div>
@@ -1509,6 +1564,7 @@ export function LiveMap({
           </div>
         )}
       </div>
+      )}
       {(gpsDockError || isGpsDockLoading) && selectedGpsLocation && <div className="pointer-events-none absolute bottom-32 left-1/2 z-[700] -translate-x-1/2 rounded-lg border bg-white px-3 py-2 text-xs shadow-lg">{isGpsDockLoading ? 'กำลังอ่านสถานะ Geofence...' : gpsDockError}</div>}
     </div>
   );
