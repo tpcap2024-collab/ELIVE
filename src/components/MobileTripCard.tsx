@@ -4,7 +4,7 @@ import {
   ChevronUp,
   ClipboardCheck,
   MessageSquare,
-  Navigation,
+  MapPin,
   Phone,
   Route,
 } from 'lucide-react';
@@ -131,37 +131,38 @@ export function MobileTripCard({
             aria-label={`รายละเอียด ${truck.route} ${truck.licensePlate}`}
             className="flex min-h-11 min-w-0 flex-1 items-center gap-1.5 text-left"
           >
-            <span className="shrink-0 font-mono text-sm font-black text-slate-900">{formatValue(truck.route)}</span>
-            <span className="min-w-0 truncate font-bold text-slate-800">{formatValue(truck.licensePlate)}</span>
-            <span className="min-w-0 truncate text-slate-500">{formatValue(truck.dropPoint)}</span>
+            <span className="shrink-0 font-mono text-base font-black text-blue-800">{formatValue(truck.route)}</span>
+            <span className="shrink-0 text-slate-400" aria-hidden="true">|</span>
+            <span className="min-w-0 truncate text-base font-bold text-slate-900">{formatValue(truck.licensePlate)}</span>
+            <span className="min-w-0 truncate rounded bg-blue-50 px-1.5 py-0.5 text-sm font-bold text-blue-800">{formatValue(truck.dropPoint)}</span>
             {hasPendingWorkDetail && <ClipboardCheck className="h-4 w-4 shrink-0 text-amber-600" aria-label="มีงานรอตรวจสอบ เปิดรายละเอียด" />}
-            {showDetails ? <ChevronUp className="h-3 w-3 shrink-0 text-slate-400" /> : <ChevronDown className="h-3 w-3 shrink-0 text-slate-400" />}
+            {showDetails ? <ChevronUp className="h-4 w-4 shrink-0 text-slate-600" /> : <ChevronDown className="h-4 w-4 shrink-0 text-slate-600" />}
           </button>
-          <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-bold ${
-            gpsLost ? 'bg-orange-100 text-orange-800' : noWork ? 'bg-slate-100 text-slate-700' : completed ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-50 text-blue-700'
+          <span className={`shrink-0 rounded-full border border-current/10 px-2 py-1 text-xs font-bold ${
+            gpsLost ? 'bg-orange-100 text-orange-800' : noWork ? 'bg-slate-200 text-slate-800' : completed ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-800'
           }`}>
             {gpsLost ? 'GPS มีปัญหา' : noWork ? 'ไม่มีงานลง' : completed ? 'เสร็จแล้ว' : truck.status === 'TRAVELING' ? 'กำลังเดินทาง' : truck.status === 'WAITING_AREA' ? 'พื้นที่รอ' : truck.status === 'DOCK_IN' ? 'เข้าช่องจอด' : 'กำลังลงงาน'}
           </span>
         </div>
-        <div className="flex min-w-0 items-center justify-between gap-2 text-xs">
-          <span className="min-w-0 flex-1 truncate text-slate-600" title={truck.gpsLocation?.locationName || ''}>
+        <div className="flex min-w-0 items-center justify-between gap-2 text-sm">
+          <span className="min-w-0 flex-1 truncate font-semibold text-slate-800" title={truck.gpsLocation?.locationName || ''}>
             {truck.gpsLocation?.locationName || 'ยังไม่มีข้อมูลตำแหน่ง'}
           </span>
-          <span className="max-w-[45%] shrink-0 truncate text-[10px] text-slate-500" title={truck.gpsLocation?.gpsTime || ''}>
+          <span className="max-w-[45%] shrink-0 truncate rounded bg-slate-100 px-1.5 py-1 text-xs font-semibold text-slate-700" title={truck.gpsLocation?.gpsTime || ''}>
             {gpsAgeLabel(truck.gpsLocation?.gpsTime, now)}
           </span>
         </div>
         <div className="flex min-w-0 items-center justify-between gap-2">
-          <span className="min-w-0 flex-1 truncate text-xs font-medium text-slate-600" title={truck.actionProblem || ''}>
+          <span className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-800" title={truck.actionProblem || ''}>
             {gpsLost ? 'ไม่สามารถยืนยันเวลาถึง' : noWork ? (truck.actionProblem || 'ไม่มีงานลง') : completed ? `ออก ${actualEtd}` : 'ยังไม่มีข้อมูลเวลาถึง / ระยะทาง'}
           </span>
           <button
             type="button"
             onClick={() => onOpenGps(truck.id)}
             aria-label={`เปิดแผนที่ ${truck.route} ${truck.licensePlate}`}
-            className="flex min-h-11 shrink-0 items-center justify-center gap-1 rounded-lg px-2 text-xs font-bold text-blue-700 active:bg-blue-50"
+            className="flex min-h-11 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-2.5 text-sm font-bold text-red-700 active:bg-red-100"
           >
-            <Navigation className="h-4 w-4" />
+            <MapPin className="h-5 w-5 text-red-600" />
             แผนที่
           </button>
         </div>
@@ -187,49 +188,49 @@ export function MobileTripCard({
           </div>
           <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
             <div>
-              <dt className="text-[10px] font-medium text-slate-400">Code Run</dt>
+              <dt className="text-xs font-semibold text-slate-600">Code Run</dt>
               <dd className="mt-0.5 truncate font-mono font-bold text-slate-800">
                 {formatValue(truck.id)}
               </dd>
             </div>
             <div>
-              <dt className="text-[10px] font-medium text-slate-400">Group Code</dt>
+              <dt className="text-xs font-semibold text-slate-600">Group Code</dt>
               <dd className="mt-0.5 truncate font-bold text-slate-800">
                 {formatValue(truck.groupCode)}
               </dd>
             </div>
             <div>
-              <dt className="text-[10px] font-medium text-slate-400">สังกัด</dt>
+              <dt className="text-xs font-semibold text-slate-600">สังกัด</dt>
               <dd className="mt-0.5 truncate font-medium text-slate-800">
                 {formatValue(truck.supplierName)}
               </dd>
             </div>
             <div>
-              <dt className="text-[10px] font-medium text-slate-400">Project</dt>
+              <dt className="text-xs font-semibold text-slate-600">Project</dt>
               <dd className="mt-0.5 truncate font-medium text-slate-800">
                 {formatValue(truck.project)}
               </dd>
             </div>
             <div>
-              <dt className="text-[10px] font-medium text-slate-400">Plan ETD</dt>
+              <dt className="text-xs font-semibold text-slate-600">Plan ETD</dt>
               <dd className="mt-0.5 font-mono font-bold text-slate-800">
                 {formatValue(truck.planEtd)}
               </dd>
             </div>
             <div>
-              <dt className="text-[10px] font-medium text-slate-400">ประเภทรถ</dt>
+              <dt className="text-xs font-semibold text-slate-600">ประเภทรถ</dt>
               <dd className="mt-0.5 truncate font-medium text-slate-800">
                 {formatValue(truck.truckType)}
               </dd>
             </div>
             <div>
-              <dt className="text-[10px] font-medium text-slate-400">ผู้ขับรถ</dt>
+              <dt className="text-xs font-semibold text-slate-600">ผู้ขับรถ</dt>
               <dd className="mt-0.5 truncate font-medium text-slate-800">
                 {formatValue(truck.driverName)}
               </dd>
             </div>
             <div>
-              <dt className="text-[10px] font-medium text-slate-400">โทรศัพท์</dt>
+              <dt className="text-xs font-semibold text-slate-600">โทรศัพท์</dt>
               <dd className="mt-0.5 font-medium text-slate-800">
                 {truck.phone ? (
                   <button
@@ -249,7 +250,7 @@ export function MobileTripCard({
 
           {truck.workDetail && (
             <div className="mt-3 rounded-lg border border-slate-200 bg-white p-2.5">
-              <p className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">
+              <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-slate-600">
                 <Route className="h-3.5 w-3.5" />
                 รายละเอียดงาน
               </p>
