@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ChevronDown,
   ChevronUp,
@@ -8,6 +8,7 @@ import {
   Route,
 } from 'lucide-react';
 import { Truck } from '../types';
+import { fetchRouteToTpcap, RouteToTpcapResult } from '../lib/sheets';
 
 interface MobileTripCardProps {
   truck: Truck;
@@ -76,21 +77,28 @@ function callPhone(phone?: string): void {
   window.location.href = 'tel:' + number;
 }
 
-function gpsAgeLabel(value: string | undefined, now: number): string {
+function formatRouteEta(value?: string): string {
   const text = String(value || '').trim();
-  if (!text) return 'GPS ไม่ระบุเวลา';
-  if (!/^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:?\d{2})$/i.test(text)) {
-    return 'GPS ' + text;
-  }
-  const timestamp = Date.parse(text);
-  if (!Number.isFinite(timestamp)) return 'GPS ไม่ระบุเวลา';
-  const elapsed = now - timestamp;
-  if (elapsed < -60000) return 'GPS เวลาไม่ตรง';
-  const minutes = Math.max(0, Math.floor(elapsed / 60000));
-  if (minutes === 0) return 'GPS ล่าสุด';
-  if (minutes < 60) return `GPS ${minutes} นาที`;
-  if (minutes < 1440) return `GPS ${Math.floor(minutes / 60)} ชม.`;
-  return `GPS ${Math.floor(minutes / 1440)} วัน`;
+  if (!text) return '-';
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) return text;
+  return date.toLocaleTimeString('en-GB', {
+    timeZone: 'Asia/Bangkok',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+}
+
+function formatRouteDuration(value?: number): string {
+  if (value === undefined || !Number.isFinite(value)) return '-';
+  const minutes = Math.max(1, Math.round(value));
+  if (minutes < 60) return `${minutes} นาที`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes > 0
+    ? `${hours} ชม. ${remainingMinutes} นาที`
+    : `${hours} ชม.`;
 }
 
 export function MobileTripCard({
@@ -101,14 +109,66 @@ export function MobileTripCard({
   onOpenWorkDetail,
 }: MobileTripCardProps) {
   const [showDetails, setShowDetails] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 60000);
-    return () => window.clearInterval(timer);
-  }, []);
+  const cardRef = useRef<HTMLElement | null>(null);
+  const [isVisible, setIsVisible] = useState(false);
+  const [routeResult, setRouteResult] = useState<RouteToTpcapResult | null>(null);
+  const [isRouteLoading, setIsRouteLoading] = useState(false);
+  const [routeUnavailable, setRouteUnavailable] = useState(false);
   const gpsLost = hasGpsLostAction(truck);
   const noWork = hasNoWorkAction(truck);
   const completed = hasCompletedTrip(truck);
+  useEffect(() => {
+    const element = cardRef.current;
+    if (!element) return;
+    if (typeof IntersectionObserver === 'undefined') {
+      setIsVisible(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      entries => {
+        if (entries.some(entry => entry.isIntersecting)) {
+          setIsVisible(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: '160px 0px' }
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const location = truck.gpsLocation;
+    if (!isVisible || !location || gpsLost || noWork || completed) {
+      setRouteResult(null);
+      setRouteUnavailable(false);
+      setIsRouteLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setIsRouteLoading(true);
+    setRouteUnavailable(false);
+    void fetchRouteToTpcap(location.latitude, location.longitude)
+      .then(result => {
+        if (!cancelled) setRouteResult(result);
+      })
+      .catch(error => {
+        console.error('Unable to calculate Mobile route:', error);
+        if (!cancelled) {
+          setRouteResult(null);
+          setRouteUnavailable(true);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setIsRouteLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [completed, gpsLost, isVisible, noWork, truck.gpsLocation]);
+
   const hasPendingWorkDetail = Boolean(
     canOperate && truck.workDetail && !truck.workDetailConfirmed
   );
@@ -117,6 +177,7 @@ export function MobileTripCard({
 
   return (
     <article
+      ref={cardRef}
       className={`overflow-hidden rounded-xl border border-l-4 border-slate-200 bg-white shadow-sm ${getCardAccentClass(
         truck
       )}`}
@@ -152,17 +213,28 @@ export function MobileTripCard({
             {gpsLost ? 'GPS มีปัญหา' : noWork ? 'ไม่มีงานลง' : completed ? 'เสร็จแล้ว' : truck.status === 'TRAVELING' ? 'กำลังเดินทาง' : truck.status === 'WAITING_AREA' ? 'พื้นที่รอ' : truck.status === 'DOCK_IN' ? 'เข้าช่องจอด' : 'กำลังลงงาน'}
           </span>
         </div>
-        <div className="flex min-w-0 items-center justify-between gap-2 text-xs">
-          <span className="min-w-0 flex-1 truncate text-slate-600" title={truck.gpsLocation?.locationName || ''}>
+        <div className="flex min-w-0 items-center text-sm">
+          <span className="min-w-0 flex-1 truncate font-semibold text-slate-700" title={truck.gpsLocation?.locationName || ''}>
             {truck.gpsLocation?.locationName || 'ยังไม่มีข้อมูลตำแหน่ง'}
-          </span>
-          <span className="max-w-[45%] shrink-0 truncate text-[10px] text-slate-500" title={truck.gpsLocation?.gpsTime || ''}>
-            {gpsAgeLabel(truck.gpsLocation?.gpsTime, now)}
           </span>
         </div>
         <div className="flex min-w-0 items-center justify-between gap-2">
           <span className="min-w-0 flex-1 truncate text-xs font-medium text-slate-600" title={truck.actionProblem || ''}>
-            {gpsLost ? 'ไม่สามารถยืนยันเวลาถึง' : noWork ? (truck.actionProblem || 'ไม่มีงานลง') : completed ? `ออก ${actualEtd}` : 'ยังไม่มีข้อมูลเวลาถึง / ระยะทาง'}
+            {gpsLost
+              ? 'ไม่สามารถยืนยันเวลาถึง'
+              : noWork
+                ? (truck.actionProblem || 'ไม่มีงานลง')
+                : completed
+                  ? `ออก ${actualEtd}`
+                  : isRouteLoading
+                    ? 'กำลังคำนวณเส้นทาง...'
+                    : routeResult
+                      ? `อีก ${formatRouteDuration(routeResult.durationMinutes)} • ถึง ${formatRouteEta(routeResult.estimatedArrival)} • ${routeResult.distanceKilometers.toFixed(1)} กม.`
+                      : routeUnavailable
+                        ? 'ไม่สามารถคำนวณเส้นทางได้'
+                        : truck.gpsLocation
+                          ? 'รอคำนวณเส้นทาง'
+                          : 'ยังไม่มีข้อมูลตำแหน่ง'}
           </span>
           <button
             type="button"
