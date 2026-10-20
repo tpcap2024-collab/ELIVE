@@ -1489,9 +1489,52 @@ export function LiveMap({
       </div>
       )}
 
+      {showRouteSummary && (
+        <div className="shrink-0 rounded-t-xl border border-b-0 border-slate-200 bg-white px-4 py-3 shadow-md">
+          {!selectedGpsLocation ? (
+            <div className="py-3 text-center text-sm font-semibold text-slate-500">ไม่พบข้อมูล GPS ของรถคันนี้</div>
+          ) : (
+            <div className="space-y-3">
+              <div className="flex min-w-0 items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-left shadow-sm">
+                <div className="min-w-0">
+                  <div className="truncate text-lg font-black text-slate-950">
+                    {selectedTruck?.route || '-'} · {selectedTruck?.licensePlate || selectedGpsLocation.licensePlate || '-'}
+                  </div>
+                  <div className="mt-1 truncate text-sm font-semibold text-slate-700" title={stationName}>{stationName}</div>
+                </div>
+                <span className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-black ${
+                  selectedFreshness ? getFreshnessClasses(selectedFreshness) : 'border-slate-200 bg-slate-100 text-slate-600'
+                }`}>
+                  {Number(selectedGpsLocation.speed) > 0 ? 'กำลังวิ่ง' : 'รถจอด'}
+                </span>
+              </div>
+              <div className="grid grid-cols-3 gap-3 text-center">
+                <div className="min-w-0 rounded-xl border border-blue-200 bg-blue-50 px-3 py-3 shadow-sm">
+                  <div className="text-xs font-black text-blue-700">ระยะทาง</div>
+                  <div className="mt-1 truncate text-lg font-black leading-tight text-slate-950">
+                    {routeResult ? `${routeResult.distanceKilometers.toFixed(1)} กม.` : isRouteLoading ? '...' : '-'}
+                  </div>
+                </div>
+                <div className="min-w-0 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-3 shadow-sm">
+                  <div className="text-xs font-black text-indigo-700">เวลาเดินทาง</div>
+                  <div className="mt-1 truncate text-lg font-black leading-tight text-slate-950">
+                    {routeResult ? formatDuration(routeResult.durationMinutes) : isRouteLoading ? '...' : '-'}
+                  </div>
+                </div>
+                <div className="min-w-0 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-3 shadow-sm">
+                  <div className="text-xs font-black text-emerald-700">คาดว่าจะถึง</div>
+                  <div className="mt-1 truncate text-lg font-black leading-tight text-slate-950">
+                    {routeResult ? formatEta(routeResult.estimatedArrival).split(', ').pop() : isRouteLoading ? '...' : '-'}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
       <div
         className={`relative min-h-[420px] flex-1 overflow-hidden border-slate-200 bg-slate-100 ${
-          showRouteSummary ? 'rounded-t-xl border' : 'border-x'
+          showRouteSummary ? 'rounded-b-xl border' : 'border-x'
         }`}
       >
         <div ref={mapContainerRef} className="h-full min-h-[420px] w-full" />
@@ -1502,53 +1545,7 @@ export function LiveMap({
         {showSelectTruckMessage && <div className="absolute inset-0 z-[500] flex items-center justify-center"><div className="rounded-xl border bg-white p-6 text-center shadow-lg"><TruckIcon className="mx-auto h-8 w-8 text-blue-500" /><div className="mt-3 font-bold">เลือกรถที่ต้องการติดตาม</div><div className="mt-1 text-xs text-slate-500">พบรถที่จับคู่ GPS ได้ {matchedTrucks.length} คัน</div></div></div>}
       </div>
 
-      {showRouteSummary ? (
-        <div className="shrink-0 rounded-b-xl border border-t-0 border-slate-200 bg-white px-4 py-3 shadow-md">
-          {!selectedGpsLocation ? (
-            <div className="py-3 text-center text-sm font-semibold text-slate-500">
-              ไม่พบข้อมูล GPS ของรถคันนี้
-            </div>
-          ) : (
-            <div className="grid grid-cols-3 gap-3 text-center">
-              <div className="min-w-0 rounded-xl border border-blue-200 bg-blue-50 px-3 py-3 shadow-sm">
-                <div className="text-xs font-black text-blue-700">ระยะทาง</div>
-                <div className="mt-1 truncate text-lg font-black leading-tight text-slate-950">
-                  {routeResult ? `${routeResult.distanceKilometers.toFixed(1)} กม.` : isRouteLoading ? '...' : '-'}
-                </div>
-              </div>
-              <div className="min-w-0 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-3 shadow-sm">
-                <div className="text-xs font-black text-indigo-700">เวลาเดินทาง</div>
-                <div className="mt-1 truncate text-lg font-black leading-tight text-slate-950">
-                  {routeResult ? formatDuration(routeResult.durationMinutes) : isRouteLoading ? '...' : '-'}
-                </div>
-              </div>
-              <div className="min-w-0 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-3 shadow-sm">
-                <div className="text-xs font-black text-emerald-700">คาดว่าจะถึง</div>
-                <div className="mt-1 truncate text-lg font-black leading-tight text-slate-950">
-                  {routeResult ? formatEta(routeResult.estimatedArrival).split(', ').pop() : isRouteLoading ? '...' : '-'}
-                </div>
-              </div>
-              <div className="col-span-3 flex min-w-0 items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-left shadow-sm">
-                <div className="min-w-0">
-                  <div className="truncate text-base font-black text-slate-950">
-                    {selectedTruck?.route || '-'} · {selectedTruck?.licensePlate || selectedGpsLocation.licensePlate || '-'}
-                  </div>
-                  <div className="mt-1 truncate text-sm font-semibold text-slate-700" title={stationName}>
-                    {stationName}
-                  </div>
-                </div>
-                <span className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-black ${
-                  selectedFreshness
-                    ? getFreshnessClasses(selectedFreshness)
-                    : 'border-slate-200 bg-slate-100 text-slate-600'
-                }`}>
-                  {Number(selectedGpsLocation.speed) > 0 ? 'กำลังวิ่ง' : 'รถจอด'}
-                </span>
-              </div>
-            </div>
-          )}
-        </div>
-      ) : (
+      {!showRouteSummary && (
       <div className="shrink-0 overflow-x-auto rounded-b-xl border border-slate-200 bg-white shadow-sm">
         {!selectedGpsLocation ? (
           <div className="flex h-28 items-center justify-center text-sm text-slate-500">ข้อมูล Operation จะแสดงหลังเลือกรถ</div>
