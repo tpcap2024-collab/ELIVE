@@ -1248,13 +1248,13 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                 </div>
                 <div className="flex flex-wrap gap-2 xl:ml-auto">
                   <button type="button" onClick={() => { setMasterImportMode('replace'); setMasterImportRows([]); setMasterImportErrors([]); setShowMasterImport(true); }} disabled={isSavingMaster} className="inline-flex h-10 items-center gap-2 rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white disabled:opacity-50">
-                    <Upload className="h-4 w-4" /> อัปโหลด Master Plan
+                    <Upload className="h-4 w-4" /> อัปโหลดไฟล์
                   </button>
                   <button type="button" onClick={() => setShowDeleteSelectedMaster(true)} disabled={!selectedMasterRows.length || isSavingMaster} className="inline-flex h-10 items-center gap-2 rounded-xl bg-red-600 px-4 text-sm font-semibold text-white disabled:opacity-40">
                     <Trash2 className="h-4 w-4" /> ลบที่เลือก ({selectedMasterRows.length})
                   </button>
                   <button type="button" onClick={() => setShowClearAllMaster(true)} disabled={!masterRows.length || isSavingMaster} className="inline-flex h-10 items-center gap-2 rounded-xl border border-red-300 bg-red-50 px-4 text-sm font-semibold text-red-700 disabled:opacity-40">
-                    <Trash2 className="h-4 w-4" /> ล้างทั้งหมด
+                    <Trash2 className="h-4 w-4" /> ลบทั้งหมด
                   </button>
                   <button type="button" onClick={() => void loadMasterRows(true)} disabled={isLoadingMaster || isSavingMaster} className="inline-flex h-10 items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold disabled:opacity-50">
                     {isLoadingMaster ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
@@ -1851,7 +1851,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
             <p className="mt-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-800">การลบนี้ย้อนกลับไม่ได้ แต่จะไม่ลบ Daily Plan และ Actual ที่สร้างไว้แล้ว</p>
             <div className="mt-6 flex justify-end gap-3">
               <button type="button" onClick={() => setShowClearAllMaster(false)} className="rounded-xl border px-4 py-2">ยกเลิก</button>
-              <button type="button" onClick={() => void handleDeleteSelectedMaster(true)} className="rounded-xl bg-red-700 px-4 py-2 font-semibold text-white">ยืนยันล้างทั้งหมด</button>
+              <button type="button" onClick={() => void handleDeleteSelectedMaster(true)} className="rounded-xl bg-red-700 px-4 py-2 font-semibold text-white">ยืนยันลบทั้งหมด</button>
             </div>
           </div>
         </div>
