@@ -38,13 +38,20 @@ const MOBILE_FILTERS: Array<{
   icon: React.ComponentType<{ className?: string }>;
 }> = [
   { value: 'ALL', label: 'ทั้งหมด', icon: TruckIcon },
-  { value: 'ACTIVE', label: 'กำลังทำงาน', icon: TruckIcon },
+  { value: 'ACTIVE', label: 'กำลังลงงาน', icon: TruckIcon },
   { value: 'PENDING', label: 'รอดำเนินการ', icon: Clock3 },
   { value: 'ISSUE', label: 'ผิดปกติ', icon: AlertTriangle },
   { value: 'COMPLETED', label: 'เสร็จแล้ว', icon: CheckCircle2 },
 ];
 
 
+const MOBILE_FILTER_STYLES: Record<MobileFilter, { select: string; option: string }> = {
+  ALL: { select: 'border-black bg-black text-white', option: 'bg-black text-white' },
+  ACTIVE: { select: 'border-yellow-400 bg-yellow-300 text-yellow-950', option: 'bg-yellow-300 text-yellow-950' },
+  PENDING: { select: 'border-slate-400 bg-slate-300 text-slate-950', option: 'bg-slate-300 text-slate-950' },
+  ISSUE: { select: 'border-red-700 bg-red-600 text-white', option: 'bg-red-600 text-white' },
+  COMPLETED: { select: 'border-emerald-700 bg-emerald-600 text-white', option: 'bg-emerald-600 text-white' },
+};
 function parseGpsTimestamp(value?: string): number {
   const text = String(value || '').trim();
   if (!text) return 0;
@@ -299,10 +306,16 @@ export function MobileOperation({
               if (option) setFilter(option.value);
             }}
             aria-label="เลือกสถานะรถ"
-            className="h-11 w-32 min-w-0 shrink-0 rounded-xl border border-blue-200 bg-blue-50 px-2 text-sm font-bold text-blue-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+            className={`h-11 w-32 min-w-0 shrink-0 rounded-xl border px-2 text-sm font-black outline-none focus:ring-2 focus:ring-blue-500/30 ${
+              MOBILE_FILTER_STYLES[filter].select
+            }`}
           >
             {MOBILE_FILTERS.map(item => (
-              <option key={item.value} value={item.value}>
+              <option
+                key={item.value}
+                value={item.value}
+                className={`font-bold ${MOBILE_FILTER_STYLES[item.value].option}`}
+              >
                 {item.label} ({counts[item.value]})
               </option>
             ))}
