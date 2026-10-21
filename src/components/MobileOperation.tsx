@@ -30,6 +30,7 @@ interface MobileOperationProps {
   onOpenGps: (truckId: string) => void;
   onOpenAction: (truck: Truck) => void;
   onOpenWorkDetail: (truck: Truck) => void;
+  onStampTruck: (truck: Truck, type: 'ETA' | 'ETD') => void | Promise<void>;
 }
 
 const MOBILE_FILTERS: Array<{
@@ -165,6 +166,7 @@ export function MobileOperation({
   onOpenGps,
   onOpenAction,
   onOpenWorkDetail,
+  onStampTruck,
 }: MobileOperationProps) {
   const [filter, setFilter] = useState<MobileFilter>('ALL');
   const [searchText, setSearchText] = useState('');
@@ -380,6 +382,7 @@ export function MobileOperation({
                 onOpenGps={onOpenGps}
                 onOpenAction={onOpenAction}
                 onOpenWorkDetail={onOpenWorkDetail}
+                onStamp={onStampTruck}
               />
             ))}
           </div>
