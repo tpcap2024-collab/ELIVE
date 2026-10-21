@@ -13,6 +13,16 @@ export function IncidentCenter({ trucks, onUpdateTruck }: IncidentCenterProps) {
   const [selectedTruck, setSelectedTruck] = useState<Truck | null>(null);
   const [newRemark, setNewRemark] = useState('');
 
+  const actionCounts = actionTrucks.reduce(
+    (counts, truck) => {
+      const status = truck.actionStatus || 'OPEN';
+      if (status === 'IN_PROGRESS' || status === 'RESOLVED' || status === 'CLOSED') counts[status] += 1;
+      else counts.OPEN += 1;
+      return counts;
+    },
+    { OPEN: 0, IN_PROGRESS: 0, RESOLVED: 0, CLOSED: 0 }
+  );
+
   const statusColors: Record<string, string> = {
     OPEN: 'bg-red-100 text-red-800 border-red-200',
     IN_PROGRESS: 'bg-blue-100 text-blue-800 border-blue-200',
@@ -50,6 +60,19 @@ export function IncidentCenter({ trucks, onUpdateTruck }: IncidentCenterProps) {
         </div>
       </div>
 
+      <div className="grid shrink-0 grid-cols-2 gap-2 border-b border-slate-200 bg-slate-50 px-4 py-3 md:grid-cols-4 md:px-6">
+        {[
+          ['รอรับผิดชอบ', actionCounts.OPEN, 'border-red-200 bg-red-50 text-red-700'],
+          ['กำลังดำเนินการ', actionCounts.IN_PROGRESS, 'border-amber-200 bg-amber-50 text-amber-700'],
+          ['รอยืนยัน', actionCounts.RESOLVED, 'border-blue-200 bg-blue-50 text-blue-700'],
+          ['ปิดแล้ว', actionCounts.CLOSED, 'border-emerald-200 bg-emerald-50 text-emerald-700'],
+        ].map(([label, value, style]) => (
+          <div key={String(label)} className={`rounded-xl border px-4 py-3 shadow-sm ${style}`}>
+            <div className="text-[11px] font-black uppercase tracking-wide">{String(label)}</div>
+            <div className="mt-1 text-2xl font-black leading-none">{String(value)}</div>
+          </div>
+        ))}
+      </div>
       <div className="flex-1 flex overflow-hidden">
         <div className={`flex flex-col border-r border-slate-200 bg-white transition-all duration-300 ${selectedTruck ? 'w-1/3' : 'w-full'}`}>
           <div className="flex-1 overflow-y-auto">
