@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '75';
+const API_VERSION = '76';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -173,7 +173,7 @@ const LOGIN_RATE_LIMIT_KEY_PREFIX = 'elive:rate-limit:login:';
 const PASSWORD_CHANGE_RATE_LIMIT_KEY_PREFIX = 'elive:rate-limit:password-change:';
 const PASSWORD_CHANGE_RATE_LIMIT_MAX_FAILURES = 5;
 const AUTH_USER_OVERRIDE_KEY_PREFIX = 'elive:auth-user-override:';
-const PASSWORD_MIN_LENGTH = 12;
+const PASSWORD_MIN_LENGTH = 6;
 const PASSWORD_MAX_LENGTH = 128;
 const PASSWORD_HASH_ITERATIONS = 310000;
 const PBKDF2_MIN_ITERATIONS = 210000;
@@ -206,6 +206,16 @@ const ROLE_LEVELS = Object.freeze({
   ADMIN: 50,
 });
 const ROLE_NAMES = Object.freeze(Object.keys(ROLE_LEVELS));
+const ROLE_PERMISSIONS = Object.freeze({
+  TV_VIEWER: Object.freeze(['VIEW_DASHBOARD', 'VIEW_LIVE_MAP', 'VIEW_PLATFORM', 'VIEW_REPORT']),
+  OPERATOR: Object.freeze(['VIEW_DASHBOARD', 'VIEW_LIVE_MAP', 'USE_MOBILE_MODE', 'STAMP_TRUCK', 'SUBMIT_ACTION']),
+  PLANNER: Object.freeze(['VIEW_DASHBOARD', 'VIEW_LIVE_MAP', 'VIEW_PLATFORM', 'VIEW_REPORT', 'USE_MOBILE_MODE', 'STAMP_TRUCK', 'SUBMIT_ACTION', 'VIEW_ACTION_CENTER', 'MANAGE_PLAN']),
+  SUPERVISOR: Object.freeze(['VIEW_DASHBOARD', 'VIEW_LIVE_MAP', 'VIEW_PLATFORM', 'VIEW_REPORT', 'SUBMIT_ACTION', 'VIEW_ACTION_CENTER']),
+  ADMIN: Object.freeze(['VIEW_DASHBOARD', 'VIEW_LIVE_MAP', 'VIEW_PLATFORM', 'VIEW_REPORT', 'USE_MOBILE_MODE', 'STAMP_TRUCK', 'SUBMIT_ACTION', 'VIEW_ACTION_CENTER', 'MANAGE_PLAN', 'MANAGE_SYSTEM']),
+});
+function roleHasPermission(role, permission) {
+  return Boolean(ROLE_PERMISSIONS[cleanText(role).toUpperCase()]?.includes(permission));
+}
 
 const RETRYABLE_STATUS_CODES = new Set([
   408,
@@ -3377,7 +3387,6 @@ function validateNewPassword(username, currentPassword, newPassword, confirmNewP
   if (newPassword !== confirmNewPassword) throw new Error('PASSWORD_CONFIRMATION_MISMATCH');
   if (newPassword.length < PASSWORD_MIN_LENGTH || newPassword.length > PASSWORD_MAX_LENGTH) throw new Error('PASSWORD_POLICY_INVALID');
   if (newPassword === currentPassword) throw new Error('PASSWORD_UNCHANGED');
-  if (newPassword.toLowerCase().includes(cleanText(username).toLowerCase())) throw new Error('PASSWORD_CONTAINS_USERNAME');
   return newPassword;
 }
 async function hashNewPassword(password) {
@@ -3835,6 +3844,25 @@ function requireMinimumRole(requiredRole) {
 }
 
 
+function requirePermission(permission) {
+  const normalizedPermission = cleanText(permission).toUpperCase();
+  return (req, res, next) => {
+    if (!req.auth) {
+      return res.status(401).json({ success: false, authenticated: false, error: 'Authentication required.' });
+    }
+    if (!roleHasPermission(req.auth.role, normalizedPermission)) {
+      return res.status(403).json({
+        success: false,
+        authenticated: true,
+        authorized: false,
+        error: 'Insufficient permission.',
+        requiredPermission: normalizedPermission,
+      });
+    }
+    req.authorization = { requiredPermission: normalizedPermission, currentRole: req.auth.role };
+    return next();
+  };
+}
 function validateAppsScriptUrl() {
   if (!APPS_SCRIPT_URL) {
     throw new Error('APPS_SCRIPT_URL is not configured on Render.');
@@ -4721,7 +4749,6 @@ app.post('/api/auth/change-password', requireAuthentication, async (req, res) =>
       PASSWORD_CONFIRMATION_MISMATCH: 'รหัสผ่านใหม่และการยืนยันไม่ตรงกัน',
       PASSWORD_POLICY_INVALID: `รหัสผ่านใหม่ต้องมีความยาว ${PASSWORD_MIN_LENGTH}-${PASSWORD_MAX_LENGTH} ตัวอักษร`,
       PASSWORD_UNCHANGED: 'รหัสผ่านใหม่ต้องไม่เหมือนรหัสผ่านปัจจุบัน',
-      PASSWORD_CONTAINS_USERNAME: 'รหัสผ่านใหม่ต้องไม่มี Username เป็นส่วนประกอบ',
     };
     if (validationMessages[code]) return res.status(400).json({ success: false, error: validationMessages[code] });
     return sendRouteError(res, error, 'Unable to change password.', 500);
@@ -4942,6 +4969,10 @@ app.get(['/health', '/api/health'], (req, res) => {
       rateLimitFailures: PASSWORD_CHANGE_RATE_LIMIT_MAX_FAILURES,
     },
     sessionRevocationAudit: { enabled: true, action: 'SESSION_REVOKED' },
+    authorization: {
+      mode: 'explicit-permission-matrix',
+      permissionsByRole: ROLE_PERMISSIONS,
+    },
     concurrentSessionControl: {
       enabled: true,
       policy: 'revoke-oldest',
@@ -4995,7 +5026,7 @@ app.get(['/health', '/api/health'], (req, res) => {
   });
 });
 
-app.get('/api/gps/worker-status', requireAuthentication, requireMinimumRole('SUPERVISOR'), async (req, res) => {
+app.get('/api/gps/worker-status', requireAuthentication, requirePermission('MANAGE_SYSTEM'), async (req, res) => {
   try {
     const raw = await requireRedisClient().get(GPS_WORKER_STATUS_KEY);
     res.setHeader('Cache-Control', 'no-store');
@@ -5009,7 +5040,7 @@ app.get('/api/gps/worker-status', requireAuthentication, requireMinimumRole('SUP
     return sendRouteError(res, error, 'Unable to retrieve GPS Worker status.', 500);
   }
 });
-app.get('/api/gps/vehicle-cycle', requireAuthentication, requireMinimumRole('TV_VIEWER'), async (req, res) => {
+app.get('/api/gps/vehicle-cycle', requireAuthentication, requirePermission('VIEW_LIVE_MAP'), async (req, res) => {
   try {
     const licensePlate = cleanText(req.query.licensePlate);
     if (!licensePlate) throw new Error('licensePlate is required.');
@@ -5020,7 +5051,7 @@ app.get('/api/gps/vehicle-cycle', requireAuthentication, requireMinimumRole('TV_
     return sendRouteError(res, error, 'Unable to retrieve GPS Vehicle Cycle.');
   }
 });
-app.get('/api/gps/geofences', requireAuthentication, requireMinimumRole('TV_VIEWER'), (req, res) => {
+app.get('/api/gps/geofences', requireAuthentication, requirePermission('VIEW_LIVE_MAP'), (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   return res.status(200).json({
     success: true,
@@ -5039,7 +5070,7 @@ app.get('/api/gps/geofences', requireAuthentication, requireMinimumRole('TV_VIEW
     timestamp: new Date().toISOString(),
   });
 });
-app.get('/api/gps/dock-status/:codeRun', requireAuthentication, requireMinimumRole('TV_VIEWER'), async (req, res) => {
+app.get('/api/gps/dock-status/:codeRun', requireAuthentication, requirePermission('VIEW_LIVE_MAP'), async (req, res) => {
   try {
     const codeRun = normalizeCodeRun(req.params.codeRun);
     let state = await readGpsDwellState(codeRun);
@@ -5070,7 +5101,7 @@ app.get('/api/gps/dock-status/:codeRun', requireAuthentication, requireMinimumRo
     return sendRouteError(res, error, 'Unable to retrieve GPS Dock status.');
   }
 });
-app.post('/api/gps/dock/evaluate', requireAuthentication, requireMinimumRole('OPERATOR'), async (req, res) => {
+app.post('/api/gps/dock/evaluate', requireAuthentication, requirePermission('STAMP_TRUCK'), async (req, res) => {
   try {
     const result = await evaluateGpsDock(req.body);
     req.auditDetails = {
@@ -5091,7 +5122,7 @@ app.post('/api/gps/dock/evaluate', requireAuthentication, requireMinimumRole('OP
     return sendRouteError(res, error, 'Unable to evaluate GPS Dock status.');
   }
 });
-app.delete('/api/gps/dock-status/:codeRun', requireAuthentication, requireMinimumRole('SUPERVISOR'), async (req, res) => {
+app.delete('/api/gps/dock-status/:codeRun', requireAuthentication, requirePermission('MANAGE_SYSTEM'), async (req, res) => {
   try {
     const codeRun = normalizeCodeRun(req.params.codeRun);
     const client = requireRedisClient();
@@ -5107,7 +5138,7 @@ app.delete('/api/gps/dock-status/:codeRun', requireAuthentication, requireMinimu
     return sendRouteError(res, error, 'Unable to reset GPS Dock status.');
   }
 });
-app.get('/api/trucks', requireAuthentication, requireMinimumRole('TV_VIEWER'), async (req, res) => {
+app.get('/api/trucks', requireAuthentication, requirePermission('VIEW_DASHBOARD'), async (req, res) => {
   try {
     const forceRefresh = cleanText(req.query.refresh).toLowerCase() === 'true';
     if (forceRefresh) await synchronizeGpsWorkerRealtime();
@@ -5150,7 +5181,7 @@ app.get('/api/trucks', requireAuthentication, requireMinimumRole('TV_VIEWER'), a
   }
 });
 
-app.get('/api/master-plan', requireAuthentication, requireMinimumRole('TV_VIEWER'), async (req, res) => {
+app.get('/api/master-plan', requireAuthentication, requirePermission('MANAGE_PLAN'), async (req, res) => {
   try {
     const forceRefresh =
       cleanText(req.query.refresh).toLowerCase() === 'true';
@@ -5176,7 +5207,7 @@ app.get('/api/master-plan', requireAuthentication, requireMinimumRole('TV_VIEWER
   }
 });
 
-app.post('/api/master-plan/rows', requireAuthentication, requireMinimumRole('PLANNER'), async (req, res) => {
+app.post('/api/master-plan/rows', requireAuthentication, requirePermission('MANAGE_PLAN'), async (req, res) => {
   try {
     const row = normalizeMasterPlanRow(req.body);
     const result = await requestAppsScriptPost('createMasterPlanRow', { row });
@@ -5189,7 +5220,7 @@ app.post('/api/master-plan/rows', requireAuthentication, requireMinimumRole('PLA
   }
 });
 
-app.put('/api/master-plan/rows/:sheetRow', requireAuthentication, requireMinimumRole('PLANNER'), async (req, res) => {
+app.put('/api/master-plan/rows/:sheetRow', requireAuthentication, requirePermission('MANAGE_PLAN'), async (req, res) => {
   try {
     const sheetRow = normalizeMasterPlanSheetRow(req.params.sheetRow);
     const row = normalizeMasterPlanRow(req.body);
@@ -5206,7 +5237,7 @@ app.put('/api/master-plan/rows/:sheetRow', requireAuthentication, requireMinimum
   }
 });
 
-app.delete('/api/master-plan/rows/:sheetRow', requireAuthentication, requireMinimumRole('SUPERVISOR'), async (req, res) => {
+app.delete('/api/master-plan/rows/:sheetRow', requireAuthentication, requirePermission('MANAGE_PLAN'), async (req, res) => {
   try {
     const sheetRow = normalizeMasterPlanSheetRow(req.params.sheetRow);
     const result = await requestAppsScriptPost('deleteMasterPlanRow', {
@@ -5221,7 +5252,7 @@ app.delete('/api/master-plan/rows/:sheetRow', requireAuthentication, requireMini
   }
 });
 
-app.post('/api/plans/preview', requireAuthentication, requireMinimumRole('PLANNER'), async (req, res) => {
+app.post('/api/plans/preview', requireAuthentication, requirePermission('MANAGE_PLAN'), async (req, res) => {
   try {
     const request = validatePlanPeriodRequest(req.body);
     const result = await requestAppsScriptPost('previewPlanPeriod', request);
@@ -5231,7 +5262,7 @@ app.post('/api/plans/preview', requireAuthentication, requireMinimumRole('PLANNE
   }
 });
 
-app.post('/api/plans/create', requireAuthentication, requireMinimumRole('PLANNER'), async (req, res) => {
+app.post('/api/plans/create', requireAuthentication, requirePermission('MANAGE_PLAN'), async (req, res) => {
   try {
     const request = validatePlanPeriodRequest(req.body);
     await waitForExistingAppsScriptReads();
@@ -5282,7 +5313,7 @@ app.post('/api/plans/create', requireAuthentication, requireMinimumRole('PLANNER
   }
 });
 
-app.get('/api/plans/daily', requireAuthentication, requireMinimumRole('TV_VIEWER'), async (req, res) => {
+app.get('/api/plans/daily', requireAuthentication, requirePermission('VIEW_DASHBOARD'), async (req, res) => {
   try {
     const date = validateDateText(req.query.date, 'date');
     const result = await requestAppsScriptGet('getDailyPlans', { date });
@@ -5293,7 +5324,7 @@ app.get('/api/plans/daily', requireAuthentication, requireMinimumRole('TV_VIEWER
   }
 });
 
-app.post('/api/plans/extra', requireAuthentication, requireMinimumRole('PLANNER'), async (req, res) => {
+app.post('/api/plans/extra', requireAuthentication, requirePermission('MANAGE_PLAN'), async (req, res) => {
   try {
     const plan = normalizeEditablePlan(req.body);
     const result = await requestAppsScriptPost('createExtraPlan', { plan });
@@ -5306,7 +5337,7 @@ app.post('/api/plans/extra', requireAuthentication, requireMinimumRole('PLANNER'
   }
 });
 
-app.put('/api/plans/:codeRun', requireAuthentication, requireMinimumRole('PLANNER'), async (req, res) => {
+app.put('/api/plans/:codeRun', requireAuthentication, requirePermission('MANAGE_PLAN'), async (req, res) => {
   try {
     const codeRun = normalizeCodeRun(req.params.codeRun);
     const plan = normalizeEditablePlan(req.body);
@@ -5325,7 +5356,7 @@ app.put('/api/plans/:codeRun', requireAuthentication, requireMinimumRole('PLANNE
   }
 });
 
-app.post('/api/plans/delete-batch', requireAuthentication, requireMinimumRole('SUPERVISOR'), async (req, res) => {
+app.post('/api/plans/delete-batch', requireAuthentication, requirePermission('MANAGE_PLAN'), async (req, res) => {
   try {
     const input = Array.isArray(req.body?.codeRuns) ? req.body.codeRuns : [];
     const codeRuns = [...new Set(input.map(normalizeCodeRun))];
@@ -5339,7 +5370,7 @@ app.post('/api/plans/delete-batch', requireAuthentication, requireMinimumRole('S
   } catch (error) { return sendRouteError(res, error, 'Unable to delete selected Plans.'); }
 });
 
-app.delete('/api/plans/:codeRun', requireAuthentication, requireMinimumRole('SUPERVISOR'), async (req, res) => {
+app.delete('/api/plans/:codeRun', requireAuthentication, requirePermission('MANAGE_PLAN'), async (req, res) => {
   try {
     const codeRun = normalizeCodeRun(req.params.codeRun);
     const result = await requestAppsScriptPost('deletePlan', { codeRun });
@@ -5422,13 +5453,13 @@ async function reconcileManualStampSiteGroup(trip, dailyPlan, realtime) {
   };
 }
 
-app.post('/api/plans/:codeRun/stamp', requireAuthentication, requireMinimumRole('OPERATOR'), async (req, res) => {
+app.post('/api/plans/:codeRun/stamp', requireAuthentication, requirePermission('STAMP_TRUCK'), async (req, res) => {
   try {
     const codeRun = normalizeCodeRun(req.params.codeRun);
     const stampType = normalizeStampType(req.body?.stampType);
     const override = req.body?.override === true;
-    if (override && ROLE_LEVELS[req.auth.role] < ROLE_LEVELS.SUPERVISOR) {
-      return res.status(403).json({ success: false, error: 'Supervisor permission is required for Stamp override.' });
+    if (override && req.auth.role !== 'ADMIN') {
+      return res.status(403).json({ success: false, error: 'Admin permission is required for Stamp override.' });
     }
     let realtimeResult;
     try {
@@ -5528,7 +5559,7 @@ app.post('/api/plans/:codeRun/stamp', requireAuthentication, requireMinimumRole(
     return sendRouteError(res, error, 'Unable to Stamp Actual data.');
   }
 });
-app.post('/api/plans/:codeRun/confirm-work-detail', requireAuthentication, requireMinimumRole('OPERATOR'), async (req, res) => {
+app.post('/api/plans/:codeRun/confirm-work-detail', requireAuthentication, requirePermission('SUBMIT_ACTION'), async (req, res) => {
   try {
     const codeRun = normalizeCodeRun(req.params.codeRun);
     const result = await requestAppsScriptPost('confirmWorkDetail', { codeRun });
@@ -5539,7 +5570,7 @@ app.post('/api/plans/:codeRun/confirm-work-detail', requireAuthentication, requi
   }
 });
 
-app.post('/api/plans/:codeRun/cancel', requireAuthentication, requireMinimumRole('SUPERVISOR'), async (req, res) => {
+app.post('/api/plans/:codeRun/cancel', requireAuthentication, requirePermission('MANAGE_PLAN'), async (req, res) => {
   try {
     const codeRun = normalizeCodeRun(req.params.codeRun);
     const result = await requestAppsScriptPost('cancelPlan', { codeRun });
@@ -5551,7 +5582,7 @@ app.post('/api/plans/:codeRun/cancel', requireAuthentication, requireMinimumRole
   }
 });
 
-app.post('/api/plans/:codeRun/restore', requireAuthentication, requireMinimumRole('SUPERVISOR'), async (req, res) => {
+app.post('/api/plans/:codeRun/restore', requireAuthentication, requirePermission('MANAGE_PLAN'), async (req, res) => {
   try {
     const codeRun = normalizeCodeRun(req.params.codeRun);
     const restoreAs = cleanText(req.body?.restoreAs || 'REGULAR').toUpperCase();
@@ -5573,7 +5604,7 @@ app.post('/api/plans/:codeRun/restore', requireAuthentication, requireMinimumRol
   }
 });
 
-app.post('/api/trucks/update', requireAuthentication, requireMinimumRole('OPERATOR'), async (req, res) => {
+app.post('/api/trucks/update', requireAuthentication, requirePermission('SUBMIT_ACTION'), async (req, res) => {
   try {
     const truckId = cleanText(req.body?.truckId);
     const newRow = req.body?.newRow;
@@ -5597,7 +5628,7 @@ app.post('/api/trucks/update', requireAuthentication, requireMinimumRole('OPERAT
   }
 });
 
-app.get('/api/route-to-tpcap', requireAuthentication, requireMinimumRole('TV_VIEWER'), async (req, res) => {
+app.get('/api/route-to-tpcap', requireAuthentication, requirePermission('VIEW_LIVE_MAP'), async (req, res) => {
   try {
     const latitude = Number(req.query.lat ?? req.query.latitude);
     const longitude = Number(req.query.lng ?? req.query.longitude);
