@@ -15,6 +15,7 @@ import { IncidentCenter } from './components/IncidentCenter';
 import { StatusBadge } from './components/StatusBadge';
 import PlanManagement from './components/PlanManagement';
 import MobileOperation from './components/MobileOperation';
+import Report from './components/Report';
 
 import {
   GpsLocation,
@@ -1559,12 +1560,8 @@ export default function App() {
               /></main>
             )}
             {canViewReport && currentView === 'report' && (
-              <main className="flex min-h-0 flex-1 items-center justify-center overflow-auto bg-slate-50 p-6">
-                <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm">
-                  <FileText className="mx-auto h-12 w-12 text-blue-600" />
-                  <h2 className="mt-4 text-xl font-black text-slate-900">Report</h2>
-                  <p className="mt-2 text-sm leading-6 text-slate-500">สิทธิ์การเข้าถึงพร้อมแล้ว ส่วนหน้ารายงานจะเชื่อมกับ Report Component ในขั้นถัดไป</p>
-                </div>
+              <main className="min-h-0 min-w-0 flex-1 overflow-hidden bg-slate-50">
+                <Report trucks={filteredTrucks} selectedDate={selectedDate} />
               </main>
             )}
             {canViewActionCenter && currentView === 'incident' && (
