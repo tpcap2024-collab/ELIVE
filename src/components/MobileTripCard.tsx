@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  CheckCircle2,
   ClipboardCheck,
   MessageSquare,
   Phone,
@@ -14,6 +15,7 @@ interface MobileTripCardProps {
   onOpenGps: (truckId: string) => void;
   onOpenAction: (truck: Truck) => void;
   onOpenWorkDetail: (truck: Truck) => void;
+  onStamp: (truck: Truck, type: 'ETA' | 'ETD') => void | Promise<void>;
 }
 
 function hasCompletedTrip(truck: Truck): boolean {
@@ -216,6 +218,7 @@ export function MobileTripCard({
   onOpenGps,
   onOpenAction,
   onOpenWorkDetail,
+  onStamp,
 }: MobileTripCardProps) {
   const [showDetails, setShowDetails] = useState(false);
   const cardRef = useRef<HTMLElement | null>(null);
@@ -223,6 +226,9 @@ export function MobileTripCard({
   const [routeResult, setRouteResult] = useState<RouteToTpcapResult | null>(null);
   const [isRouteLoading, setIsRouteLoading] = useState(false);
   const [routeUnavailable, setRouteUnavailable] = useState(false);
+  const [pendingStamp, setPendingStamp] = useState<'ETA' | 'ETD' | null>(null);
+  const [isStamping, setIsStamping] = useState(false);
+  const [stampError, setStampError] = useState('');
   const gpsLost = hasGpsLostAction(truck);
   const noWork = hasNoWorkAction(truck);
   const completed = hasCompletedTrip(truck);
@@ -399,7 +405,17 @@ export function MobileTripCard({
             <span>{truck.performanceStatus}</span>
             {truck.planRemark === 'EXTRA' && <span className="font-bold text-violet-700">EXTRA</span>}
           </div>
-          <div className="mb-3 flex gap-2">
+          <div className="mb-3 flex flex-wrap gap-2">
+            {canStampEta && (
+              <button type="button" onClick={() => { setStampError(''); setPendingStamp('ETA'); }} className="flex min-h-11 items-center gap-2 rounded-lg bg-blue-600 px-4 text-xs font-black text-white shadow-sm">
+                <CheckCircle2 className="h-4 w-4" /> Stamp ETA
+              </button>
+            )}
+            {canStampEtd && (
+              <button type="button" onClick={() => { setStampError(''); setPendingStamp('ETD'); }} className="flex min-h-11 items-center gap-2 rounded-lg bg-orange-500 px-4 text-xs font-black text-white shadow-sm">
+                <CheckCircle2 className="h-4 w-4" /> Stamp ETD
+              </button>
+            )}
             <button type="button" disabled={!canOperate} onClick={() => onOpenAction(truck)} className="flex min-h-11 items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 text-xs font-bold text-slate-700 disabled:opacity-40">
               <MessageSquare className="h-4 w-4" /> Action
             </button>
@@ -481,6 +497,20 @@ export function MobileTripCard({
               </p>
             </div>
           )}
+        </div>
+      )}
+      {pendingStamp && (
+        <div className="fixed inset-0 z-[1700] flex items-center justify-center bg-slate-950/70 p-4" onMouseDown={event => { if (event.target === event.currentTarget && !isStamping) setPendingStamp(null); }}>
+          <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl">
+            <h3 className="text-lg font-black text-slate-900">ยืนยัน Stamp {pendingStamp}</h3>
+            <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm font-bold text-slate-800">{truck.route} • {truck.licensePlate} • {truck.dropPoint}</div>
+            <p className="mt-3 text-sm text-slate-600">ระบบจะบันทึกเวลาปัจจุบันของประเทศไทย</p>
+            {stampError && <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-700">{stampError}</div>}
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" disabled={isStamping} onClick={() => setPendingStamp(null)} className="rounded-xl border border-slate-300 px-4 py-2.5 font-bold text-slate-700 disabled:opacity-50">ยกเลิก</button>
+              <button type="button" disabled={isStamping} onClick={() => void handleConfirmStamp()} className={`rounded-xl px-4 py-2.5 font-black text-white disabled:opacity-50 ${pendingStamp === 'ETA' ? 'bg-blue-600' : 'bg-orange-500'}`}>{isStamping ? 'กำลังบันทึก...' : `ยืนยัน Stamp ${pendingStamp}`}</button>
+            </div>
+          </div>
         </div>
       )}
     </article>
