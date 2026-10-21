@@ -1546,14 +1546,7 @@ export default function App() {
           >
             <div className="flex h-[94vh] w-full max-w-[1500px] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
               <div className="flex shrink-0 items-center justify-between border-b border-slate-200 bg-white px-4 py-2.5">
-                <div>
-                  <h2 className="font-bold text-slate-800">Live Map</h2>
-                  {!isGpsPopupFromMobile && (
-                    <p className="text-xs text-slate-500">
-                      แสดงพิกัดและเส้นทางของรถที่เลือก โดยไม่เปลี่ยนออกจาก Live Dashboard
-                    </p>
-                  )}
-                </div>
+                <h2 className="font-bold text-slate-800">Live Map</h2>
                 <button
                   type="button"
                   onClick={closeGpsPopup}
