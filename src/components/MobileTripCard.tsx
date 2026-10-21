@@ -1,7 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  ChevronDown,
-  ChevronUp,
   ClipboardCheck,
   MessageSquare,
   Phone,
@@ -102,6 +100,21 @@ function getCardBackgroundClass(truck: Truck): string {
 function formatValue(value?: string): string {
   const text = String(value || '').trim();
   return text || '-';
+}
+function formatPlanEtaTime(value?: string): string {
+  const text = String(value || '').trim();
+  if (!text) return '-';
+  const directTime = text.match(/^(\d{1,2}):(\d{2})/);
+  if (directTime) return `${directTime[1].padStart(2, '0')}:${directTime[2]}`;
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) return text;
+  const sheetsTime = date.getUTCFullYear() === 1899 || date.getUTCFullYear() === 1900;
+  return date.toLocaleTimeString('en-GB', {
+    timeZone: sheetsTime ? 'UTC' : 'Asia/Bangkok',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
 }
 
 function callPhone(phone?: string): void {
@@ -308,8 +321,13 @@ export function MobileTripCard({
             >
               {formatValue(truck.dropPoint)}
             </span>
+            <span
+              className="shrink-0 rounded-md bg-blue-50 px-1.5 py-1 font-mono text-xs font-black leading-none text-blue-700"
+              title={`Plan ETA ${formatPlanEtaTime(truck.planEta)}`}
+            >
+              {formatPlanEtaTime(truck.planEta)}
+            </span>
             {hasPendingWorkDetail && <ClipboardCheck className="h-4 w-4 shrink-0 text-amber-600" aria-label="มีงานรอตรวจสอบ เปิดรายละเอียด" />}
-            {showDetails ? <ChevronUp className="h-3 w-3 shrink-0 text-slate-400" /> : <ChevronDown className="h-3 w-3 shrink-0 text-slate-400" />}
           </button>
           <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-bold ${
             gpsLost ? 'bg-orange-100 text-orange-800' : noWork ? 'bg-slate-100 text-slate-700' : completed ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-50 text-blue-700'
