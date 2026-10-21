@@ -106,6 +106,33 @@ type MobileGeofence = {
   longitude: number;
   radiusMeters: number;
 };
+const MOBILE_TPCAP_SITE_POLYGON: [number, number][] = [
+  [13.628373770556774, 101.01488672623992],
+  [13.624058460200862, 101.01077277012493],
+  [13.62156363013412, 101.01457300431943],
+  [13.625365805109753, 101.01794805367612],
+];
+function isMobilePointInsidePolygon(
+  latitude: number,
+  longitude: number,
+  polygon: [number, number][]
+): boolean {
+  let isInside = false;
+  for (let current = 0, previous = polygon.length - 1; current < polygon.length; previous = current++) {
+    const currentLatitude = polygon[current][0];
+    const currentLongitude = polygon[current][1];
+    const previousLatitude = polygon[previous][0];
+    const previousLongitude = polygon[previous][1];
+    const intersects =
+      (currentLatitude > latitude) !== (previousLatitude > latitude) &&
+      longitude <
+        ((previousLongitude - currentLongitude) * (latitude - currentLatitude)) /
+          (previousLatitude - currentLatitude) +
+        currentLongitude;
+    if (intersects) isInside = !isInside;
+  }
+  return isInside;
+}
 const MOBILE_GEOFENCES: Record<'TPCAP-LSP' | 'TPCAP-R2' | 'TPCAP-R1', MobileGeofence> = {
   'TPCAP-LSP': { latitude: 13.624391050915499, longitude: 101.01532262451346, radiusMeters: 60 },
   'TPCAP-R2': { latitude: 13.624670855780815, longitude: 101.01287491445134, radiusMeters: 50 },
@@ -153,16 +180,13 @@ export function MobileTripCard({
   const gpsLost = hasGpsLostAction(truck);
   const noWork = hasNoWorkAction(truck);
   const completed = hasCompletedTrip(truck);
-  const targetGeofence = getMobileTargetGeofence(truck.dropPoint);
   const isInsideTpcap = Boolean(
     truck.gpsLocation &&
-    targetGeofence &&
-    calculateMobileDistanceMeters(
+    isMobilePointInsidePolygon(
       truck.gpsLocation.latitude,
       truck.gpsLocation.longitude,
-      targetGeofence.latitude,
-      targetGeofence.longitude
-    ) <= targetGeofence.radiusMeters
+      MOBILE_TPCAP_SITE_POLYGON
+    )
   );
   useEffect(() => {
     const element = cardRef.current;
