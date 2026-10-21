@@ -12,10 +12,10 @@ type ResponsibleRole = '' | 'DISPATCHER' | 'CONTROLLER' | 'CHIEF';
 type StatusFilter = 'ACTIVE' | 'ALL' | ActionStatus;
 
 const statusLabel: Record<ActionStatus, string> = {
-  OPEN: 'รอรับผิดชอบ',
-  IN_PROGRESS: 'กำลังดำเนินการ',
-  RESOLVED: 'รอยืนยัน',
-  CLOSED: 'ปิดแล้ว',
+  OPEN: 'รอการแก้ไข',
+  IN_PROGRESS: 'อยู่ระหว่างดำเนินการ',
+  RESOLVED: 'รอตรวจสอบ',
+  CLOSED: 'ดำเนินการเสร็จสิ้น',
 };
 const statusStyle: Record<ActionStatus, string> = {
   OPEN: 'border-red-200 bg-red-100 text-red-800',
@@ -125,16 +125,16 @@ export function IncidentCenter({ trucks, onUpdateTruck }: IncidentCenterProps) {
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-5 xl:ml-auto">
             {[
               ['ทั้งหมด', incidents.length, 'border-slate-200 bg-slate-50 text-slate-800'],
-              ['รอรับผิดชอบ', counts.OPEN, 'border-red-200 bg-red-50 text-red-800'],
-              ['กำลังดำเนินการ', counts.IN_PROGRESS, 'border-amber-200 bg-amber-50 text-amber-800'],
-              ['รอยืนยัน', counts.RESOLVED, 'border-blue-200 bg-blue-50 text-blue-800'],
-              ['ปิดแล้ว', counts.CLOSED, 'border-emerald-200 bg-emerald-50 text-emerald-800'],
+              ['รอการแก้ไข', counts.OPEN, 'border-red-200 bg-red-50 text-red-800'],
+              ['อยู่ระหว่างดำเนินการ', counts.IN_PROGRESS, 'border-amber-200 bg-amber-50 text-amber-800'],
+              ['รอตรวจสอบ', counts.RESOLVED, 'border-blue-200 bg-blue-50 text-blue-800'],
+              ['ดำเนินการเสร็จสิ้น', counts.CLOSED, 'border-emerald-200 bg-emerald-50 text-emerald-800'],
             ].map(([label, value, style]) => <div key={String(label)} className={`min-w-[105px] rounded-xl border px-3 py-2 ${style}`}><p className="text-[10px] font-bold">{label}</p><p className="text-xl font-black">{value}</p></div>)}
           </div>
         </div>
         <div className="mt-3 grid gap-2 md:grid-cols-[1fr_190px_160px]">
           <div className="relative"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={search} onChange={event => setSearch(event.target.value)} placeholder="ค้นหา Route, ทะเบียนรถ, จุดลงงาน หรือปัญหา..." className="h-11 w-full rounded-xl border border-slate-300 pl-10 pr-3 text-base" /></div>
-          <select value={statusFilter} onChange={event => setStatusFilter(event.target.value as StatusFilter)} className="h-11 rounded-xl border border-slate-300 bg-white px-3 text-base font-bold"><option value="ACTIVE">ปัญหาที่ยังไม่ปิด</option><option value="ALL">ทุกสถานะ</option><option value="OPEN">รอรับผิดชอบ</option><option value="IN_PROGRESS">กำลังดำเนินการ</option><option value="RESOLVED">รอยืนยัน</option><option value="CLOSED">ปิดแล้ว</option></select>
+          <select value={statusFilter} onChange={event => setStatusFilter(event.target.value as StatusFilter)} className="h-11 rounded-xl border border-slate-300 bg-white px-3 text-base font-bold"><option value="ACTIVE">รายการที่ยังดำเนินการไม่เสร็จสิ้น</option><option value="ALL">รายการทั้งหมด</option><option value="OPEN">รอการแก้ไข</option><option value="IN_PROGRESS">อยู่ระหว่างดำเนินการ</option><option value="RESOLVED">รอตรวจสอบ</option><option value="CLOSED">ดำเนินการเสร็จสิ้น</option></select>
           <select value={roleFilter} onChange={event => setRoleFilter(event.target.value as ResponsibleRole)} className="h-11 rounded-xl border border-slate-300 bg-white px-3 text-base font-bold"><option value="">ทุกระดับ</option><option value="DISPATCHER">Dispatcher</option><option value="CONTROLLER">Controller</option><option value="CHIEF">Chief</option></select>
         </div>
       </header>
