@@ -798,21 +798,40 @@ export default function App() {
   };
 
   const getRowClass = (truck: Truck): string => {
-    if (hasGpsLostAction(truck)) {
-      return 'bg-slate-200 hover:bg-slate-300 transition-colors';
+    const isCompleted = Boolean(
+      truck.status === 'COMPLETED' ||
+        truck.status === 'TRUCK_OUT' ||
+        truck.stampEtd
+    );
+    const isUnloading = Boolean(
+      truck.status === 'DOCK_IN' ||
+        truck.status === 'UNLOADING' ||
+        truck.status === 'UNLOADING_AT_TPCAP'
+    );
+    // Match Mobile Mode background priority:
+    // completed > no work > unloading delay > unloading > overdue inactivity > GPS issue > normal.
+    if (isCompleted) {
+      return 'bg-emerald-100 hover:bg-emerald-200 transition-colors';
     }
     if (hasNoWorkAction(truck)) {
       return 'bg-slate-200 hover:bg-slate-300 transition-colors';
     }
-    if (truck.status === 'COMPLETED' || truck.status === 'TRUCK_OUT') {
-      return 'row-complete';
+    if (isUnloading && truck.performanceStatus === 'DELAY') {
+      return 'bg-orange-200 hover:bg-orange-300 transition-colors';
+    }
+    if (isUnloading) {
+      return 'bg-yellow-100 hover:bg-yellow-200 transition-colors';
     }
     if (isDelayedNoStamp(truck)) {
-      return 'animate-pulse bg-red-100 hover:bg-red-200 transition-colors';
+      return 'animate-pulse bg-red-200 hover:bg-red-300 transition-colors';
     }
-    if (truck.performanceStatus === 'DELAY') return 'row-delay';
-    if (truck.performanceStatus === 'WARNING') return 'row-warning';
-    return 'hover:bg-slate-50 transition-colors';
+    if (hasGpsLostAction(truck)) {
+      return 'bg-orange-100 hover:bg-orange-200 transition-colors';
+    }
+    if (truck.performanceStatus === 'WARNING') {
+      return 'bg-amber-100 hover:bg-amber-200 transition-colors';
+    }
+    return 'bg-white hover:bg-slate-50 transition-colors';
   };
 
   const getPerformanceBadge = (status: PerformanceStatus) => {
