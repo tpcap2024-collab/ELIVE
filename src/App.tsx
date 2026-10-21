@@ -1355,8 +1355,8 @@ export default function App() {
                 </div>
 
                 <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-                  <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-200 bg-white px-2 py-1.5">
-                    <span className="mr-1 text-[9px] font-bold uppercase text-slate-500">
+                  <div className="flex flex-wrap items-center gap-1 border-b border-slate-200 bg-white px-2 py-1">
+                    <span className="mr-0.5 text-[8px] font-bold uppercase text-slate-500">
                       Show Dock:
                     </span>
                     {DOCK_FILTERS.map(option => (
@@ -1364,7 +1364,7 @@ export default function App() {
                         key={option}
                         type="button"
                         onClick={() => toggleDockFilter(option)}
-                        className={`rounded-md border px-3 py-1 text-[9px] font-bold transition-colors ${
+                        className={`h-7 rounded-md border px-2.5 py-0.5 text-[9px] font-bold leading-none transition-colors ${
                           option === 'ALL' ? allDockFiltersSelected : selectedDockFilters.includes(option)
                             ? option === 'ALL'
                               ? 'border-slate-800 bg-slate-800 text-white'
@@ -1375,27 +1375,27 @@ export default function App() {
                         {option}
                       </button>
                     ))}
-                    <div className="relative min-w-[220px] flex-1 sm:max-w-xs">
-                      <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                    <div className="relative min-w-[180px] flex-1 sm:max-w-[300px]">
+                      <Search className="absolute left-2.5 top-1/2 h-3 w-3 -translate-y-1/2 text-slate-400" />
                       <input
                         type="search"
                         value={dashboardSearch}
                         onChange={event => setDashboardSearch(event.target.value)}
                         placeholder="ค้นหา Route, ทะเบียนรถ..."
-                        className="w-full rounded-md border border-slate-300 bg-white py-1.5 pl-8 pr-3 text-[11px] text-slate-700 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                        className="h-7 w-full rounded-md border border-slate-300 bg-white py-0.5 pl-7 pr-2 text-[10px] text-slate-700 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                       />
                     </div>
-                    <label className="flex cursor-pointer items-center gap-1.5 text-[10px] text-slate-600">
+                    <label className="flex h-7 cursor-pointer items-center gap-1 text-[9px] text-slate-600">
                       <input
                         type="checkbox"
                         checked={showHiddenRows}
                         onChange={event => setShowHiddenRows(event.target.checked)}
-                        className="h-3.5 w-3.5 rounded border-slate-300 text-blue-600"
+                        className="h-3 w-3 rounded border-slate-300 text-blue-600"
                       />
                       Show completed/out trucks
                     </label>
                     <div className="ml-auto flex items-center gap-2">
-                      <span className="hidden text-[9px] text-slate-500 sm:inline">
+                      <span className="hidden text-[8px] text-slate-500 sm:inline">
                         แสดง {visibleTrucks.length} รายการ
                       </span>
                     </div>
