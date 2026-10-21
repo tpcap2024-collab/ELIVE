@@ -297,6 +297,23 @@ export function MobileTripCard({
   );
   const actualEta = formatValue(truck.stampEta || truck.actualEta);
   const actualEtd = formatValue(truck.stampEtd);
+  const hasEta = Boolean(truck.stampEta || truck.actualEta);
+  const hasEtd = Boolean(truck.stampEtd);
+  const canStampEta = canOperate && !noWork && !completed && !hasEta;
+  const canStampEtd = canOperate && !noWork && !completed && hasEta && !hasEtd;
+  const handleConfirmStamp = async () => {
+    if (!pendingStamp || isStamping) return;
+    setIsStamping(true);
+    setStampError('');
+    try {
+      await onStamp(truck, pendingStamp);
+      setPendingStamp(null);
+    } catch (error) {
+      setStampError(error instanceof Error ? error.message : 'ไม่สามารถ Stamp ได้');
+    } finally {
+      setIsStamping(false);
+    }
+  };
 
   return (
     <article
