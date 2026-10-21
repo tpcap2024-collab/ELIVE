@@ -49,7 +49,6 @@ import {
   FileText,
   KeyRound,
   LayoutDashboard,
-  Map,
   MapPin,
   Maximize2,
   Menu,
@@ -1140,7 +1139,6 @@ export default function App() {
     activeClass?: string;
   }> = [
     { view: 'dashboard', label: 'Live Dashboard', icon: LayoutDashboard, permission: 'VIEW_DASHBOARD' },
-    { view: 'map', label: 'Live Map', icon: Map, permission: 'VIEW_LIVE_MAP' },
     { view: 'diagram', label: 'Platform Dashboard', icon: Network, permission: 'VIEW_PLATFORM' },
     { view: 'warehouse', label: 'Stamp ETA/ETD', icon: TabletSmartphone, permission: 'STAMP_TRUCK' },
     { view: 'plan-management', label: 'Plan Management', icon: ClipboardList, permission: 'MANAGE_PLAN', activeClass: 'bg-blue-50 font-semibold text-blue-700' },
