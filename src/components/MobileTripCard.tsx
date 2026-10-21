@@ -58,12 +58,45 @@ function hasNoWorkAction(truck: Truck): boolean {
 }
 
 function getCardAccentClass(truck: Truck): string {
-  if (hasGpsLostAction(truck)) return 'border-l-orange-500';
+  if (hasCompletedTrip(truck)) return 'border-l-emerald-600';
   if (hasNoWorkAction(truck)) return 'border-l-slate-600';
-  if (truck.performanceStatus === 'DELAY') return 'border-l-red-500';
-  if (truck.performanceStatus === 'WARNING') return 'border-l-amber-500';
-  if (hasCompletedTrip(truck)) return 'border-l-emerald-500';
+  if (truck.performanceStatus === 'DELAY') return 'border-l-orange-600';
+  if (truck.status === 'DOCK_IN' || truck.status === 'UNLOADING' || truck.status === 'UNLOADING_AT_TPCAP') {
+    return 'border-l-yellow-500';
+  }
+  if (hasGpsLostAction(truck)) return 'border-l-orange-500';
   return 'border-l-blue-500';
+}
+function isUnloadingTrip(truck: Truck): boolean {
+  return (
+    truck.status === 'DOCK_IN' ||
+    truck.status === 'UNLOADING' ||
+    truck.status === 'UNLOADING_AT_TPCAP'
+  );
+}
+function isPlanEtaReachedWithoutActivity(truck: Truck): boolean {
+  if (hasCompletedTrip(truck) || hasNoWorkAction(truck)) return false;
+  if (truck.stampEta || truck.actualEta || truck.stampEtd) return false;
+  if (isUnloadingTrip(truck)) return false;
+  const planDate = String(truck.planDate || '').trim().slice(0, 10);
+  const planTimeMatch = String(truck.planEta || '').trim().match(/^(\d{1,2}):(\d{2})/);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(planDate) || !planTimeMatch) return false;
+  const hour = Number(planTimeMatch[1]);
+  const minute = Number(planTimeMatch[2]);
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return false;
+  const plannedEta = new Date(
+    `${planDate}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00+07:00`
+  );
+  return !Number.isNaN(plannedEta.getTime()) && Date.now() >= plannedEta.getTime();
+}
+function getCardBackgroundClass(truck: Truck): string {
+  // Priority: completed > no work > unloading delay > unloading > overdue inactivity > normal.
+  if (hasCompletedTrip(truck)) return 'bg-emerald-100';
+  if (hasNoWorkAction(truck)) return 'bg-slate-200';
+  if (isUnloadingTrip(truck) && truck.performanceStatus === 'DELAY') return 'bg-orange-200';
+  if (isUnloadingTrip(truck)) return 'bg-yellow-100';
+  if (isPlanEtaReachedWithoutActivity(truck)) return 'animate-pulse bg-red-200';
+  return 'bg-white';
 }
 
 function formatValue(value?: string): string {
@@ -249,9 +282,9 @@ export function MobileTripCard({
   return (
     <article
       ref={cardRef}
-      className={`overflow-hidden rounded-xl border border-l-4 border-slate-200 bg-white shadow-sm ${getCardAccentClass(
+      className={`overflow-hidden rounded-xl border border-l-4 border-slate-200 shadow-sm ${getCardBackgroundClass(
         truck
-      )}`}
+      )} ${getCardAccentClass(truck)}`}
     >
       <div className="px-3 py-2">
         <div className="flex min-w-0 items-center gap-2 text-xs">
@@ -341,7 +374,7 @@ export function MobileTripCard({
       </div>
 
       {showDetails && (
-        <div className="border-t border-slate-200 bg-slate-50 p-3">
+        <div className="border-t border-slate-300 bg-white/55 p-3">
           <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-slate-600">
             <span>Plan {formatValue(truck.planEta)}</span>
             <span>Actual {actualEta} / {actualEtd}</span>
