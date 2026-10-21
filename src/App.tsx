@@ -574,7 +574,7 @@ export default function App() {
   };
 
   const handleMobileStamp = async (truck: Truck, type: 'ETA' | 'ETD') => {
-    if (!canOperate) throw new Error('บัญชีนี้ไม่มีสิทธิ์ Stamp');
+    if (!authenticatedUser || !hasMinimumRole(authenticatedUser.role, 'OPERATOR')) throw new Error('บัญชีนี้ไม่มีสิทธิ์ Stamp');
     if (hasNoWorkAction(truck)) throw new Error('รายการไม่มีงานลง จึงไม่สามารถ Stamp ได้');
     if (type === 'ETD' && !(truck.stampEta || truck.actualEta)) throw new Error('ต้อง Stamp ETA ก่อน Stamp ETD');
     if (type === 'ETA' && (truck.stampEta || truck.actualEta)) throw new Error('รายการนี้มี Stamp ETA แล้ว');
