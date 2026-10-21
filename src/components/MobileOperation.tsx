@@ -44,12 +44,12 @@ const MOBILE_FILTERS: Array<{
   { value: 'COMPLETED', label: 'เสร็จแล้ว', icon: CheckCircle2 },
 ];
 
-const MOBILE_FILTER_CLASSES: Record<MobileFilter, string> = {
-  ALL: 'border-slate-900 bg-slate-950 text-white focus:border-slate-700 focus:ring-slate-500/30',
-  ACTIVE: 'border-amber-400 bg-yellow-300 text-slate-950 focus:border-amber-500 focus:ring-amber-400/30',
-  PENDING: 'border-blue-300 bg-blue-50 text-blue-800 focus:border-blue-500 focus:ring-blue-500/20',
-  ISSUE: 'border-red-400 bg-red-100 text-red-800 focus:border-red-500 focus:ring-red-500/20',
-  COMPLETED: 'border-emerald-400 bg-emerald-100 text-emerald-800 focus:border-emerald-500 focus:ring-emerald-500/20',
+const MOBILE_FILTER_OPTION_STYLES: Record<MobileFilter, React.CSSProperties> = {
+  ALL: { backgroundColor: '#0f172a', color: '#ffffff', fontWeight: 900 },
+  ACTIVE: { backgroundColor: '#fde047', color: '#0f172a', fontWeight: 900 },
+  PENDING: { backgroundColor: '#dbeafe', color: '#1e40af', fontWeight: 900 },
+  ISSUE: { backgroundColor: '#fecaca', color: '#991b1b', fontWeight: 900 },
+  COMPLETED: { backgroundColor: '#bbf7d0', color: '#166534', fontWeight: 900 },
 };
 
 
@@ -307,10 +307,11 @@ export function MobileOperation({
               if (option) setFilter(option.value);
             }}
             aria-label="เลือกสถานะรถ"
-            className={`h-11 w-32 min-w-0 shrink-0 rounded-xl border px-2 text-sm font-black outline-none focus:ring-2 ${MOBILE_FILTER_CLASSES[filter]}`}
+            style={{ fontWeight: 900 }}
+            className="h-11 w-32 min-w-0 shrink-0 rounded-xl border border-blue-400 bg-white px-2 text-sm font-black text-slate-950 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
           >
             {MOBILE_FILTERS.map(item => (
-              <option key={item.value} value={item.value}>
+              <option key={item.value} value={item.value} style={MOBILE_FILTER_OPTION_STYLES[item.value]}>
                 {item.label} ({counts[item.value]})
               </option>
             ))}
