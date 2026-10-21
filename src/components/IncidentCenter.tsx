@@ -88,15 +88,18 @@ export function IncidentCenter({ trucks, onUpdateTruck }: IncidentCenterProps) {
                 ))}
               </div>
             ) : (
-              <table className="w-full text-left text-sm">
+              <table className="w-full min-w-[1280px] table-fixed text-left text-sm">
                 <thead className="bg-slate-50 text-slate-500 text-[11px] uppercase tracking-wider font-bold sticky top-0 z-10 border-b border-slate-200">
                   <tr>
                     <th className="px-4 py-3">Route</th>
+                    <th className="px-4 py-3">สังกัด</th>
+                    <th className="px-4 py-3">ทะเบียนรถ</th>
                     <th className="px-4 py-3">จุดลงงาน</th>
-                    <th className="px-4 py-3">Problem</th>
-                    <th className="px-4 py-3">Countermeasure</th>
-                    <th className="px-4 py-3">Status</th>
+                    <th className="px-4 py-3 text-center">Plan ETA</th>
+                    <th className="px-4 py-3">ปัญหา</th>
                     <th className="px-4 py-3">ผู้รับผิดชอบ</th>
+                    <th className="px-4 py-3">สถานะ</th>
+                    <th className="px-4 py-3 text-center">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-sm">
@@ -106,16 +109,21 @@ export function IncidentCenter({ trucks, onUpdateTruck }: IncidentCenterProps) {
                       onClick={() => setSelectedTruck(truck)}
                       className="hover:bg-slate-50 cursor-pointer transition-colors"
                     >
-                      <td className="px-4 py-4 font-mono text-xs font-bold text-slate-500">{truck.route}</td>
-                      <td className="px-4 py-4 font-bold text-slate-800">{truck.dropPoint}</td>
-                      <td className="px-4 py-4 text-slate-600 max-w-xs truncate font-medium text-red-600">{truck.actionProblem}</td>
-                      <td className="px-4 py-4 text-slate-600 max-w-xs truncate">{truck.actionCountermeasure || '-'}</td>
+                      <td className="px-4 py-4 font-bold text-slate-800">{truck.route || '-'}</td>
+                      <td className="px-4 py-4 font-medium text-slate-700">{truck.supplierName || '-'}</td>
+                      <td className="px-4 py-4 font-semibold text-slate-800">{truck.licensePlate || '-'}</td>
+                      <td className="px-4 py-4 font-medium text-slate-800">{truck.dropPoint || '-'}</td>
+                      <td className="px-4 py-4 text-center font-mono font-bold text-blue-700">{truck.planEta || '-'}</td>
+                      <td className="px-4 py-4 max-w-xs truncate font-medium text-red-600" title={truck.actionProblem}>{truck.actionProblem}</td>
+                      <td className="px-4 py-4 font-medium text-slate-700">{truck.actionResponsible || '-'}</td>
                       <td className="px-4 py-4">
                         <span className={`text-[10px] font-bold px-2 py-0.5 rounded border uppercase tracking-wider inline-block ${statusColors[truck.actionStatus || 'OPEN']}`}>
                           {truck.actionStatus || 'OPEN'}
                         </span>
                       </td>
-                      <td className="px-4 py-4 font-medium text-slate-700">{truck.actionResponsible || '-'}</td>
+                      <td className="px-4 py-4 text-center">
+                        <button type="button" onClick={(event) => { event.stopPropagation(); setSelectedTruck(truck); }} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700">เปิด</button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
