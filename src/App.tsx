@@ -573,6 +573,17 @@ export default function App() {
     setIsSidebarOpen(window.innerWidth >= 768);
   };
 
+  const handleMobileStamp = async (truck: Truck, type: 'ETA' | 'ETD') => {
+    if (!canOperate) throw new Error('บัญชีนี้ไม่มีสิทธิ์ Stamp');
+    if (hasNoWorkAction(truck)) throw new Error('รายการไม่มีงานลง จึงไม่สามารถ Stamp ได้');
+    if (type === 'ETD' && !(truck.stampEta || truck.actualEta)) throw new Error('ต้อง Stamp ETA ก่อน Stamp ETD');
+    if (type === 'ETA' && (truck.stampEta || truck.actualEta)) throw new Error('รายการนี้มี Stamp ETA แล้ว');
+    if (type === 'ETD' && truck.stampEtd) throw new Error('รายการนี้มี Stamp ETD แล้ว');
+    const time = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Bangkok', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+    }).format(new Date());
+    await handleUpdateTruck(truck.id, type === 'ETA' ? { stampEta: time } : { stampEtd: time });
+  };
   const handleOpenGps = (truckId: string) => {
     const openedFromMobile = currentView === 'mobile';
     const openPopup = () => {
@@ -1288,6 +1299,7 @@ export default function App() {
             onOpenGps={handleOpenGps}
             onOpenAction={truck => setActionDialog({ isOpen: true, truck })}
             onOpenWorkDetail={truck => setWorkDetailTruck(truck)}
+            onStampTruck={handleMobileStamp}
           />
         ) : canPlan && currentView === 'plan-management' ? (
           <main className="min-h-0 min-w-0 flex-1 overflow-auto">
@@ -1355,8 +1367,8 @@ export default function App() {
                 </div>
 
                 <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-                  <div className="flex flex-wrap items-center gap-1 border-b border-slate-200 bg-white px-2 py-1">
-                    <span className="mr-0.5 text-[8px] font-bold uppercase text-slate-500">
+                  <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-200 bg-white px-2 py-1.5">
+                    <span className="mr-1 text-[9px] font-bold uppercase text-slate-500">
                       Show Dock:
                     </span>
                     {DOCK_FILTERS.map(option => (
@@ -1364,7 +1376,7 @@ export default function App() {
                         key={option}
                         type="button"
                         onClick={() => toggleDockFilter(option)}
-                        className={`h-7 rounded-md border px-2.5 py-0.5 text-[9px] font-bold leading-none transition-colors ${
+                        className={`rounded-md border px-3 py-1 text-[9px] font-bold transition-colors ${
                           option === 'ALL' ? allDockFiltersSelected : selectedDockFilters.includes(option)
                             ? option === 'ALL'
                               ? 'border-slate-800 bg-slate-800 text-white'
@@ -1375,27 +1387,27 @@ export default function App() {
                         {option}
                       </button>
                     ))}
-                    <div className="relative min-w-[180px] flex-1 sm:max-w-[300px]">
-                      <Search className="absolute left-2.5 top-1/2 h-3 w-3 -translate-y-1/2 text-slate-400" />
+                    <div className="relative min-w-[220px] flex-1 sm:max-w-xs">
+                      <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
                       <input
                         type="search"
                         value={dashboardSearch}
                         onChange={event => setDashboardSearch(event.target.value)}
                         placeholder="ค้นหา Route, ทะเบียนรถ..."
-                        className="h-7 w-full rounded-md border border-slate-300 bg-white py-0.5 pl-7 pr-2 text-[10px] text-slate-700 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                        className="w-full rounded-md border border-slate-300 bg-white py-1.5 pl-8 pr-3 text-[11px] text-slate-700 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                       />
                     </div>
-                    <label className="flex h-7 cursor-pointer items-center gap-1 text-[9px] text-slate-600">
+                    <label className="flex cursor-pointer items-center gap-1.5 text-[10px] text-slate-600">
                       <input
                         type="checkbox"
                         checked={showHiddenRows}
                         onChange={event => setShowHiddenRows(event.target.checked)}
-                        className="h-3 w-3 rounded border-slate-300 text-blue-600"
+                        className="h-3.5 w-3.5 rounded border-slate-300 text-blue-600"
                       />
                       Show completed/out trucks
                     </label>
                     <div className="ml-auto flex items-center gap-2">
-                      <span className="hidden text-[8px] text-slate-500 sm:inline">
+                      <span className="hidden text-[9px] text-slate-500 sm:inline">
                         แสดง {visibleTrucks.length} รายการ
                       </span>
                     </div>
@@ -1546,7 +1558,14 @@ export default function App() {
           >
             <div className="flex h-[94vh] w-full max-w-[1500px] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
               <div className="flex shrink-0 items-center justify-between border-b border-slate-200 bg-white px-4 py-2.5">
-                <h2 className="font-bold text-slate-800">Live Map</h2>
+                <div>
+                  <h2 className="font-bold text-slate-800">Live Map</h2>
+                  {!isGpsPopupFromMobile && (
+                    <p className="text-xs text-slate-500">
+                      แสดงพิกัดและเส้นทางของรถที่เลือก โดยไม่เปลี่ยนออกจาก Live Dashboard
+                    </p>
+                  )}
+                </div>
                 <button
                   type="button"
                   onClick={closeGpsPopup}
