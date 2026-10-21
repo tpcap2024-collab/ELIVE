@@ -299,8 +299,10 @@ export function MobileTripCard({
   const actualEtd = formatValue(truck.stampEtd);
   const hasEta = Boolean(truck.stampEta || truck.actualEta);
   const hasEtd = Boolean(truck.stampEtd);
-  const canStampEta = canOperate && !noWork && !completed && !hasEta;
-  const canStampEtd = canOperate && !noWork && !completed && hasEta && !hasEtd;
+  // Stamp buttons follow the actual stamp fields, not the derived card status.
+  // This keeps Stamp ETA visible whenever ETA is still empty, even if a stale status is received.
+  const canStampEta = canOperate && !noWork && !hasEta && !hasEtd;
+  const canStampEtd = canOperate && !noWork && hasEta && !hasEtd;
   const handleConfirmStamp = async () => {
     if (!pendingStamp || isStamping) return;
     setIsStamping(true);
@@ -424,12 +426,12 @@ export function MobileTripCard({
           </div>
           <div className="mb-3 flex flex-wrap gap-2">
             {canStampEta && (
-              <button type="button" onClick={() => { setStampError(''); setPendingStamp('ETA'); }} className="flex min-h-11 items-center gap-2 rounded-lg bg-blue-600 px-4 text-xs font-black text-white shadow-sm">
+              <button type="button" onClick={() => { setStampError(''); setPendingStamp('ETA'); }} className="flex min-h-12 flex-1 items-center justify-center gap-2 rounded-xl border-2 border-blue-800 bg-blue-600 px-4 text-sm font-black text-white shadow-md active:bg-blue-700">
                 <CheckCircle2 className="h-4 w-4" /> Stamp ETA
               </button>
             )}
             {canStampEtd && (
-              <button type="button" onClick={() => { setStampError(''); setPendingStamp('ETD'); }} className="flex min-h-11 items-center gap-2 rounded-lg bg-orange-500 px-4 text-xs font-black text-white shadow-sm">
+              <button type="button" onClick={() => { setStampError(''); setPendingStamp('ETD'); }} className="flex min-h-12 flex-1 items-center justify-center gap-2 rounded-xl border-2 border-orange-700 bg-orange-500 px-4 text-sm font-black text-white shadow-md active:bg-orange-600">
                 <CheckCircle2 className="h-4 w-4" /> Stamp ETD
               </button>
             )}
