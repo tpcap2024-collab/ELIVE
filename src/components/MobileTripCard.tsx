@@ -101,6 +101,42 @@ function formatRouteDuration(value?: number): string {
     : `${hours} ชม.`;
 }
 
+type MobileGeofence = {
+  latitude: number;
+  longitude: number;
+  radiusMeters: number;
+};
+const MOBILE_GEOFENCES: Record<'TPCAP-LSP' | 'TPCAP-R2' | 'TPCAP-R1', MobileGeofence> = {
+  'TPCAP-LSP': { latitude: 13.624391050915499, longitude: 101.01532262451346, radiusMeters: 60 },
+  'TPCAP-R2': { latitude: 13.624670855780815, longitude: 101.01287491445134, radiusMeters: 50 },
+  'TPCAP-R1': { latitude: 13.626408220162133, longitude: 101.01512843208137, radiusMeters: 80 },
+};
+function getMobileTargetGeofence(dropPoint?: string): MobileGeofence | null {
+  const value = String(dropPoint || '').trim().toUpperCase();
+  if (/^R1(?:-|\b)/.test(value)) return MOBILE_GEOFENCES['TPCAP-R1'];
+  if (/^R2(?:-|\b)/.test(value)) return MOBILE_GEOFENCES['TPCAP-R2'];
+  if (/^(?:L1|L2|L3|M1)(?:-|\b)/.test(value)) return MOBILE_GEOFENCES['TPCAP-LSP'];
+  return null;
+}
+function calculateMobileDistanceMeters(
+  firstLatitude: number,
+  firstLongitude: number,
+  secondLatitude: number,
+  secondLongitude: number
+): number {
+  const earthRadiusMeters = 6371000;
+  const toRadians = (value: number) => value * Math.PI / 180;
+  const latitudeDelta = toRadians(secondLatitude - firstLatitude);
+  const longitudeDelta = toRadians(secondLongitude - firstLongitude);
+  const firstLatitudeRadians = toRadians(firstLatitude);
+  const secondLatitudeRadians = toRadians(secondLatitude);
+  const haversine =
+    Math.sin(latitudeDelta / 2) ** 2 +
+    Math.cos(firstLatitudeRadians) * Math.cos(secondLatitudeRadians) *
+    Math.sin(longitudeDelta / 2) ** 2;
+  return 2 * earthRadiusMeters * Math.asin(Math.sqrt(haversine));
+}
+
 export function MobileTripCard({
   truck,
   canOperate,
@@ -117,6 +153,17 @@ export function MobileTripCard({
   const gpsLost = hasGpsLostAction(truck);
   const noWork = hasNoWorkAction(truck);
   const completed = hasCompletedTrip(truck);
+  const targetGeofence = getMobileTargetGeofence(truck.dropPoint);
+  const isInsideTpcap = Boolean(
+    truck.gpsLocation &&
+    targetGeofence &&
+    calculateMobileDistanceMeters(
+      truck.gpsLocation.latitude,
+      truck.gpsLocation.longitude,
+      targetGeofence.latitude,
+      targetGeofence.longitude
+    ) <= targetGeofence.radiusMeters
+  );
   useEffect(() => {
     const element = cardRef.current;
     if (!element) return;
@@ -139,7 +186,7 @@ export function MobileTripCard({
 
   useEffect(() => {
     const location = truck.gpsLocation;
-    if (!isVisible || !location || gpsLost || noWork || completed) {
+    if (!isVisible || !location || gpsLost || noWork || completed || isInsideTpcap) {
       setRouteResult(null);
       setRouteUnavailable(false);
       setIsRouteLoading(false);
@@ -167,7 +214,7 @@ export function MobileTripCard({
     return () => {
       cancelled = true;
     };
-  }, [completed, gpsLost, isVisible, noWork, truck.gpsLocation]);
+  }, [completed, gpsLost, isInsideTpcap, isVisible, noWork, truck.gpsLocation]);
 
   const hasPendingWorkDetail = Boolean(
     canOperate && truck.workDetail && !truck.workDetailConfirmed
@@ -226,15 +273,17 @@ export function MobileTripCard({
                 ? (truck.actionProblem || 'ไม่มีงานลง')
                 : completed
                   ? `ออก ${actualEtd}`
-                  : isRouteLoading
-                    ? 'กำลังคำนวณเส้นทาง...'
-                    : routeResult
-                      ? `อีก ${formatRouteDuration(routeResult.durationMinutes)} • ถึง ${formatRouteEta(routeResult.estimatedArrival)} • ${routeResult.distanceKilometers.toFixed(1)} กม.`
-                      : routeUnavailable
-                        ? 'ไม่สามารถคำนวณเส้นทางได้'
-                        : truck.gpsLocation
-                          ? 'รอคำนวณเส้นทาง'
-                          : 'ยังไม่มีข้อมูลตำแหน่ง'}
+                  : isInsideTpcap
+                    ? 'อยู่ในพื้นที่ TPCAP'
+                    : isRouteLoading
+                      ? 'กำลังคำนวณเส้นทาง...'
+                      : routeResult
+                        ? `อีก ${formatRouteDuration(routeResult.durationMinutes)} • ถึง ${formatRouteEta(routeResult.estimatedArrival)} • ${routeResult.distanceKilometers.toFixed(1)} กม.`
+                        : routeUnavailable
+                          ? 'ไม่สามารถคำนวณเส้นทางได้'
+                          : truck.gpsLocation
+                            ? 'รอคำนวณเส้นทาง'
+                            : 'ยังไม่มีข้อมูลตำแหน่ง'}
           </span>
           <button
             type="button"
