@@ -308,7 +308,7 @@ export function MobileOperation({
             }}
             aria-label="เลือกสถานะรถ"
             style={{ fontWeight: 900 }}
-            className="h-11 w-32 min-w-0 shrink-0 rounded-xl border border-blue-400 bg-white px-2 text-sm font-black text-slate-950 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+            className="h-11 w-40 min-w-0 shrink-0 rounded-xl border border-blue-400 bg-white px-3 text-sm font-black text-slate-950 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
           >
             {MOBILE_FILTERS.map(item => (
               <option key={item.value} value={item.value} style={MOBILE_FILTER_OPTION_STYLES[item.value]}>
