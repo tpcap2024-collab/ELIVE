@@ -119,9 +119,9 @@ function isActiveTruck(truck: Truck): boolean {
 }
 
 function isIssueTruck(truck: Truck): boolean {
+  if (hasNoWorkAction(truck)) return false;
   return Boolean(
     hasGpsLostAction(truck) ||
-      hasNoWorkAction(truck) ||
       truck.performanceStatus === 'DELAY' ||
       truck.performanceStatus === 'WARNING' ||
       String(truck.actionProblem || '').trim()
