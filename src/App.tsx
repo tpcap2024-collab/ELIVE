@@ -46,6 +46,7 @@ import {
   Clock,
   Eye,
   EyeOff,
+  FileText,
   KeyRound,
   LayoutDashboard,
   Map,
@@ -77,6 +78,7 @@ type CurrentView =
   | 'diagram'
   | 'incident'
   | 'plan-management'
+  | 'report'
   | 'mobile';
 
 interface ActionDialogState {
@@ -93,21 +95,40 @@ const REFRESH_INTERVAL = 60000;
 const USER_ACTIVITY_THROTTLE_MS = 60000;
 const DISPLAY_MODE_STORAGE_KEY = 'elive-display-mode';
 
-const ROLE_LEVELS: Record<EliveUserRole, number> = {
-  TV_VIEWER: 10,
-  OPERATOR: 20,
-  PLANNER: 30,
-  SUPERVISOR: 40,
-  ADMIN: 50,
+type AppPermission =
+  | 'VIEW_DASHBOARD'
+  | 'VIEW_LIVE_MAP'
+  | 'VIEW_PLATFORM'
+  | 'VIEW_REPORT'
+  | 'USE_MOBILE_MODE'
+  | 'STAMP_TRUCK'
+  | 'SUBMIT_ACTION'
+  | 'VIEW_ACTION_CENTER'
+  | 'MANAGE_PLAN'
+  | 'MANAGE_SYSTEM';
+const ROLE_PERMISSIONS: Record<EliveUserRole, ReadonlySet<AppPermission>> = {
+  TV_VIEWER: new Set(['VIEW_DASHBOARD', 'VIEW_LIVE_MAP', 'VIEW_PLATFORM', 'VIEW_REPORT']),
+  OPERATOR: new Set(['VIEW_DASHBOARD', 'VIEW_LIVE_MAP', 'USE_MOBILE_MODE', 'STAMP_TRUCK', 'SUBMIT_ACTION']),
+  PLANNER: new Set(['VIEW_DASHBOARD', 'VIEW_LIVE_MAP', 'VIEW_PLATFORM', 'VIEW_REPORT', 'USE_MOBILE_MODE', 'STAMP_TRUCK', 'SUBMIT_ACTION', 'VIEW_ACTION_CENTER', 'MANAGE_PLAN']),
+  SUPERVISOR: new Set(['VIEW_DASHBOARD', 'VIEW_LIVE_MAP', 'VIEW_PLATFORM', 'VIEW_REPORT', 'SUBMIT_ACTION', 'VIEW_ACTION_CENTER']),
+  ADMIN: new Set(['VIEW_DASHBOARD', 'VIEW_LIVE_MAP', 'VIEW_PLATFORM', 'VIEW_REPORT', 'USE_MOBILE_MODE', 'STAMP_TRUCK', 'SUBMIT_ACTION', 'VIEW_ACTION_CENTER', 'MANAGE_PLAN', 'MANAGE_SYSTEM']),
 };
-
-function hasMinimumRole(
-  role: EliveUserRole,
-  requiredRole: EliveUserRole
-): boolean {
-  return ROLE_LEVELS[role] >= ROLE_LEVELS[requiredRole];
+function hasPermission(role: EliveUserRole, permission: AppPermission): boolean {
+  return ROLE_PERMISSIONS[role].has(permission);
 }
-
+function canAccessView(role: EliveUserRole, view: CurrentView): boolean {
+  const requiredPermission: Record<CurrentView, AppPermission> = {
+    dashboard: 'VIEW_DASHBOARD',
+    map: 'VIEW_LIVE_MAP',
+    diagram: 'VIEW_PLATFORM',
+    warehouse: 'STAMP_TRUCK',
+    incident: 'VIEW_ACTION_CENTER',
+    'plan-management': 'MANAGE_PLAN',
+    report: 'VIEW_REPORT',
+    mobile: 'USE_MOBILE_MODE',
+  };
+  return hasPermission(role, requiredPermission[view]);
+}
 function getDockGroup(value?: string): Exclude<DockFilter, 'ALL'> | '' {
   const normalized = String(value || '').replace(/\s+/g, '').toUpperCase();
   const match = normalized.match(/^(M1|L1|L2|L3|R1|R2)(?:-|$)/);
@@ -266,6 +287,12 @@ export default function App() {
       currentView === 'mobile' ? 'mobile' : 'desktop'
     );
   }, [currentView]);
+  useEffect(() => {
+    if (!authenticatedUser) return;
+    if (!canAccessView(authenticatedUser.role, currentView)) {
+      setCurrentView('dashboard');
+    }
+  }, [authenticatedUser, currentView]);
 
   useEffect(() => {
     const handleUnauthorized = (event: Event) => {
@@ -547,6 +574,10 @@ export default function App() {
   };
 
   const changeView = (view: CurrentView) => {
+    if (!authenticatedUser || !canAccessView(authenticatedUser.role, view)) {
+      setCurrentView('dashboard');
+      return;
+    }
     if (document.fullscreenElement) {
       void document.exitFullscreen().catch(error => {
         console.error('Unable to exit fullscreen before changing view:', error);
@@ -558,6 +589,7 @@ export default function App() {
   };
 
   const enterMobileMode = () => {
+    if (!authenticatedUser || !hasPermission(authenticatedUser.role, 'USE_MOBILE_MODE')) return;
     if (document.fullscreenElement) {
       void document.exitFullscreen().catch(error => {
         console.error('Unable to exit fullscreen before Mobile Mode:', error);
@@ -574,7 +606,7 @@ export default function App() {
   };
 
   const handleMobileStamp = async (truck: Truck, type: 'ETA' | 'ETD') => {
-    if (!authenticatedUser || !hasMinimumRole(authenticatedUser.role, 'OPERATOR')) throw new Error('บัญชีนี้ไม่มีสิทธิ์ Stamp');
+    if (!authenticatedUser || !hasPermission(authenticatedUser.role, 'STAMP_TRUCK')) throw new Error('บัญชีนี้ไม่มีสิทธิ์ Stamp');
     if (hasNoWorkAction(truck)) throw new Error('รายการไม่มีงานลง จึงไม่สามารถ Stamp ได้');
     if (type === 'ETD' && !(truck.stampEta || truck.actualEta)) throw new Error('ต้อง Stamp ETA ก่อน Stamp ETD');
     if (type === 'ETA' && (truck.stampEta || truck.actualEta)) throw new Error('รายการนี้มี Stamp ETA แล้ว');
@@ -1093,50 +1125,28 @@ export default function App() {
   }
 
   const currentUserRole = authenticatedUser.role;
-  const canOperate = hasMinimumRole(currentUserRole, 'OPERATOR');
-  const canPlan = hasMinimumRole(currentUserRole, 'PLANNER');
-
+  const canSubmitAction = hasPermission(currentUserRole, 'SUBMIT_ACTION');
+  const canStamp = hasPermission(currentUserRole, 'STAMP_TRUCK');
+  const canUseMobileMode = hasPermission(currentUserRole, 'USE_MOBILE_MODE');
+  const canPlan = hasPermission(currentUserRole, 'MANAGE_PLAN');
+  const canViewActionCenter = hasPermission(currentUserRole, 'VIEW_ACTION_CENTER');
+  const canViewPlatform = hasPermission(currentUserRole, 'VIEW_PLATFORM');
+  const canViewReport = hasPermission(currentUserRole, 'VIEW_REPORT');
   const navItems: Array<{
     view: CurrentView;
     label: string;
     icon: React.ComponentType<{ className?: string }>;
-    minimumRole: EliveUserRole;
+    permission: AppPermission;
     activeClass?: string;
   }> = [
-    {
-      view: 'dashboard',
-      label: 'Live Dashboard',
-      icon: LayoutDashboard,
-      minimumRole: 'TV_VIEWER',
-    },
-    {
-      view: 'diagram',
-      label: 'Platform Dashboard',
-      icon: Network,
-      minimumRole: 'TV_VIEWER',
-    },
-    {
-      view: 'warehouse',
-      label: 'Stamp ETA/ETD',
-      icon: TabletSmartphone,
-      minimumRole: 'OPERATOR',
-    },
-    {
-      view: 'plan-management',
-      label: 'Plan Management',
-      icon: ClipboardList,
-      minimumRole: 'PLANNER',
-      activeClass: 'bg-blue-50 font-semibold text-blue-700',
-    },
-    {
-      view: 'incident',
-      label: 'Action Center',
-      icon: ShieldAlert,
-      minimumRole: 'OPERATOR',
-      activeClass: 'bg-red-50 font-semibold text-red-600',
-    },
-  ].filter(item => hasMinimumRole(currentUserRole, item.minimumRole));
-
+    { view: 'dashboard', label: 'Live Dashboard', icon: LayoutDashboard, permission: 'VIEW_DASHBOARD' },
+    { view: 'map', label: 'Live Map', icon: Map, permission: 'VIEW_LIVE_MAP' },
+    { view: 'diagram', label: 'Platform Dashboard', icon: Network, permission: 'VIEW_PLATFORM' },
+    { view: 'warehouse', label: 'Stamp ETA/ETD', icon: TabletSmartphone, permission: 'STAMP_TRUCK' },
+    { view: 'plan-management', label: 'Plan Management', icon: ClipboardList, permission: 'MANAGE_PLAN', activeClass: 'bg-blue-50 font-semibold text-blue-700' },
+    { view: 'incident', label: 'Action Center', icon: ShieldAlert, permission: 'VIEW_ACTION_CENTER', activeClass: 'bg-red-50 font-semibold text-red-600' },
+    { view: 'report', label: 'Report', icon: FileText, permission: 'VIEW_REPORT' },
+  ].filter(item => hasPermission(currentUserRole, item.permission));
   return (
     <div className="flex min-h-screen flex-col bg-slate-50 font-sans md:flex-row">
       {currentView !== 'mobile' && (
@@ -1192,13 +1202,15 @@ export default function App() {
             </nav>
 
             <div className="w-64 border-t border-slate-100 p-4">
-              <button
-                type="button"
-                onClick={enterMobileMode}
-                className="mb-1 flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 hover:text-blue-700"
-              >
-                <TabletSmartphone className="h-5 w-5" /> Mobile Mode
-              </button>
+              {canUseMobileMode && (
+                <button
+                  type="button"
+                  onClick={enterMobileMode}
+                  className="mb-1 flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 hover:text-blue-700"
+                >
+                  <TabletSmartphone className="h-5 w-5" /> Mobile Mode
+                </button>
+              )}
               <button type="button" onClick={() => setShowSettings(true)} className="mb-1 flex w-full items-center gap-3 px-3 py-2 text-sm text-slate-500 hover:text-slate-700">
                 <Settings className="h-5 w-5" /> Settings
               </button>
@@ -1293,7 +1305,7 @@ export default function App() {
             selectedDate={selectedDate}
             lastUpdate={lastUpdate}
             isRefreshing={isRefreshing}
-            canOperate={canOperate}
+            canOperate={canUseMobileMode && canStamp && canSubmitAction}
             onRefresh={loadData}
             onExitMobileMode={exitMobileMode}
             onOpenGps={handleOpenGps}
@@ -1432,7 +1444,7 @@ export default function App() {
                             <td className="whitespace-nowrap px-3 py-1.5 font-bold text-slate-800">{truck.licensePlate}</td>
                             <td className="whitespace-nowrap px-3 py-1.5 font-medium text-slate-700">{truck.dropPoint}</td>
                             <td className="px-3 py-1.5 text-center">
-                              {canOperate && truck.workDetail && !truck.workDetailConfirmed ? (
+                              {canSubmitAction && truck.workDetail && !truck.workDetailConfirmed ? (
                                 <button
                                   type="button"
                                   onClick={() => setWorkDetailTruck(truck)}
@@ -1483,7 +1495,7 @@ export default function App() {
                               </button>
                             </td>
                             <td className="px-3 py-1.5 text-center">
-                              {canOperate ? (
+                              {canSubmitAction ? (
                                 <button
                                   type="button"
                                   onClick={() => setActionDialog({ isOpen: true, truck })}
@@ -1521,7 +1533,7 @@ export default function App() {
                 <LiveMap trucks={inboundTrucks} gpsLocations={filteredGpsLocations} initialTruckId={selectedGpsTruckId} onRefresh={loadData} isRefreshing={isRefreshing} />
               </main>
             )}
-            {currentView === 'diagram' && (
+            {canViewPlatform && currentView === 'diagram' && (
               <main className="min-w-0 flex-1 overflow-hidden bg-white"><PlatformDiagram
                 trucks={filteredTrucks}
                 onOpenMap={(truckId) => {
@@ -1529,10 +1541,19 @@ export default function App() {
                 }}
               /></main>
             )}
-            {canOperate && currentView === 'incident' && (
+            {canViewReport && currentView === 'report' && (
+              <main className="flex min-h-0 flex-1 items-center justify-center overflow-auto bg-slate-50 p-6">
+                <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm">
+                  <FileText className="mx-auto h-12 w-12 text-blue-600" />
+                  <h2 className="mt-4 text-xl font-black text-slate-900">Report</h2>
+                  <p className="mt-2 text-sm leading-6 text-slate-500">สิทธิ์การเข้าถึงพร้อมแล้ว ส่วนหน้ารายงานจะเชื่อมกับ Report Component ในขั้นถัดไป</p>
+                </div>
+              </main>
+            )}
+            {canViewActionCenter && currentView === 'incident' && (
               <main className="flex-1 overflow-hidden"><IncidentCenter trucks={actionCenterTrucks} onUpdateTruck={handleUpdateTruck} /></main>
             )}
-            {canOperate && currentView === 'warehouse' && (
+            {canStamp && currentView === 'warehouse' && (
               <main className="flex-1 overflow-hidden"><WarehouseStamp trucks={inboundTrucks} onUpdateTruck={handleUpdateTruck} /></main>
             )}
           </>
@@ -1813,7 +1834,7 @@ export default function App() {
                       value={newPassword}
                       onChange={event => setNewPassword(event.target.value)}
                       autoComplete="new-password"
-                      minLength={12}
+                      minLength={6}
                       maxLength={128}
                       required
                       disabled={isChangingPassword}
@@ -1830,7 +1851,7 @@ export default function App() {
                       {showNewPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
                     </button>
                   </div>
-                  <span className="mt-1 block text-xs text-slate-500">ความยาว 12-128 ตัวอักษร และต้องไม่เหมือนรหัสผ่านเดิม</span>
+                  <span className="mt-1 block text-xs text-slate-500">ความยาว 6-128 ตัวอักษร สามารถใช้เหมือน Username ได้</span>
                 </label>
                 <label className="block">
                   <span className="mb-1 block text-sm font-medium text-slate-700">ยืนยันรหัสผ่านใหม่</span>
@@ -1840,7 +1861,7 @@ export default function App() {
                       value={confirmNewPassword}
                       onChange={event => setConfirmNewPassword(event.target.value)}
                       autoComplete="new-password"
-                      minLength={12}
+                      minLength={6}
                       maxLength={128}
                       required
                       disabled={isChangingPassword}
