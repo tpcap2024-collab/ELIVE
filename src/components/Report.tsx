@@ -355,34 +355,51 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
         {selectedKind && ['EARLY','ONTIME','LATE','DWELL'].includes(selectedKind) && <div className="rounded-lg border border-blue-100 bg-blue-50 p-4"><p className="text-sm font-black text-blue-900">เกณฑ์เวลา (นาที)</p><div className="mt-3 flex flex-wrap items-center gap-4"><label className="inline-flex items-center gap-2 text-sm"><input type="radio" checked={toleranceMode === 'PRESET'} onChange={() => setToleranceMode('PRESET')} />เลือกนาที</label><select disabled={toleranceMode !== 'PRESET'} value={presetTolerance} onChange={event => setPresetTolerance(Number(event.target.value))} className="rounded-lg border border-slate-300 bg-white px-3 py-2 disabled:bg-slate-100">{TOLERANCE_OPTIONS.map(value => <option key={value} value={value}>{value} นาที</option>)}</select><label className="inline-flex items-center gap-2 text-sm"><input type="radio" checked={toleranceMode === 'CUSTOM'} onChange={() => setToleranceMode('CUSTOM')} />ระบุนาที</label><input type="number" min="1" max="720" step="1" disabled={toleranceMode !== 'CUSTOM'} value={customTolerance} onChange={event => setCustomTolerance(event.target.value)} className="w-28 rounded-lg border border-slate-300 bg-white px-3 py-2 disabled:bg-slate-100" /><span className="text-sm text-slate-600">นาที</span></div></div>}
       </fieldset><div role="status" aria-live="polite" className="mt-3 text-sm font-semibold text-blue-700">{progress}</div>{error && <p role="alert" className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</p>}<div className="mt-5 flex justify-end gap-2">{loading && <button type="button" onClick={cancelLoading} className={buttonClass}>ยกเลิก</button>}<button type="submit" disabled={loading} className="rounded-lg bg-blue-600 px-6 py-3 text-sm font-bold text-white disabled:opacity-50">{loading ? 'กำลังสร้างรายงาน...' : 'แสดงรายงาน'}</button></div></form>
     </div> : <div className="mx-auto max-w-7xl">
-      <div className="flex flex-wrap items-start justify-between gap-4"><div><button type="button" onClick={() => setResult(null)} className="text-sm font-bold text-blue-700">← แก้ไขเงื่อนไขรายงาน</button><h1 className="mt-3 text-xl font-black text-slate-900">{reportTitle}</h1><p className="mt-2 text-sm text-slate-500">{result.start} {result.startTime} ถึง {result.end} {result.endTime} · เฉพาะโครงการ INBOUND · โหลดครบ {result.days.length} วัน</p></div><div className="flex flex-wrap items-end gap-2"><label className="text-xs font-bold text-slate-500">สังกัด<select value={supplier} onChange={event => setSupplier(event.target.value)} className="mt-1 block max-w-56 rounded-lg border border-slate-300 bg-white p-2 text-sm text-slate-800"><option value="">ทุกสังกัด</option>{suppliers.map(item => <option key={item}>{item}</option>)}</select></label><button type="button" onClick={exportCsv} className={buttonClass}>ส่งออก CSV</button><button type="button" onClick={() => { setResult(null); setSelectedKind(null); }} className={buttonClass}>เลือกรายงานประเภทอื่น</button></div></div>
-      <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-5">{summary.map(([label, item]) => <div key={String(label)} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"><p className="text-xs font-bold text-slate-500">{label}</p><p className="mt-2 text-2xl font-black text-slate-900">{item}</p></div>)}</div>
+      <div className="flex flex-wrap items-start justify-between gap-4"><div><button type="button" onClick={() => setResult(null)} className="rounded-lg border border-slate-300 bg-slate-200 px-5 py-2.5 text-base text-slate-900 shadow-sm hover:bg-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-400" style={{ fontWeight: 900 }}>ย้อนกลับ</button><h1 className="mt-3 text-xl font-black text-slate-900">{reportTitle}</h1><p className="mt-2 text-sm text-slate-500">{result.start} {result.startTime} ถึง {result.end} {result.endTime} · เฉพาะโครงการ INBOUND · โหลดครบ {result.days.length} วัน</p></div><div className="flex flex-wrap items-end gap-2"><label className="text-xs font-bold text-slate-500">สังกัด<select value={supplier} onChange={event => setSupplier(event.target.value)} className="mt-1 block max-w-56 rounded-lg border border-slate-300 bg-white p-2 text-sm text-slate-800"><option value="">ทุกสังกัด</option>{suppliers.map(item => <option key={item}>{item}</option>)}</select></label><button type="button" onClick={exportCsv} className={buttonClass}>ส่งออก CSV</button></div></div>
+      <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-5">{summary.map(([label, item]) => {
+        const labelText = String(label);
+        const accent = kind === 'SUMMARY'
+          ? labelText === 'Early' ? 'border-blue-500 bg-blue-50/70'
+          : labelText === 'On Plan' ? 'border-emerald-500 bg-emerald-50/70'
+          : labelText === 'Delay' ? 'border-red-500 bg-red-50/70'
+          : labelText === 'No Drop / Cancel' ? 'border-slate-400 bg-slate-100/80'
+          : 'border-indigo-500 bg-indigo-50/70'
+          : 'border-slate-300 bg-white';
+        const valueColor = kind === 'SUMMARY'
+          ? labelText === 'Early' ? 'text-blue-700'
+          : labelText === 'On Plan' ? 'text-emerald-700'
+          : labelText === 'Delay' ? 'text-red-700'
+          : labelText === 'No Drop / Cancel' ? 'text-slate-700'
+          : 'text-indigo-700'
+          : 'text-slate-900';
+        return <div key={labelText} className={`relative overflow-hidden rounded-2xl border border-slate-200 border-l-4 ${accent} p-4 shadow-sm`}><p className="text-xs font-black uppercase tracking-wide text-slate-600">{label}</p><p className={`mt-2 text-3xl font-black ${valueColor}`}>{item}</p></div>;
+      })}</div>
       {kind === 'SUMMARY' ? <>
-        <section className="mt-5 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="font-black text-slate-900">สรุปสถานะรถเข้าพื้นที่</h2>
-            <div className="flex flex-wrap gap-x-4 gap-y-2 text-xs font-bold text-slate-700">
-              <span className="inline-flex items-center gap-1.5"><i className="h-3 w-3 rounded-sm bg-blue-500" />Early</span>
-              <span className="inline-flex items-center gap-1.5"><i className="h-3 w-3 rounded-sm bg-emerald-500" />On Plan</span>
-              <span className="inline-flex items-center gap-1.5"><i className="h-3 w-3 rounded-sm bg-red-500" />Delay</span>
-              <span className="inline-flex items-center gap-1.5"><i className="h-3 w-3 rounded-sm bg-slate-400" />No Drop / Cancel</span>
+        <section className="mt-5 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-md">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white px-6 py-5">
+            <div><h2 className="text-lg font-black text-slate-900">สรุปสถานะรถเข้าพื้นที่</h2><p className="mt-1 text-xs font-semibold text-slate-500">สัดส่วนสถานะเทียบกับเที่ยวที่แสดงในกราฟ</p></div>
+            <div className="flex flex-wrap gap-2 text-xs font-black text-slate-700">
+              <span className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5"><i className="h-2.5 w-2.5 rounded-full bg-blue-500 shadow-sm" />Early</span>
+              <span className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5"><i className="h-2.5 w-2.5 rounded-full bg-emerald-500 shadow-sm" />On Plan</span>
+              <span className="inline-flex items-center gap-2 rounded-full border border-red-200 bg-red-50 px-3 py-1.5"><i className="h-2.5 w-2.5 rounded-full bg-red-500 shadow-sm" />Delay</span>
+              <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-100 px-3 py-1.5"><i className="h-2.5 w-2.5 rounded-full bg-slate-400 shadow-sm" />No Drop / Cancel</span>
             </div>
           </div>
-          {!summaryChartRows.length ? <p className="py-20 text-center text-slate-500">ไม่มีเที่ยวที่สามารถแสดงในกราฟได้</p> : <div className="mt-6 space-y-5">{summaryChartRows.map(item => <div key={item.date}>
-            <div className="mb-2 flex items-center justify-between gap-3 text-sm"><strong className="text-slate-900">{item.date}</strong><span className="font-bold text-slate-600">{item.total} เที่ยว · 100.0%</span></div>
-            <div className="flex h-10 w-full overflow-hidden rounded-lg bg-slate-100">{([
-              ['EARLY','bg-blue-500'],['ONTIME','bg-emerald-500'],['LATE','bg-red-500'],['EXCLUDED','bg-slate-400']
+          {!summaryChartRows.length ? <p className="py-20 text-center text-slate-500">ไม่มีเที่ยวที่สามารถแสดงในกราฟได้</p> : <div className="space-y-6 px-6 py-6">{summaryChartRows.map(item => <div key={item.date}>
+            <div className="mb-3 flex items-center justify-between gap-3 text-sm"><strong className="rounded-md bg-slate-100 px-2.5 py-1 text-slate-800">{item.date}</strong><span className="font-black text-slate-700">{item.total} เที่ยว · 100.0%</span></div>
+            <div className="flex h-12 w-full overflow-hidden rounded-xl bg-slate-100 shadow-inner ring-1 ring-slate-200">{([
+              ['EARLY','bg-gradient-to-r from-blue-600 to-blue-400'],['ONTIME','bg-gradient-to-r from-emerald-600 to-emerald-400'],['LATE','bg-gradient-to-r from-red-600 to-red-400'],['EXCLUDED','bg-gradient-to-r from-slate-500 to-slate-400']
             ] as Array<[SummaryStatus,string]>).map(([status,color]) => {
               const count = item.counts[status]; const rate = item.total ? count / item.total * 100 : 0;
               if (!count) return null;
-              return <div key={status} title={`${summaryStatusLabel(status)} ${count} เที่ยว · ${rate.toFixed(1)}%`} className={`${color} flex min-w-0 items-center justify-center overflow-hidden px-1 text-xs font-black text-white`} style={{ width: `${rate}%` }}>
+              return <div key={status} title={`${summaryStatusLabel(status)} ${count} เที่ยว · ${rate.toFixed(1)}%`} className={`${color} flex min-w-0 items-center justify-center overflow-hidden border-r border-white/30 px-2 text-xs font-black text-white transition-all duration-300 last:border-r-0 hover:brightness-110`} style={{ width: `${rate}%` }}>
                 {rate >= 8 ? <span className="truncate">{count} · {rate.toFixed(1)}%</span> : null}
               </div>;
             })}</div>
           </div>)}</div>}
         </section>
-        <section className="mt-5 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-          <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-5 py-4"><h2 className="font-black text-slate-900">รายละเอียดเที่ยวในกราฟ</h2><span className="text-xs font-bold text-slate-500">{summaryDetailRows.length} เที่ยว</span></div>
+        <section className="mt-5 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-md">
+          <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-gradient-to-r from-slate-50 to-white px-6 py-5"><h2 className="text-lg font-black text-slate-900">รายละเอียดเที่ยวในกราฟ</h2><span className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-black text-white">{summaryDetailRows.length} เที่ยว</span></div>
           <div className="max-h-[460px] overflow-auto"><table className="w-full min-w-[1100px] text-left text-xs"><thead className="sticky top-0 bg-slate-100"><tr>{['วันที่','Code Run','Project','Route','สังกัด','ทะเบียน','จุดลงงาน','Plan ETA','Actual ETA','สถานะ','ผลต่างจากขอบ ON PLAN'].map(heading => <th key={heading} className="whitespace-nowrap p-3 font-black text-slate-700">{heading}</th>)}</tr></thead><tbody>{summaryDetailRows.map(({ row, status }) => <tr key={`${row.date}:${row.truck.id}`} className="hover:bg-slate-50">{[row.date,row.truck.id,row.truck.project,row.truck.route,row.truck.supplierName,row.truck.licensePlate,row.truck.dropPoint,row.truck.planEta,row.truck.stampEta || row.truck.actualEta,summaryStatusLabel(status),timeResultText(row.truck,toleranceMinutes,status)].map((item,index) => <td key={index} className="border-t border-slate-100 p-3">{text(item) || '-'}</td>)}</tr>)}</tbody></table></div>
         </section>
       </> : <>
