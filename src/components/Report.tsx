@@ -149,36 +149,43 @@ function MultiSelectField({ label, options, values, onChange, placeholder = 'ท
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
   useEffect(() => {
     const close = (event: MouseEvent) => {
-      if (wrapperRef.current && !wrapperRef.current.contains(event.target as Node)) setOpen(false);
+      if (wrapperRef.current && !wrapperRef.current.contains(event.target as Node)) {
+        setOpen(false);
+        setQuery('');
+      }
     };
     document.addEventListener('mousedown', close);
     return () => document.removeEventListener('mousedown', close);
   }, []);
-  const toggle = (value: string) => onChange(values.includes(value) ? values.filter(item => item !== value) : [...values, value]);
-  const filteredOptions = options.filter(option => option.toLocaleLowerCase('th').includes(query.trim().toLocaleLowerCase('th')));
+  const filteredOptions = options.filter(option => !values.includes(option) && option.toLocaleLowerCase('th').includes(query.trim().toLocaleLowerCase('th')));
+  const selectOption = (value: string) => {
+    if (!values.includes(value)) onChange([...values, value]);
+    setQuery('');
+    setOpen(true);
+    window.setTimeout(() => inputRef.current?.focus(), 0);
+  };
+  const removeOption = (value: string) => onChange(values.filter(item => item !== value));
   return <div ref={wrapperRef} className="relative">
     <label className="text-sm font-bold text-slate-700">{label}</label>
-    <button type="button" onClick={() => setOpen(current => { const next = !current; if (next) setQuery(''); return next; })} aria-expanded={open} className="mt-2 flex min-h-[52px] w-full items-center justify-between gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-left focus:outline-none focus:ring-2 focus:ring-blue-500">
-      <span className="flex min-w-0 flex-1 flex-wrap gap-1.5">
-        {!values.length ? <span className="py-1 text-sm text-slate-500">{placeholder}</span> : values.map(value => <span key={value} className="inline-flex max-w-full items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-xs font-bold text-blue-800">
-          <span className="truncate">{value}</span>
-          <span role="button" tabIndex={0} aria-label={`ยกเลิก ${value}`} onClick={event => { event.stopPropagation(); onChange(values.filter(item => item !== value)); }} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.stopPropagation(); onChange(values.filter(item => item !== value)); } }} className="cursor-pointer text-base leading-none text-blue-500 hover:text-red-600">×</span>
-        </span>)}
-      </span>
-      <span className={`shrink-0 text-slate-500 transition-transform ${open ? 'rotate-180' : ''}`}>▾</span>
-    </button>
-    {open && <div className="absolute z-30 mt-1 w-full rounded-lg border border-slate-200 bg-white p-2 shadow-xl">
-      <input autoFocus type="text" value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => event.stopPropagation()} placeholder={`พิมพ์ค้นหา ${label}`} className="mb-2 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
-      <div className="max-h-52 overflow-auto">
-        <button type="button" onClick={() => { onChange([]); setQuery(''); }} className="mb-1 w-full rounded-md px-3 py-2 text-left text-sm font-semibold text-slate-600 hover:bg-slate-100">ทั้งหมด</button>
-        {filteredOptions.map(option => <label key={option} className="flex cursor-pointer items-center gap-2 rounded-md px-3 py-2 text-sm text-slate-700 hover:bg-blue-50">
-          <input type="checkbox" checked={values.includes(option)} onChange={() => toggle(option)} className="h-4 w-4 rounded border-slate-300 text-blue-600" />
-          <span className="truncate">{option}</span>
-        </label>)}
-        {!filteredOptions.length && <p className="px-3 py-4 text-center text-sm text-slate-500">ไม่พบรายการที่ค้นหา</p>}
-      </div>
+    <div onClick={() => { setOpen(true); inputRef.current?.focus(); }} className="mt-2 flex min-h-[52px] w-full cursor-text flex-wrap items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100">
+      {values.map(value => <span key={value} className="inline-flex max-w-full items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-xs font-bold text-blue-800">
+        <span className="truncate">{value}</span>
+        <button type="button" aria-label={`ยกเลิก ${value}`} onClick={event => { event.stopPropagation(); removeOption(value); }} className="text-base leading-none text-blue-500 hover:text-red-600">×</button>
+      </span>)}
+      <input ref={inputRef} type="text" value={query} onFocus={() => setOpen(true)} onChange={event => { setQuery(event.target.value); setOpen(true); }} onKeyDown={event => {
+        if (event.key === 'Enter' && filteredOptions.length) { event.preventDefault(); selectOption(filteredOptions[0]); }
+        if (event.key === 'Backspace' && !query && values.length) removeOption(values[values.length - 1]);
+        if (event.key === 'Escape') { setOpen(false); setQuery(''); }
+      }} placeholder={!values.length ? placeholder : ''} className="min-w-[90px] flex-1 border-0 bg-transparent py-1 text-sm text-slate-800 outline-none placeholder:text-slate-400" />
+      <button type="button" aria-label={`เปิดรายการ ${label}`} onClick={event => { event.stopPropagation(); setOpen(current => !current); inputRef.current?.focus(); }} className="ml-auto shrink-0 px-1 text-slate-500">▾</button>
+    </div>
+    {open && <div className="absolute z-30 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-slate-200 bg-white p-1 shadow-xl">
+      <button type="button" onClick={() => { onChange([]); setQuery(''); inputRef.current?.focus(); }} className="w-full rounded-md px-3 py-2 text-left text-sm font-semibold text-slate-700 hover:bg-slate-100">ทั้งหมด</button>
+      {filteredOptions.map(option => <button key={option} type="button" onClick={() => selectOption(option)} className="block w-full rounded-md px-3 py-2 text-left text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-800">{option}</button>)}
+      {!filteredOptions.length && query && <p className="px-3 py-3 text-sm text-slate-500">ไม่พบรายการ</p>}
     </div>}
   </div>;
 }
