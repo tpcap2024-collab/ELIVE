@@ -3,7 +3,7 @@ import { Truck } from '../types';
 import { fetchDailyPlans, fetchEliveDashboardData } from '../lib/sheets';
 
 interface ReportProps { trucks: Truck[]; selectedDate?: string; }
-type Kind = 'EARLY' | 'ONTIME' | 'LATE' | 'DWELL' | 'POINT' | 'ROUTE' | 'SUPPLIER';
+type Kind = 'SUMMARY' | 'EARLY' | 'ONTIME' | 'LATE' | 'DWELL' | 'POINT' | 'ROUTE' | 'SUPPLIER';
 type ReportRow = { truck: Truck & { planRemark?: string }; date: string };
 type MetricRow = { name: string; total: number; measured: number; count: number; rate: number | null; average: number | null; maximum: number | null; topReason?: string };
 
@@ -11,18 +11,19 @@ const DEFAULT_TOLERANCE_MINUTES = 10;
 const TOLERANCE_OPTIONS = [3, 5, 10, 15, 20, 30, 45, 60];
 const MAX_REPORT_DAYS = 92;
 const reportGroups: Array<{ title: string; reports: Array<{ id: Kind; title: string; description: string }> }> = [
-  { title: 'ประสิทธิภาพการมาถึง', reports: [
-    { id: 'EARLY', title: 'เที่ยวรถที่มาถึงก่อนกำหนด', description: 'วิเคราะห์จำนวน สัดส่วน และระยะเวลาที่มาถึงก่อนกรอบ ON PLAN' },
-    { id: 'ONTIME', title: 'เที่ยวรถที่มาถึงตามแผน', description: 'วิเคราะห์จำนวนและสัดส่วนเที่ยวที่มาถึงภายในกรอบ ON PLAN' },
-    { id: 'LATE', title: 'เที่ยวรถที่มาถึงล่าช้า', description: 'วิเคราะห์จำนวน สัดส่วน และระยะเวลาที่มาถึงหลังกรอบ ON PLAN' },
+  { title: 'รายงานสรุป', reports: [
+    { id: 'SUMMARY', title: 'รายงานรถเข้า-ออกพื้นที่ทั้งหมด', description: 'สรุปจำนวนเที่ยวรถเข้าและออกพื้นที่ในช่วงเวลาที่เลือก' },
+    { id: 'EARLY', title: 'รายงานรถเข้าพื้นที่ก่อนเวลา', description: 'สรุปจำนวนเที่ยวและระยะเวลาที่รถเข้าพื้นที่ก่อนช่วง ON PLAN' },
+    { id: 'ONTIME', title: 'รายงานรถเข้าพื้นที่ตามแผน', description: 'สรุปจำนวนเที่ยวที่รถเข้าพื้นที่ภายในช่วง ON PLAN' },
+    { id: 'LATE', title: 'รายงานรถเข้าพื้นที่ล่าช้า', description: 'สรุปจำนวนเที่ยวและระยะเวลาที่รถเข้าพื้นที่หลังช่วง ON PLAN' },
   ]},
-  { title: 'ประสิทธิภาพการปฏิบัติงาน ณ จุดลงงาน', reports: [
-    { id: 'DWELL', title: 'ระยะเวลาปฏิบัติงานเกินแผน', description: 'วิเคราะห์ระยะเวลาปฏิบัติงานจริงเทียบกับแผน จำแนกตามจุดลงงาน' },
+  { title: 'รายงานประสิทธิภาพการปฏิบัติงาน', reports: [
+    { id: 'DWELL', title: 'รายงานระยะเวลาปฏิบัติงาน', description: 'สรุประยะเวลาปฏิบัติงานจริงเทียบกับแผน แยกตามจุดลงงาน' },
   ]},
-  { title: 'การวิเคราะห์ปัญหาและการติดตามผล', reports: [
-    { id: 'POINT', title: 'ปัญหาจำแนกตามจุดลงงาน', description: 'วิเคราะห์จำนวนและสัดส่วนเที่ยวที่พบปัญหาในแต่ละจุดลงงาน' },
-    { id: 'ROUTE', title: 'เส้นทางที่พบปัญหาสูงสุด', description: 'จัดอันดับเส้นทางตามจำนวนและสัดส่วนเที่ยวที่พบปัญหา' },
-    { id: 'SUPPLIER', title: 'สังกัดที่พบปัญหาสูงสุด', description: 'จัดอันดับสังกัดตามจำนวนและสัดส่วนเที่ยวที่พบปัญหา' },
+  { title: 'รายงานการวิเคราะห์ปัญหา', reports: [
+    { id: 'POINT', title: 'รายงานปัญหาแยกตามจุดลงงาน', description: 'สรุปจำนวนและสัดส่วนเที่ยวที่พบปัญหาในแต่ละจุดลงงาน' },
+    { id: 'ROUTE', title: 'รายงานเส้นทางที่พบปัญหาบ่อยที่สุด', description: 'จัดอันดับเส้นทางตามจำนวนและสัดส่วนเที่ยวที่พบปัญหา' },
+    { id: 'SUPPLIER', title: 'รายงานสังกัดที่พบปัญหามากที่สุด', description: 'จัดอันดับสังกัดตามจำนวนและสัดส่วนเที่ยวที่พบปัญหา' },
   ]},
 ];
 const flatReports = reportGroups.flatMap(group => group.reports);
@@ -219,6 +220,12 @@ export default function Report({ selectedDate = '' }: ReportProps) {
   const problemRows = useMemo(() => rows.filter(row => problemReason(row.truck)), [rows]);
   const metricRows = useMemo(() => {
     if (!kind) return [];
+    if (kind === 'SUMMARY') {
+      return Array.from(new Set(rows.map(row => row.date))).map(name => {
+        const group = rows.filter(row => row.date === name);
+        return { name, total: group.length, measured: group.length, count: group.length, rate: rows.length ? group.length / rows.length * 100 : null, average: null, maximum: null, topReason: undefined } as MetricRow;
+      }).sort((a, b) => a.name.localeCompare(b.name));
+    }
     if (kind === 'DWELL' || kind === 'POINT') return metricBy(rows, row => text(row.truck.dropPoint) || 'ไม่ระบุจุดลงงาน', kind, toleranceMinutes);
     if (kind === 'ROUTE') return metricBy(rows, row => text(row.truck.route) || 'ไม่ระบุ Route', kind, toleranceMinutes).filter(item => item.total >= 3);
     if (kind === 'SUPPLIER') return metricBy(rows, row => text(row.truck.supplierName) || 'ไม่ระบุสังกัด', kind, toleranceMinutes);
@@ -226,7 +233,9 @@ export default function Report({ selectedDate = '' }: ReportProps) {
   }, [kind, rows, toleranceMinutes]);
   const reportTitle = flatReports.find(item => item.id === (kind || selectedKind))?.title || 'รายงาน';
   const maximumBar = Math.max(1, ...metricRows.map(item => item.rate ?? 0));
-  const summary = kind === 'DWELL'
+  const summary = kind === 'SUMMARY'
+    ? [['เที่ยว INBOUND ทั้งหมด', rows.length], ['รถเข้าพื้นที่แล้ว', rows.filter(row => Boolean(text(row.truck.stampEta || row.truck.actualEta))).length], ['รถออกจากพื้นที่แล้ว', rows.filter(row => Boolean(text(row.truck.stampEtd || (row.truck as Truck & { actualEtd?: unknown }).actualEtd))).length], ['ยังไม่เข้าพื้นที่', rows.filter(row => !text(row.truck.stampEta || row.truck.actualEta)).length], ['ยังไม่ออกจากพื้นที่', rows.filter(row => text(row.truck.stampEta || row.truck.actualEta) && !text(row.truck.stampEtd || (row.truck as Truck & { actualEtd?: unknown }).actualEtd)).length]]
+    : kind === 'DWELL'
     ? [['เที่ยว INBOUND ทั้งหมด', rows.length], ['ประเมินเวลาได้', dwellMeasured.length], ['ใช้เวลาเกินแผน', dwellExceeded.length], ['เกินแผนเฉลี่ย', minuteText(average(dwellExceeded))], ['เกินแผนสูงสุด', minuteText(dwellExceeded.length ? Math.max(...dwellExceeded) : null)]]
     : kind && ['POINT', 'ROUTE', 'SUPPLIER'].includes(kind)
       ? [['เที่ยว INBOUND ทั้งหมด', rows.length], ['เที่ยวที่มีปัญหา', problemRows.length], ['อัตราเกิดปัญหา', percentage(rows.length ? problemRows.length / rows.length * 100 : null)], ['ปัญหาที่ยังไม่เสร็จสิ้น', problemRows.filter(row => upper(row.truck.actionStatus) !== 'CLOSED').length]]
@@ -244,8 +253,8 @@ export default function Report({ selectedDate = '' }: ReportProps) {
 
   return <div className="h-full min-h-0 overflow-auto bg-slate-50 p-4 md:p-6">
     {!selectedKind ? <div className="mx-auto max-w-6xl">
-      <h1 className="text-2xl font-black text-slate-900">ศูนย์รายงานเพื่อการบริหาร</h1>
-      <p className="mt-2 text-sm text-slate-500">กรุณาเลือกประเภทรายงานที่ต้องการ · ประมวลผลเฉพาะเที่ยวในโครงการ INBOUND</p>
+      <h1 className="text-2xl font-black text-slate-900">รายงาน</h1>
+      <p className="mt-2 text-sm text-slate-500">เลือกประเภทรายงานที่ต้องการ</p>
       <div className="mt-6 grid gap-5 lg:grid-cols-2">{reportGroups.map(group => <section key={group.title} className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"><h2 className="border-b border-slate-200 bg-slate-100 px-5 py-3 text-sm font-black text-slate-800">{group.title}</h2><div className="grid gap-2 p-4 sm:grid-cols-2">{group.reports.map(report => <button key={report.id} type="button" onClick={() => openReport(report.id)} className="rounded-lg border border-slate-200 bg-white p-4 text-left hover:border-blue-400 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500"><span className="block text-sm font-black text-slate-900">{report.title}</span><span className="mt-1 block text-xs leading-5 text-slate-500">{report.description}</span></button>)}</div></section>)}</div>
     </div> : !result ? <div className="max-w-2xl">
       <button type="button" onClick={() => setSelectedKind(null)} className="text-sm font-bold text-blue-700">← กลับสู่หน้ารายการรายงาน</button>
@@ -260,7 +269,9 @@ export default function Report({ selectedDate = '' }: ReportProps) {
       <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-5">{summary.map(([label, item]) => <div key={String(label)} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"><p className="text-xs font-bold text-slate-500">{label}</p><p className="mt-2 text-2xl font-black text-slate-900">{item}</p></div>)}</div>
       <section className="mt-5 rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex flex-wrap items-center justify-between gap-2"><h2 className="font-black text-slate-900">{reportTitle}</h2><span className="text-xs font-bold text-slate-500">แสดง {metricRows.length} รายการ</span></div>
         {!rows.length ? <p className="py-20 text-center text-slate-500">ไม่พบเที่ยว INBOUND ในช่วงวันที่และสังกัดที่เลือก</p> : <div className="mt-6 space-y-4">{metricRows.slice(0, kind === 'ROUTE' ? 15 : 30).map(item => {
-          const compactValue = kind === 'DWELL'
+          const compactValue = kind === 'SUMMARY'
+            ? `${item.count} เที่ยว · ${percentage(item.rate)}`
+            : kind === 'DWELL'
             ? `${percentage(item.rate)} · ${minuteText(item.average)}`
             : ['POINT','ROUTE','SUPPLIER'].includes(kind || '')
               ? `${item.count} เที่ยว · ${percentage(item.rate)}`
