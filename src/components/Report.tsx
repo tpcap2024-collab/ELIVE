@@ -162,7 +162,7 @@ function MultiSelectField({ label, options, values, onChange, placeholder = 'ท
   }, []);
   const filteredOptions = options.filter(option => !values.includes(option) && option.toLocaleLowerCase('th').includes(query.trim().toLocaleLowerCase('th')));
   const selectOption = (value: string) => {
-    if (!values.includes(value)) onChange([...values, value]);
+    if (!values.includes(value)) onChange([...(values.includes('ทั้งหมด') ? [] : values), value]);
     setQuery('');
     setOpen(true);
     window.setTimeout(() => inputRef.current?.focus(), 0);
@@ -183,7 +183,7 @@ function MultiSelectField({ label, options, values, onChange, placeholder = 'ท
       <button type="button" aria-label={`เปิดรายการ ${label}`} onClick={event => { event.stopPropagation(); setOpen(current => !current); inputRef.current?.focus(); }} className="ml-auto shrink-0 px-1 text-slate-500">▾</button>
     </div>
     {open && <div className="absolute z-30 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-slate-200 bg-white p-1 shadow-xl">
-      <button type="button" onClick={() => { onChange([]); setQuery(''); inputRef.current?.focus(); }} className="w-full rounded-md px-3 py-2 text-left text-sm font-semibold text-slate-700 hover:bg-slate-100">ทั้งหมด</button>
+      <button type="button" onClick={() => { onChange(['ทั้งหมด']); setQuery(''); setOpen(false); }} className="w-full rounded-md px-3 py-2 text-left text-sm font-semibold text-slate-700 hover:bg-slate-100">ทั้งหมด</button>
       {filteredOptions.map(option => <button key={option} type="button" onClick={() => selectOption(option)} className="block w-full rounded-md px-3 py-2 text-left text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-800">{option}</button>)}
       {!filteredOptions.length && query && <p className="px-3 py-3 text-sm text-slate-500">ไม่พบรายการ</p>}
     </div>}
@@ -243,9 +243,9 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
         const usedIds = new Set<string>();
         for (const plan of plans.rows) {
           const planProject = upper(plan.project);
-          if (selectedProjects.length && !selectedProjects.includes(planProject)) continue;
-          if (selectedRoutes.length && !selectedRoutes.includes(text(plan.route))) continue;
-          if (selectedDropPoints.length && !selectedDropPoints.includes(text(plan.dropPoint))) continue;
+          if (selectedProjects.length && !selectedProjects.includes('ทั้งหมด') && !selectedProjects.includes(planProject)) continue;
+          if (selectedRoutes.length && !selectedRoutes.includes('ทั้งหมด') && !selectedRoutes.includes(text(plan.route))) continue;
+          if (selectedDropPoints.length && !selectedDropPoints.includes('ทั้งหมด') && !selectedDropPoints.includes(text(plan.dropPoint))) continue;
           const id = upper(plan.codeRun); if (!id || usedIds.has(id)) continue; usedIds.add(id);
           const actual = actualById.get(id);
           const truck = { ...actual, id, planDate: date, project: plan.project, route: plan.route, supplierName: plan.company, licensePlate: plan.truckName, dropPoint: plan.dropPoint, planEta: plan.planEta, planEtd: plan.planEtd, planRemark: plan.remark } as Truck & { planRemark?: string };
@@ -295,7 +295,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
 
   const exportCsv = () => {
     if (!result || !kind) return;
-    const output: unknown[][] = [['รายงาน', reportTitle], ['ช่วงวันและเวลา', `${result.start} ${result.startTime}`, `${result.end} ${result.endTime}`], ['Project', selectedProjects.length ? selectedProjects.join(' | ') : 'ทั้งหมด'], ['เกณฑ์ตรงเวลา', `±${toleranceMinutes} นาที`], ['สังกัด', supplier || 'ทั้งหมด'], []];
+    const output: unknown[][] = [['รายงาน', reportTitle], ['ช่วงวันและเวลา', `${result.start} ${result.startTime}`, `${result.end} ${result.endTime}`], ['Project', !selectedProjects.length || selectedProjects.includes('ทั้งหมด') ? 'ทั้งหมด' : selectedProjects.join(' | ')], ['เกณฑ์ตรงเวลา', `±${toleranceMinutes} นาที`], ['สังกัด', supplier || 'ทั้งหมด'], []];
     output.push(['รายการ', 'เที่ยวทั้งหมด', 'ประเมินได้', 'จำนวนที่เข้าเงื่อนไข', 'อัตรา %', 'เฉลี่ยนาที', 'สูงสุดนาที', 'สาเหตุหลัก'], ...metricRows.map(item => [item.name, item.total, item.measured, item.count, item.rate?.toFixed(1) || '', item.average?.toFixed(1) || '', item.maximum?.toFixed(1) || '', item.topReason || '']));
     output.push([], ['รายละเอียดเที่ยว'], ['วันที่', 'Route', 'สังกัด', 'ทะเบียน', 'จุดลงงาน', 'Plan ETA', 'Actual ETA', 'Plan ETD', 'Actual ETD', 'ความต่าง ETA (นาที)', 'เกินเวลาปฏิบัติงาน (นาที)', 'ปัญหา']);
     rows.forEach(row => output.push([row.date, row.truck.route, row.truck.supplierName, row.truck.licensePlate, row.truck.dropPoint, row.truck.planEta, row.truck.stampEta || row.truck.actualEta, row.truck.planEtd, row.truck.stampEtd || (row.truck as Truck & { actualEtd?: unknown }).actualEtd, timeBeyondOnPlan(row.truck, toleranceMinutes), dwellBeyondTolerance(row.truck, toleranceMinutes), row.truck.actionProblem]));
