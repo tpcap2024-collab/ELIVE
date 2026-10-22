@@ -6,6 +6,8 @@ interface ReportProps { trucks: Truck[]; selectedDate?: string; }
 type Kind = 'SUMMARY' | 'EARLY' | 'ONTIME' | 'LATE' | 'DWELL' | 'POINT' | 'ROUTE' | 'SUPPLIER';
 type ReportRow = { truck: Truck & { planRemark?: string }; date: string };
 type MetricRow = { name: string; total: number; measured: number; count: number; rate: number | null; average: number | null; maximum: number | null; topReason?: string };
+type SummaryStatus = 'EARLY' | 'ONTIME' | 'LATE' | 'EXCLUDED';
+type SummaryChartRow = { date: string; total: number; counts: Record<SummaryStatus, number> };
 
 const DEFAULT_TOLERANCE_MINUTES = 10;
 const TOLERANCE_OPTIONS = [3, 5, 10, 15, 20, 30, 45, 60];
@@ -74,6 +76,22 @@ function arrivalClass(truck: Truck & { planRemark?: string }, toleranceMinutes: 
   if (difference < -toleranceMinutes) return 'EARLY';
   if (difference > toleranceMinutes) return 'LATE';
   return 'ONTIME';
+}
+function summaryStatus(truck: Truck & { planRemark?: string }, toleranceMinutes: number): SummaryStatus | null {
+  if (isCancelled(truck) || isNoWork(truck)) return 'EXCLUDED';
+  return arrivalClass(truck, toleranceMinutes);
+}
+function summaryStatusLabel(status: SummaryStatus): string {
+  if (status === 'EARLY') return 'Early';
+  if (status === 'ONTIME') return 'On Plan';
+  if (status === 'LATE') return 'Delay';
+  return 'No Drop / Cancel';
+}
+function timeResultText(truck: Truck & { planRemark?: string }, toleranceMinutes: number, status: SummaryStatus): string {
+  if (status === 'EXCLUDED') return isCancelled(truck) ? 'Cancel' : 'No Drop';
+  if (status === 'ONTIME') return 'On Plan';
+  const minutes = timeBeyondOnPlan(truck, toleranceMinutes);
+  return `${status === 'EARLY' ? 'ก่อนเวลา' : 'ล่าช้า'} ${Math.round(minutes || 0)} นาที`;
 }
 function timeBeyondOnPlan(truck: Truck & { planRemark?: string }, toleranceMinutes: number): number | null {
   const difference = etaDifference(truck);
@@ -270,6 +288,17 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
   const dwellMeasured = useMemo(() => rows.map(row => dwellBeyondTolerance(row.truck, toleranceMinutes)).filter((item): item is number => item !== null), [rows]);
   const dwellExceeded = useMemo(() => dwellMeasured.filter(item => item > 0), [dwellMeasured]);
   const problemRows = useMemo(() => rows.filter(row => problemReason(row.truck)), [rows]);
+  const summaryChartRows = useMemo<SummaryChartRow[]>(() => {
+    const dates = Array.from(new Set(rows.map(row => row.date))).sort();
+    return dates.map(date => {
+      const daily = rows.filter(row => row.date === date);
+      const counts: Record<SummaryStatus, number> = { EARLY: 0, ONTIME: 0, LATE: 0, EXCLUDED: 0 };
+      daily.forEach(row => { const status = summaryStatus(row.truck, toleranceMinutes); if (status) counts[status] += 1; });
+      return { date, total: Object.values(counts).reduce((sum, count) => sum + count, 0), counts };
+    }).filter(item => item.total > 0);
+  }, [rows, toleranceMinutes]);
+  const summaryDetailRows = useMemo(() => rows.map(row => ({ row, status: summaryStatus(row.truck, toleranceMinutes) })).filter((item): item is { row: ReportRow; status: SummaryStatus } => item.status !== null), [rows, toleranceMinutes]);
+  const summaryStatusCounts = useMemo(() => summaryDetailRows.reduce<Record<SummaryStatus, number>>((counts, item) => { counts[item.status] += 1; return counts; }, { EARLY: 0, ONTIME: 0, LATE: 0, EXCLUDED: 0 }), [summaryDetailRows]);
   const metricRows = useMemo(() => {
     if (!kind) return [];
     if (kind === 'SUMMARY') {
@@ -286,7 +315,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
   const reportTitle = flatReports.find(item => item.id === (kind || selectedKind))?.title || 'รายงาน';
   const maximumBar = Math.max(1, ...metricRows.map(item => item.rate ?? 0));
   const summary = kind === 'SUMMARY'
-    ? [['เที่ยวทั้งหมด', rows.length], ['รถเข้าพื้นที่แล้ว', rows.filter(row => Boolean(text(row.truck.stampEta || row.truck.actualEta))).length], ['รถออกจากพื้นที่แล้ว', rows.filter(row => Boolean(text(row.truck.stampEtd || (row.truck as Truck & { actualEtd?: unknown }).actualEtd))).length], ['ยังไม่เข้าพื้นที่', rows.filter(row => !text(row.truck.stampEta || row.truck.actualEta)).length], ['ยังไม่ออกจากพื้นที่', rows.filter(row => text(row.truck.stampEta || row.truck.actualEta) && !text(row.truck.stampEtd || (row.truck as Truck & { actualEtd?: unknown }).actualEtd)).length]]
+    ? [['ประเมินได้ทั้งหมด', summaryDetailRows.length], ['Early', summaryStatusCounts.EARLY], ['On Plan', summaryStatusCounts.ONTIME], ['Delay', summaryStatusCounts.LATE], ['No Drop / Cancel', summaryStatusCounts.EXCLUDED]]
     : kind === 'DWELL'
     ? [['เที่ยวทั้งหมด', rows.length], ['ประเมินเวลาได้', dwellMeasured.length], ['ใช้เวลาเกินแผน', dwellExceeded.length], ['เกินแผนเฉลี่ย', minuteText(average(dwellExceeded))], ['เกินแผนสูงสุด', minuteText(dwellExceeded.length ? Math.max(...dwellExceeded) : null)]]
     : kind && ['POINT', 'ROUTE', 'SUPPLIER'].includes(kind)
@@ -298,7 +327,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
     const output: unknown[][] = [['รายงาน', reportTitle], ['ช่วงวันและเวลา', `${result.start} ${result.startTime}`, `${result.end} ${result.endTime}`], ['Project', !selectedProjects.length || selectedProjects.includes('ทั้งหมด') ? 'ทั้งหมด' : selectedProjects.join(' | ')], ['เกณฑ์ตรงเวลา', `±${toleranceMinutes} นาที`], ['สังกัด', supplier || 'ทั้งหมด'], []];
     output.push(['รายการ', 'เที่ยวทั้งหมด', 'ประเมินได้', 'จำนวนที่เข้าเงื่อนไข', 'อัตรา %', 'เฉลี่ยนาที', 'สูงสุดนาที', 'สาเหตุหลัก'], ...metricRows.map(item => [item.name, item.total, item.measured, item.count, item.rate?.toFixed(1) || '', item.average?.toFixed(1) || '', item.maximum?.toFixed(1) || '', item.topReason || '']));
     output.push([], ['รายละเอียดเที่ยว'], ['วันที่', 'Route', 'สังกัด', 'ทะเบียน', 'จุดลงงาน', 'Plan ETA', 'Actual ETA', 'Plan ETD', 'Actual ETD', 'ความต่าง ETA (นาที)', 'เกินเวลาปฏิบัติงาน (นาที)', 'ปัญหา']);
-    rows.forEach(row => output.push([row.date, row.truck.route, row.truck.supplierName, row.truck.licensePlate, row.truck.dropPoint, row.truck.planEta, row.truck.stampEta || row.truck.actualEta, row.truck.planEtd, row.truck.stampEtd || (row.truck as Truck & { actualEtd?: unknown }).actualEtd, timeBeyondOnPlan(row.truck, toleranceMinutes), dwellBeyondTolerance(row.truck, toleranceMinutes), row.truck.actionProblem]));
+    (kind === 'SUMMARY' ? summaryDetailRows.map(item => item.row) : rows).forEach(row => output.push([row.date, row.truck.route, row.truck.supplierName, row.truck.licensePlate, row.truck.dropPoint, row.truck.planEta, row.truck.stampEta || row.truck.actualEta, row.truck.planEtd, row.truck.stampEtd || (row.truck as Truck & { actualEtd?: unknown }).actualEtd, timeBeyondOnPlan(row.truck, toleranceMinutes), dwellBeyondTolerance(row.truck, toleranceMinutes), row.truck.actionProblem]));
     const url = URL.createObjectURL(new Blob(['\uFEFF' + output.map(line => line.map(csvCell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' }));
     const anchor = document.createElement('a'); anchor.href = url; anchor.download = `INBOUND-${kind}-${result.start}-${result.end}.csv`; document.body.appendChild(anchor); anchor.click(); anchor.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
@@ -328,11 +357,38 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
     </div> : <div className="mx-auto max-w-7xl">
       <div className="flex flex-wrap items-start justify-between gap-4"><div><button type="button" onClick={() => setResult(null)} className="text-sm font-bold text-blue-700">← แก้ไขเงื่อนไขรายงาน</button><h1 className="mt-3 text-xl font-black text-slate-900">{reportTitle}</h1><p className="mt-2 text-sm text-slate-500">{result.start} {result.startTime} ถึง {result.end} {result.endTime} · เฉพาะโครงการ INBOUND · โหลดครบ {result.days.length} วัน</p></div><div className="flex flex-wrap items-end gap-2"><label className="text-xs font-bold text-slate-500">สังกัด<select value={supplier} onChange={event => setSupplier(event.target.value)} className="mt-1 block max-w-56 rounded-lg border border-slate-300 bg-white p-2 text-sm text-slate-800"><option value="">ทุกสังกัด</option>{suppliers.map(item => <option key={item}>{item}</option>)}</select></label><button type="button" onClick={exportCsv} className={buttonClass}>ส่งออก CSV</button><button type="button" onClick={() => { setResult(null); setSelectedKind(null); }} className={buttonClass}>เลือกรายงานประเภทอื่น</button></div></div>
       <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-5">{summary.map(([label, item]) => <div key={String(label)} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"><p className="text-xs font-bold text-slate-500">{label}</p><p className="mt-2 text-2xl font-black text-slate-900">{item}</p></div>)}</div>
+      {kind === 'SUMMARY' ? <>
+        <section className="mt-5 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="font-black text-slate-900">สรุปสถานะรถเข้าพื้นที่</h2>
+            <div className="flex flex-wrap gap-x-4 gap-y-2 text-xs font-bold text-slate-700">
+              <span className="inline-flex items-center gap-1.5"><i className="h-3 w-3 rounded-sm bg-blue-500" />Early</span>
+              <span className="inline-flex items-center gap-1.5"><i className="h-3 w-3 rounded-sm bg-emerald-500" />On Plan</span>
+              <span className="inline-flex items-center gap-1.5"><i className="h-3 w-3 rounded-sm bg-red-500" />Delay</span>
+              <span className="inline-flex items-center gap-1.5"><i className="h-3 w-3 rounded-sm bg-slate-400" />No Drop / Cancel</span>
+            </div>
+          </div>
+          {!summaryChartRows.length ? <p className="py-20 text-center text-slate-500">ไม่มีเที่ยวที่สามารถแสดงในกราฟได้</p> : <div className="mt-6 space-y-5">{summaryChartRows.map(item => <div key={item.date}>
+            <div className="mb-2 flex items-center justify-between gap-3 text-sm"><strong className="text-slate-900">{item.date}</strong><span className="font-bold text-slate-600">{item.total} เที่ยว · 100.0%</span></div>
+            <div className="flex h-10 w-full overflow-hidden rounded-lg bg-slate-100">{([
+              ['EARLY','bg-blue-500'],['ONTIME','bg-emerald-500'],['LATE','bg-red-500'],['EXCLUDED','bg-slate-400']
+            ] as Array<[SummaryStatus,string]>).map(([status,color]) => {
+              const count = item.counts[status]; const rate = item.total ? count / item.total * 100 : 0;
+              if (!count) return null;
+              return <div key={status} title={`${summaryStatusLabel(status)} ${count} เที่ยว · ${rate.toFixed(1)}%`} className={`${color} flex min-w-0 items-center justify-center overflow-hidden px-1 text-xs font-black text-white`} style={{ width: `${rate}%` }}>
+                {rate >= 8 ? <span className="truncate">{count} · {rate.toFixed(1)}%</span> : null}
+              </div>;
+            })}</div>
+          </div>)}</div>}
+        </section>
+        <section className="mt-5 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+          <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-5 py-4"><h2 className="font-black text-slate-900">รายละเอียดเที่ยวในกราฟ</h2><span className="text-xs font-bold text-slate-500">{summaryDetailRows.length} เที่ยว</span></div>
+          <div className="max-h-[460px] overflow-auto"><table className="w-full min-w-[1100px] text-left text-xs"><thead className="sticky top-0 bg-slate-100"><tr>{['วันที่','Code Run','Project','Route','สังกัด','ทะเบียน','จุดลงงาน','Plan ETA','Actual ETA','สถานะ','ผลต่างจากขอบ ON PLAN'].map(heading => <th key={heading} className="whitespace-nowrap p-3 font-black text-slate-700">{heading}</th>)}</tr></thead><tbody>{summaryDetailRows.map(({ row, status }) => <tr key={`${row.date}:${row.truck.id}`} className="hover:bg-slate-50">{[row.date,row.truck.id,row.truck.project,row.truck.route,row.truck.supplierName,row.truck.licensePlate,row.truck.dropPoint,row.truck.planEta,row.truck.stampEta || row.truck.actualEta,summaryStatusLabel(status),timeResultText(row.truck,toleranceMinutes,status)].map((item,index) => <td key={index} className="border-t border-slate-100 p-3">{text(item) || '-'}</td>)}</tr>)}</tbody></table></div>
+        </section>
+      </> : <>
       <section className="mt-5 rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex flex-wrap items-center justify-between gap-2"><h2 className="font-black text-slate-900">{reportTitle}</h2><span className="text-xs font-bold text-slate-500">แสดง {metricRows.length} รายการ</span></div>
         {!rows.length ? <p className="py-20 text-center text-slate-500">ไม่พบเที่ยวในเงื่อนไขที่เลือก</p> : <div className="mt-6 space-y-4">{metricRows.slice(0, kind === 'ROUTE' ? 15 : 30).map(item => {
-          const compactValue = kind === 'SUMMARY'
-            ? `${item.count} เที่ยว · ${percentage(item.rate)}`
-            : kind === 'DWELL'
+          const compactValue = kind === 'DWELL'
             ? `${percentage(item.rate)} · ${minuteText(item.average)}`
             : ['POINT','ROUTE','SUPPLIER'].includes(kind || '')
               ? `${item.count} เที่ยว · ${percentage(item.rate)}`
@@ -346,11 +402,12 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
           </div>;
         })}</div>}
       </section>
+      </>}
       {kind === 'ROUTE' && <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-xs leading-6 text-amber-900">การจัดอันดับ Route แสดงเฉพาะ Route ที่มีอย่างน้อย 3 เที่ยวในช่วงรายงาน เพื่อป้องกัน Route ที่มีข้อมูลน้อยถูกจัดอันดับสูงเกินจริง</p>}
       {['EARLY','ONTIME','LATE'].includes(kind || '') && <p className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-4 text-xs leading-6 text-blue-900">เกณฑ์มาตรฐาน: ก่อนเวลา = เร็วกว่า Plan ETA มากกว่า {toleranceMinutes} นาที · ตรงเวลา = อยู่ในช่วง ±{toleranceMinutes} นาที · ล่าช้า = ช้ากว่า Plan ETA มากกว่า {toleranceMinutes} นาที · ตัวหารใช้เฉพาะเที่ยวที่มี Plan ETA และ Actual ETA ครบ โดยไม่รวม NO WORK และ CANCEL</p>}
       {kind === 'DWELL' && <p className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-4 text-xs leading-6 text-blue-900">เวลาเกินเกณฑ์ = (Actual ETD − Actual ETA) − (Plan ETD − Plan ETA) − เกณฑ์ {toleranceMinutes} นาที · ต้องมีเวลาครบทั้ง 4 ค่า · รองรับงานข้ามเที่ยงคืน · ไม่รวม NO WORK และ CANCEL · เวลาปฏิบัติงานที่เกิน 12 ชั่วโมงถูกตัดออกจากการประเมินเพื่อป้องกันข้อมูลผิดปกติ</p>}
-      <button type="button" onClick={() => setShowDetails(current => !current)} aria-expanded={showDetails} className={`${buttonClass} mt-4`}>{showDetails ? 'ซ่อน' : 'ดู'}รายละเอียดเที่ยว ({rows.length})</button>
-      {showDetails && <div className="mt-3 max-h-[430px] overflow-auto rounded-xl border border-slate-200 bg-white"><table className="w-full min-w-[1200px] text-left text-xs"><thead className="sticky top-0 bg-slate-100"><tr>{['วันที่','Route','สังกัด','ทะเบียน','จุดลงงาน','Plan ETA','Actual ETA','Plan ETD','Actual ETD','ผลต่าง ETA','เกินเวลาปฏิบัติงาน','ปัญหา'].map(heading => <th key={heading} className="whitespace-nowrap p-3 font-black">{heading}</th>)}</tr></thead><tbody>{rows.map(row => <tr key={`${row.date}:${row.truck.id}`} className="hover:bg-slate-50">{[row.date,row.truck.route,row.truck.supplierName,row.truck.licensePlate,row.truck.dropPoint,row.truck.planEta,row.truck.stampEta || row.truck.actualEta,row.truck.planEtd,row.truck.stampEtd || (row.truck as Truck & { actualEtd?: unknown }).actualEtd,timeBeyondOnPlan(row.truck, toleranceMinutes) === null ? '-' : `${Math.round(timeBeyondOnPlan(row.truck, toleranceMinutes)!)} นาที`,dwellBeyondTolerance(row.truck, toleranceMinutes) === null ? '-' : `${Math.round(dwellBeyondTolerance(row.truck, toleranceMinutes)!)} นาที`,row.truck.actionProblem].map((item,index) => <td key={index} className="border-t border-slate-100 p-3">{text(item) || '-'}</td>)}</tr>)}</tbody></table></div>}
+      {kind !== 'SUMMARY' && <button type="button" onClick={() => setShowDetails(current => !current)} aria-expanded={showDetails} className={`${buttonClass} mt-4`}>{showDetails ? 'ซ่อน' : 'ดู'}รายละเอียดเที่ยว ({rows.length})</button>}
+      {kind !== 'SUMMARY' && showDetails && <div className="mt-3 max-h-[430px] overflow-auto rounded-xl border border-slate-200 bg-white"><table className="w-full min-w-[1200px] text-left text-xs"><thead className="sticky top-0 bg-slate-100"><tr>{['วันที่','Route','สังกัด','ทะเบียน','จุดลงงาน','Plan ETA','Actual ETA','Plan ETD','Actual ETD','ผลต่าง ETA','เกินเวลาปฏิบัติงาน','ปัญหา'].map(heading => <th key={heading} className="whitespace-nowrap p-3 font-black">{heading}</th>)}</tr></thead><tbody>{rows.map(row => <tr key={`${row.date}:${row.truck.id}`} className="hover:bg-slate-50">{[row.date,row.truck.route,row.truck.supplierName,row.truck.licensePlate,row.truck.dropPoint,row.truck.planEta,row.truck.stampEta || row.truck.actualEta,row.truck.planEtd,row.truck.stampEtd || (row.truck as Truck & { actualEtd?: unknown }).actualEtd,timeBeyondOnPlan(row.truck, toleranceMinutes) === null ? '-' : `${Math.round(timeBeyondOnPlan(row.truck, toleranceMinutes)!)} นาที`,dwellBeyondTolerance(row.truck, toleranceMinutes) === null ? '-' : `${Math.round(dwellBeyondTolerance(row.truck, toleranceMinutes)!)} นาที`,row.truck.actionProblem].map((item,index) => <td key={index} className="border-t border-slate-100 p-3">{text(item) || '-'}</td>)}</tr>)}</tbody></table></div>}
     </div>}
   </div>;
 }
