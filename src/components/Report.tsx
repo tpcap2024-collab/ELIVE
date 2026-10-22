@@ -32,7 +32,12 @@ function text(value: unknown): string { return String(value ?? '').trim(); }
 function upper(value: unknown): string { return text(value).toUpperCase(); }
 function isInbound(truck: Truck): boolean { return upper(truck.project) === 'INBOUND'; }
 function isCancelled(truck: Truck & { planRemark?: string }): boolean { return ['CANCEL', 'CANCELLED', 'CANCELED'].includes(upper(truck.planRemark)) || ['CANCEL', 'CANCELLED', 'CANCELED'].includes(upper(truck.status)); }
-function isNoWork(truck: Truck): boolean { return upper(truck.status) === 'NO_WORK' || upper(truck.performanceStatus) === 'NO_DROP' || text(truck.actionProblem).includes('ไม่มีงาน'); }
+function isNoWork(truck: Truck & { planRemark?: string }): boolean {
+  const status = upper(truck.status).replace(/[\s-]+/g, '_');
+  const performanceStatus = upper(truck.performanceStatus).replace(/[\s-]+/g, '_');
+  const remark = upper(truck.planRemark).replace(/[\s-]+/g, '_');
+  return status === 'NO_WORK' || performanceStatus === 'NO_DROP' || remark === 'NO_WORK' || text(truck.actionProblem).includes('ไม่มีงาน');
+}
 function isTimeEligible(truck: Truck & { planRemark?: string }): boolean { return !isCancelled(truck) && !isNoWork(truck); }
 function timeMinutes(value: unknown): number | null {
   const match = text(value).match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
@@ -58,7 +63,8 @@ function duration(start: unknown, end: unknown): number | null {
 function dwellDifferenceRaw(truck: Truck & { planRemark?: string }): number | null {
   if (!isTimeEligible(truck)) return null;
   const planned = duration(truck.planEta, truck.planEtd);
-  const actual = duration(truck.stampEta || truck.actualEta, truck.stampEtd);
+  const actualEtd = truck.stampEtd || (truck as Truck & { actualEtd?: unknown }).actualEtd;
+  const actual = duration(truck.stampEta || truck.actualEta, actualEtd);
   return planned === null || actual === null ? null : actual - planned;
 }
 function arrivalClass(truck: Truck & { planRemark?: string }, toleranceMinutes: number): 'EARLY' | 'ONTIME' | 'LATE' | null {
@@ -231,7 +237,7 @@ export default function Report({ selectedDate = '' }: ReportProps) {
     const output: unknown[][] = [['รายงาน', reportTitle], ['ช่วงวันและเวลา', `${result.start} ${result.startTime}`, `${result.end} ${result.endTime}`], ['โครงการ', 'INBOUND'], ['เกณฑ์ตรงเวลา', `±${toleranceMinutes} นาที`], ['สังกัด', supplier || 'ทั้งหมด'], []];
     output.push(['รายการ', 'เที่ยวทั้งหมด', 'ประเมินได้', 'จำนวนที่เข้าเงื่อนไข', 'อัตรา %', 'เฉลี่ยนาที', 'สูงสุดนาที', 'สาเหตุหลัก'], ...metricRows.map(item => [item.name, item.total, item.measured, item.count, item.rate?.toFixed(1) || '', item.average?.toFixed(1) || '', item.maximum?.toFixed(1) || '', item.topReason || '']));
     output.push([], ['รายละเอียดเที่ยว INBOUND'], ['วันที่', 'Route', 'สังกัด', 'ทะเบียน', 'จุดลงงาน', 'Plan ETA', 'Actual ETA', 'Plan ETD', 'Actual ETD', 'ความต่าง ETA (นาที)', 'เกินเวลาปฏิบัติงาน (นาที)', 'ปัญหา']);
-    rows.forEach(row => output.push([row.date, row.truck.route, row.truck.supplierName, row.truck.licensePlate, row.truck.dropPoint, row.truck.planEta, row.truck.stampEta || row.truck.actualEta, row.truck.planEtd, row.truck.stampEtd, etaDifference(row.truck), dwellBeyondTolerance(row.truck, toleranceMinutes), row.truck.actionProblem]));
+    rows.forEach(row => output.push([row.date, row.truck.route, row.truck.supplierName, row.truck.licensePlate, row.truck.dropPoint, row.truck.planEta, row.truck.stampEta || row.truck.actualEta, row.truck.planEtd, row.truck.stampEtd || (row.truck as Truck & { actualEtd?: unknown }).actualEtd, timeBeyondOnPlan(row.truck, toleranceMinutes), dwellBeyondTolerance(row.truck, toleranceMinutes), row.truck.actionProblem]));
     const url = URL.createObjectURL(new Blob(['\uFEFF' + output.map(line => line.map(csvCell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' }));
     const anchor = document.createElement('a'); anchor.href = url; anchor.download = `INBOUND-${kind}-${result.start}-${result.end}.csv`; document.body.appendChild(anchor); anchor.click(); anchor.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
@@ -241,7 +247,7 @@ export default function Report({ selectedDate = '' }: ReportProps) {
       <h1 className="text-2xl font-black text-slate-900">ศูนย์รวมรายงานสำหรับผู้บริหาร</h1>
       <p className="mt-2 text-sm text-slate-500">เลือกประเภทรายงาน · ใช้เฉพาะเที่ยวโครงการ INBOUND</p>
       <div className="mt-6 grid gap-5 lg:grid-cols-2">{reportGroups.map(group => <section key={group.title} className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"><h2 className="border-b border-slate-200 bg-slate-100 px-5 py-3 text-sm font-black text-slate-800">{group.title}</h2><div className="grid gap-2 p-4 sm:grid-cols-2">{group.reports.map(report => <button key={report.id} type="button" onClick={() => openReport(report.id)} className="rounded-lg border border-slate-200 bg-white p-4 text-left hover:border-blue-400 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500"><span className="block text-sm font-black text-slate-900">{report.title}</span><span className="mt-1 block text-xs leading-5 text-slate-500">{report.description}</span></button>)}</div></section>)}</div>
-    </div> : !result ? <div className="mx-auto max-w-2xl">
+    </div> : !result ? <div className="max-w-2xl">
       <button type="button" onClick={() => setSelectedKind(null)} className="text-sm font-bold text-blue-700">← กลับไปเลือกรายงาน</button>
       <h1 className="mt-4 text-xl font-black text-slate-900">{reportTitle}</h1><p className="mt-2 text-sm text-slate-500">เลือกช่วงวันที่ · เฉพาะโครงการ INBOUND</p>
       <form onSubmit={loadReport} className="mt-5 rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><fieldset disabled={loading} className="space-y-5">
@@ -272,7 +278,7 @@ export default function Report({ selectedDate = '' }: ReportProps) {
       {['EARLY','ONTIME','LATE'].includes(kind || '') && <p className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-4 text-xs leading-6 text-blue-900">เกณฑ์มาตรฐาน: ก่อนเวลา = เร็วกว่า Plan ETA มากกว่า {toleranceMinutes} นาที · ตรงเวลา = อยู่ในช่วง ±{toleranceMinutes} นาที · ล่าช้า = ช้ากว่า Plan ETA มากกว่า {toleranceMinutes} นาที · ตัวหารใช้เฉพาะเที่ยวที่มี Plan ETA และ Actual ETA ครบ โดยไม่รวม NO WORK และ CANCEL</p>}
       {kind === 'DWELL' && <p className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-4 text-xs leading-6 text-blue-900">เวลาเกินเกณฑ์ = (Actual ETD − Actual ETA) − (Plan ETD − Plan ETA) − เกณฑ์ {toleranceMinutes} นาที · ต้องมีเวลาครบทั้ง 4 ค่า · รองรับงานข้ามเที่ยงคืน · ไม่รวม NO WORK และ CANCEL · เวลาปฏิบัติงานที่เกิน 12 ชั่วโมงถูกตัดออกจากการประเมินเพื่อป้องกันข้อมูลผิดปกติ</p>}
       <button type="button" onClick={() => setShowDetails(current => !current)} aria-expanded={showDetails} className={`${buttonClass} mt-4`}>{showDetails ? 'ซ่อน' : 'ดู'}รายละเอียดเที่ยวรถ ({rows.length})</button>
-      {showDetails && <div className="mt-3 max-h-[430px] overflow-auto rounded-xl border border-slate-200 bg-white"><table className="w-full min-w-[1200px] text-left text-xs"><thead className="sticky top-0 bg-slate-100"><tr>{['วันที่','Route','สังกัด','ทะเบียน','จุดลงงาน','Plan ETA','Actual ETA','Plan ETD','Actual ETD','ผลต่าง ETA','เกินเวลาปฏิบัติงาน','ปัญหา'].map(heading => <th key={heading} className="whitespace-nowrap p-3 font-black">{heading}</th>)}</tr></thead><tbody>{rows.map(row => <tr key={`${row.date}:${row.truck.id}`} className="hover:bg-slate-50">{[row.date,row.truck.route,row.truck.supplierName,row.truck.licensePlate,row.truck.dropPoint,row.truck.planEta,row.truck.stampEta || row.truck.actualEta,row.truck.planEtd,row.truck.stampEtd,timeBeyondOnPlan(row.truck, toleranceMinutes) === null ? '-' : `${Math.round(timeBeyondOnPlan(row.truck, toleranceMinutes)!)} นาที`,dwellBeyondTolerance(row.truck, toleranceMinutes) === null ? '-' : `${Math.round(dwellBeyondTolerance(row.truck, toleranceMinutes)!)} นาที`,row.truck.actionProblem].map((item,index) => <td key={index} className="border-t border-slate-100 p-3">{text(item) || '-'}</td>)}</tr>)}</tbody></table></div>}
+      {showDetails && <div className="mt-3 max-h-[430px] overflow-auto rounded-xl border border-slate-200 bg-white"><table className="w-full min-w-[1200px] text-left text-xs"><thead className="sticky top-0 bg-slate-100"><tr>{['วันที่','Route','สังกัด','ทะเบียน','จุดลงงาน','Plan ETA','Actual ETA','Plan ETD','Actual ETD','ผลต่าง ETA','เกินเวลาปฏิบัติงาน','ปัญหา'].map(heading => <th key={heading} className="whitespace-nowrap p-3 font-black">{heading}</th>)}</tr></thead><tbody>{rows.map(row => <tr key={`${row.date}:${row.truck.id}`} className="hover:bg-slate-50">{[row.date,row.truck.route,row.truck.supplierName,row.truck.licensePlate,row.truck.dropPoint,row.truck.planEta,row.truck.stampEta || row.truck.actualEta,row.truck.planEtd,row.truck.stampEtd || (row.truck as Truck & { actualEtd?: unknown }).actualEtd,timeBeyondOnPlan(row.truck, toleranceMinutes) === null ? '-' : `${Math.round(timeBeyondOnPlan(row.truck, toleranceMinutes)!)} นาที`,dwellBeyondTolerance(row.truck, toleranceMinutes) === null ? '-' : `${Math.round(dwellBeyondTolerance(row.truck, toleranceMinutes)!)} นาที`,row.truck.actionProblem].map((item,index) => <td key={index} className="border-t border-slate-100 p-3">{text(item) || '-'}</td>)}</tr>)}</tbody></table></div>}
     </div>}
   </div>;
 }
