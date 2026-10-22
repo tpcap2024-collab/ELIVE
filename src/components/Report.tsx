@@ -145,7 +145,7 @@ function metricBy(rows: ReportRow[], key: (row: ReportRow) => string, kind: Kind
   }).sort((a, b) => (b.rate ?? -1) - (a.rate ?? -1) || b.count - a.count || a.name.localeCompare(b.name, 'th'));
 }
 
-export default function Report({ selectedDate = '' }: ReportProps) {
+export default function Report({ trucks, selectedDate = '' }: ReportProps) {
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
   const initial = /^\d{4}-\d{2}-\d{2}$/.test(selectedDate) ? selectedDate : today;
   const [selectedKind, setSelectedKind] = useState<Kind | null>(null);
@@ -157,6 +157,9 @@ export default function Report({ selectedDate = '' }: ReportProps) {
   const [toleranceMode, setToleranceMode] = useState<'PRESET' | 'CUSTOM'>('PRESET');
   const [presetTolerance, setPresetTolerance] = useState(DEFAULT_TOLERANCE_MINUTES);
   const [customTolerance, setCustomTolerance] = useState('10');
+  const [selectedProjects, setSelectedProjects] = useState<string[]>(['INBOUND']);
+  const [selectedRoutes, setSelectedRoutes] = useState<string[]>([]);
+  const [selectedDropPoints, setSelectedDropPoints] = useState<string[]>([]);
   const [result, setResult] = useState<{ kind: Kind; days: string[]; rows: ReportRow[]; start: string; end: string; startTime: string; endTime: string; allDay: boolean; toleranceMinutes: number } | null>(null);
   const [supplier, setSupplier] = useState('');
   const [loading, setLoading] = useState(false);
@@ -164,6 +167,10 @@ export default function Report({ selectedDate = '' }: ReportProps) {
   const [error, setError] = useState('');
   const [showDetails, setShowDetails] = useState(false);
   const generation = useRef(0);
+  const projectOptions = useMemo(() => Array.from(new Set(['INBOUND', ...trucks.map(truck => upper(truck.project)).filter(Boolean)])).sort(), [trucks]);
+  const routeOptions = useMemo(() => Array.from(new Set(trucks.map(truck => text(truck.route)).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'th')), [trucks]);
+  const dropPointOptions = useMemo(() => Array.from(new Set(trucks.map(truck => text(truck.dropPoint)).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'th')), [trucks]);
+  const selectedValues = (event: React.ChangeEvent<HTMLSelectElement>): string[] => Array.from(event.currentTarget.selectedOptions, option => option.value);
   useEffect(() => () => { generation.current += 1; }, []);
 
   const openReport = (kind: Kind) => { setSelectedKind(kind); setResult(null); setError(''); setShowDetails(false); };
@@ -174,8 +181,8 @@ export default function Report({ selectedDate = '' }: ReportProps) {
     const toleranceMinutes = toleranceMode === 'CUSTOM' ? Number(customTolerance) : presetTolerance;
     const isTimeReport = ['EARLY', 'ONTIME', 'LATE', 'DWELL'].includes(selectedKind);
     if (isTimeReport && (!Number.isInteger(toleranceMinutes) || toleranceMinutes < 1 || toleranceMinutes > 720)) { setError('กรุณาระบุเกณฑ์เวลา 1–720 นาที'); return; }
-    const effectiveStartTime = allDay ? '00:00' : startTime;
-    const effectiveEndTime = allDay ? '23:59' : endTime;
+    const effectiveStartTime = startTime;
+    const effectiveEndTime = endTime;
     const rangeStart = Date.parse(`${startDate}T${effectiveStartTime}:00+07:00`);
     const rangeEnd = Date.parse(`${endDate}T${effectiveEndTime}:59+07:00`);
     if (!Number.isFinite(rangeStart) || !Number.isFinite(rangeEnd) || rangeStart > rangeEnd) { setError('ช่วงวันและเวลาไม่ถูกต้อง'); return; }
@@ -191,15 +198,16 @@ export default function Report({ selectedDate = '' }: ReportProps) {
         const actualById = new Map(dashboard.trucks.map(truck => [upper(truck.id), truck]));
         const usedIds = new Set<string>();
         for (const plan of plans.rows) {
-          if (upper(plan.project) !== 'INBOUND') continue;
+          const planProject = upper(plan.project);
+          if (selectedProjects.length && !selectedProjects.includes(planProject)) continue;
+          if (selectedRoutes.length && !selectedRoutes.includes(text(plan.route))) continue;
+          if (selectedDropPoints.length && !selectedDropPoints.includes(text(plan.dropPoint))) continue;
           const id = upper(plan.codeRun); if (!id || usedIds.has(id)) continue; usedIds.add(id);
           const actual = actualById.get(id);
           const truck = { ...actual, id, planDate: date, project: plan.project, route: plan.route, supplierName: plan.company, licensePlate: plan.truckName, dropPoint: plan.dropPoint, planEta: plan.planEta, planEtd: plan.planEtd, planRemark: plan.remark } as Truck & { planRemark?: string };
-          if (isInbound(truck)) {
-            const reportRow = { truck, date };
-            const plannedAt = planDateTimeValue(reportRow);
-            if (plannedAt !== null && plannedAt >= rangeStart && plannedAt <= rangeEnd) rows.push(reportRow);
-          }
+          const reportRow = { truck, date };
+          const plannedAt = planDateTimeValue(reportRow);
+          if (plannedAt !== null && plannedAt >= rangeStart && plannedAt <= rangeEnd) rows.push(reportRow);
         }
       }
       setResult({ kind: selectedKind, days, rows, start: startDate, end: endDate, startTime: effectiveStartTime, endTime: effectiveEndTime, allDay, toleranceMinutes }); setSupplier(''); setProgress(''); setShowDetails(false);
@@ -234,18 +242,18 @@ export default function Report({ selectedDate = '' }: ReportProps) {
   const reportTitle = flatReports.find(item => item.id === (kind || selectedKind))?.title || 'รายงาน';
   const maximumBar = Math.max(1, ...metricRows.map(item => item.rate ?? 0));
   const summary = kind === 'SUMMARY'
-    ? [['เที่ยว INBOUND ทั้งหมด', rows.length], ['รถเข้าพื้นที่แล้ว', rows.filter(row => Boolean(text(row.truck.stampEta || row.truck.actualEta))).length], ['รถออกจากพื้นที่แล้ว', rows.filter(row => Boolean(text(row.truck.stampEtd || (row.truck as Truck & { actualEtd?: unknown }).actualEtd))).length], ['ยังไม่เข้าพื้นที่', rows.filter(row => !text(row.truck.stampEta || row.truck.actualEta)).length], ['ยังไม่ออกจากพื้นที่', rows.filter(row => text(row.truck.stampEta || row.truck.actualEta) && !text(row.truck.stampEtd || (row.truck as Truck & { actualEtd?: unknown }).actualEtd)).length]]
+    ? [['เที่ยวทั้งหมด', rows.length], ['รถเข้าพื้นที่แล้ว', rows.filter(row => Boolean(text(row.truck.stampEta || row.truck.actualEta))).length], ['รถออกจากพื้นที่แล้ว', rows.filter(row => Boolean(text(row.truck.stampEtd || (row.truck as Truck & { actualEtd?: unknown }).actualEtd))).length], ['ยังไม่เข้าพื้นที่', rows.filter(row => !text(row.truck.stampEta || row.truck.actualEta)).length], ['ยังไม่ออกจากพื้นที่', rows.filter(row => text(row.truck.stampEta || row.truck.actualEta) && !text(row.truck.stampEtd || (row.truck as Truck & { actualEtd?: unknown }).actualEtd)).length]]
     : kind === 'DWELL'
-    ? [['เที่ยว INBOUND ทั้งหมด', rows.length], ['ประเมินเวลาได้', dwellMeasured.length], ['ใช้เวลาเกินแผน', dwellExceeded.length], ['เกินแผนเฉลี่ย', minuteText(average(dwellExceeded))], ['เกินแผนสูงสุด', minuteText(dwellExceeded.length ? Math.max(...dwellExceeded) : null)]]
+    ? [['เที่ยวทั้งหมด', rows.length], ['ประเมินเวลาได้', dwellMeasured.length], ['ใช้เวลาเกินแผน', dwellExceeded.length], ['เกินแผนเฉลี่ย', minuteText(average(dwellExceeded))], ['เกินแผนสูงสุด', minuteText(dwellExceeded.length ? Math.max(...dwellExceeded) : null)]]
     : kind && ['POINT', 'ROUTE', 'SUPPLIER'].includes(kind)
-      ? [['เที่ยว INBOUND ทั้งหมด', rows.length], ['เที่ยวที่มีปัญหา', problemRows.length], ['อัตราเกิดปัญหา', percentage(rows.length ? problemRows.length / rows.length * 100 : null)], ['ปัญหาที่ยังไม่เสร็จสิ้น', problemRows.filter(row => upper(row.truck.actionStatus) !== 'CLOSED').length]]
-      : [['เที่ยว INBOUND ทั้งหมด', rows.length], ['ประเมินเวลาได้', measuredArrival.length], [kind === 'EARLY' ? 'เข้าก่อนเวลา' : kind === 'ONTIME' ? 'มาตรงเวลา' : 'มาช้ากว่าแผน', matchedArrival.length], ['อัตรา', percentage(measuredArrival.length ? matchedArrival.length / measuredArrival.length * 100 : null)], [kind === 'ONTIME' ? `ช่วงตรงเวลา` : 'เฉลี่ย', kind === 'ONTIME' ? `±${toleranceMinutes} นาที` : minuteText(average(arrivalValues))]];
+      ? [['เที่ยวทั้งหมด', rows.length], ['เที่ยวที่มีปัญหา', problemRows.length], ['อัตราเกิดปัญหา', percentage(rows.length ? problemRows.length / rows.length * 100 : null)], ['ปัญหาที่ยังไม่เสร็จสิ้น', problemRows.filter(row => upper(row.truck.actionStatus) !== 'CLOSED').length]]
+      : [['เที่ยวทั้งหมด', rows.length], ['ประเมินเวลาได้', measuredArrival.length], [kind === 'EARLY' ? 'เข้าก่อนเวลา' : kind === 'ONTIME' ? 'มาตรงเวลา' : 'มาช้ากว่าแผน', matchedArrival.length], ['อัตรา', percentage(measuredArrival.length ? matchedArrival.length / measuredArrival.length * 100 : null)], [kind === 'ONTIME' ? `ช่วงตรงเวลา` : 'เฉลี่ย', kind === 'ONTIME' ? `±${toleranceMinutes} นาที` : minuteText(average(arrivalValues))]];
 
   const exportCsv = () => {
     if (!result || !kind) return;
-    const output: unknown[][] = [['รายงาน', reportTitle], ['ช่วงวันและเวลา', `${result.start} ${result.startTime}`, `${result.end} ${result.endTime}`], ['โครงการ', 'INBOUND'], ['เกณฑ์ตรงเวลา', `±${toleranceMinutes} นาที`], ['สังกัด', supplier || 'ทั้งหมด'], []];
+    const output: unknown[][] = [['รายงาน', reportTitle], ['ช่วงวันและเวลา', `${result.start} ${result.startTime}`, `${result.end} ${result.endTime}`], ['Project', selectedProjects.length ? selectedProjects.join(' | ') : 'ทั้งหมด'], ['เกณฑ์ตรงเวลา', `±${toleranceMinutes} นาที`], ['สังกัด', supplier || 'ทั้งหมด'], []];
     output.push(['รายการ', 'เที่ยวทั้งหมด', 'ประเมินได้', 'จำนวนที่เข้าเงื่อนไข', 'อัตรา %', 'เฉลี่ยนาที', 'สูงสุดนาที', 'สาเหตุหลัก'], ...metricRows.map(item => [item.name, item.total, item.measured, item.count, item.rate?.toFixed(1) || '', item.average?.toFixed(1) || '', item.maximum?.toFixed(1) || '', item.topReason || '']));
-    output.push([], ['รายละเอียดเที่ยว INBOUND'], ['วันที่', 'Route', 'สังกัด', 'ทะเบียน', 'จุดลงงาน', 'Plan ETA', 'Actual ETA', 'Plan ETD', 'Actual ETD', 'ความต่าง ETA (นาที)', 'เกินเวลาปฏิบัติงาน (นาที)', 'ปัญหา']);
+    output.push([], ['รายละเอียดเที่ยว'], ['วันที่', 'Route', 'สังกัด', 'ทะเบียน', 'จุดลงงาน', 'Plan ETA', 'Actual ETA', 'Plan ETD', 'Actual ETD', 'ความต่าง ETA (นาที)', 'เกินเวลาปฏิบัติงาน (นาที)', 'ปัญหา']);
     rows.forEach(row => output.push([row.date, row.truck.route, row.truck.supplierName, row.truck.licensePlate, row.truck.dropPoint, row.truck.planEta, row.truck.stampEta || row.truck.actualEta, row.truck.planEtd, row.truck.stampEtd || (row.truck as Truck & { actualEtd?: unknown }).actualEtd, timeBeyondOnPlan(row.truck, toleranceMinutes), dwellBeyondTolerance(row.truck, toleranceMinutes), row.truck.actionProblem]));
     const url = URL.createObjectURL(new Blob(['\uFEFF' + output.map(line => line.map(csvCell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' }));
     const anchor = document.createElement('a'); anchor.href = url; anchor.download = `INBOUND-${kind}-${result.start}-${result.end}.csv`; document.body.appendChild(anchor); anchor.click(); anchor.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -256,19 +264,28 @@ export default function Report({ selectedDate = '' }: ReportProps) {
       <h1 className="text-2xl font-black text-slate-900">รายงาน</h1>
       <p className="mt-2 text-sm text-slate-500">เลือกประเภทรายงานที่ต้องการ</p>
       <div className="mt-6 grid gap-5 lg:grid-cols-2">{reportGroups.map(group => <section key={group.title} className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"><h2 className="border-b border-slate-200 bg-slate-100 px-5 py-3 text-sm font-black text-slate-800">{group.title}</h2><div className="grid gap-2 p-4 sm:grid-cols-2">{group.reports.map(report => <button key={report.id} type="button" onClick={() => openReport(report.id)} className="rounded-lg border border-slate-200 bg-white px-4 py-4 text-left hover:border-blue-400 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500"><span className="block text-sm font-black text-slate-900">{report.title}</span></button>)}</div></section>)}</div>
-    </div> : !result ? <div className="max-w-2xl">
-      <button type="button" onClick={() => setSelectedKind(null)} className="text-sm font-bold text-blue-700">← กลับสู่หน้ารายการรายงาน</button>
-      <h1 className="mt-4 text-xl font-black text-slate-900">{reportTitle}</h1><p className="mt-2 text-sm text-slate-500">กำหนดช่วงวันและเวลาสำหรับจัดทำรายงาน · ประมวลผลเฉพาะเที่ยวในโครงการ INBOUND</p>
+    </div> : !result ? <div className="max-w-5xl">
+      <button type="button" onClick={() => setSelectedKind(null)} className="rounded-lg border border-slate-300 bg-slate-200 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-400">ย้อนกลับ</button>
+      <h1 className="mt-4 text-xl font-black text-slate-900">{reportTitle}</h1>
       <form onSubmit={loadReport} className="mt-5 rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><fieldset disabled={loading} className="space-y-5">
-        <div className="grid gap-4 sm:grid-cols-2"><label className="text-sm font-bold text-slate-700">วันที่เริ่มต้น<input type="date" required value={startDate} onChange={event => setStartDate(event.target.value)} className="mt-2 block w-full rounded-lg border border-slate-300 p-3" /></label><label className="text-sm font-bold text-slate-700">วันที่สิ้นสุด<input type="date" required min={startDate} value={endDate} onChange={event => setEndDate(event.target.value)} className="mt-2 block w-full rounded-lg border border-slate-300 p-3" /></label></div>
-        <div><label className="inline-flex items-center gap-2 text-sm font-bold text-slate-700"><input type="checkbox" checked={allDay} onChange={event => setAllDay(event.target.checked)} />ทั้งวัน</label><div className="mt-3 grid gap-4 sm:grid-cols-2"><label className="text-sm font-bold text-slate-700">เวลาเริ่มต้น<input type="time" required={!allDay} disabled={allDay} value={startTime} onChange={event => setStartTime(event.target.value)} className="mt-2 block w-full rounded-lg border border-slate-300 p-3 disabled:bg-slate-100" /></label><label className="text-sm font-bold text-slate-700">เวลาสิ้นสุด<input type="time" required={!allDay} disabled={allDay} value={endTime} onChange={event => setEndTime(event.target.value)} className="mt-2 block w-full rounded-lg border border-slate-300 p-3 disabled:bg-slate-100" /></label></div></div>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <label className="text-sm font-bold text-slate-700">วันที่เริ่มต้น<input type="date" required value={startDate} onChange={event => setStartDate(event.target.value)} className="mt-2 block w-full rounded-lg border border-slate-300 p-3" /></label>
+          <label className="text-sm font-bold text-slate-700">เวลา<input type="time" required value={startTime} onChange={event => setStartTime(event.target.value)} className="mt-2 block w-full rounded-lg border border-slate-300 p-3" /></label>
+          <label className="text-sm font-bold text-slate-700">วันที่สิ้นสุด<input type="date" required min={startDate} value={endDate} onChange={event => setEndDate(event.target.value)} className="mt-2 block w-full rounded-lg border border-slate-300 p-3" /></label>
+          <label className="text-sm font-bold text-slate-700">เวลา<input type="time" required value={endTime} onChange={event => setEndTime(event.target.value)} className="mt-2 block w-full rounded-lg border border-slate-300 p-3" /></label>
+        </div>
+        <div className="grid gap-4 md:grid-cols-3">
+          <label className="text-sm font-bold text-slate-700">Project<select multiple value={selectedProjects} onChange={event => setSelectedProjects(selectedValues(event))} className="mt-2 block h-32 w-full rounded-lg border border-slate-300 bg-white p-3">{projectOptions.map(item => <option key={item} value={item}>{item}</option>)}</select></label>
+          <label className="text-sm font-bold text-slate-700">Route<select multiple value={selectedRoutes} onChange={event => setSelectedRoutes(selectedValues(event))} className="mt-2 block h-32 w-full rounded-lg border border-slate-300 bg-white p-3">{routeOptions.map(item => <option key={item} value={item}>{item}</option>)}</select></label>
+          <label className="text-sm font-bold text-slate-700">จุดลงงาน<select multiple value={selectedDropPoints} onChange={event => setSelectedDropPoints(selectedValues(event))} className="mt-2 block h-32 w-full rounded-lg border border-slate-300 bg-white p-3">{dropPointOptions.map(item => <option key={item} value={item}>{item}</option>)}</select></label>
+        </div>
         {selectedKind && ['EARLY','ONTIME','LATE','DWELL'].includes(selectedKind) && <div className="rounded-lg border border-blue-100 bg-blue-50 p-4"><p className="text-sm font-black text-blue-900">เกณฑ์เวลา (นาที)</p><div className="mt-3 flex flex-wrap items-center gap-4"><label className="inline-flex items-center gap-2 text-sm"><input type="radio" checked={toleranceMode === 'PRESET'} onChange={() => setToleranceMode('PRESET')} />เลือกนาที</label><select disabled={toleranceMode !== 'PRESET'} value={presetTolerance} onChange={event => setPresetTolerance(Number(event.target.value))} className="rounded-lg border border-slate-300 bg-white px-3 py-2 disabled:bg-slate-100">{TOLERANCE_OPTIONS.map(value => <option key={value} value={value}>{value} นาที</option>)}</select><label className="inline-flex items-center gap-2 text-sm"><input type="radio" checked={toleranceMode === 'CUSTOM'} onChange={() => setToleranceMode('CUSTOM')} />ระบุนาที</label><input type="number" min="1" max="720" step="1" disabled={toleranceMode !== 'CUSTOM'} value={customTolerance} onChange={event => setCustomTolerance(event.target.value)} className="w-28 rounded-lg border border-slate-300 bg-white px-3 py-2 disabled:bg-slate-100" /><span className="text-sm text-slate-600">นาที</span></div></div>}
-      </fieldset><p className="mt-3 text-xs text-slate-500">กรองเที่ยวตาม Plan ETA · รวมวันและเวลาต้นทางถึงปลายทาง · สูงสุด {MAX_REPORT_DAYS} วันต่อครั้ง</p><div role="status" aria-live="polite" className="mt-3 text-sm font-semibold text-blue-700">{progress}</div>{error && <p role="alert" className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</p>}<div className="mt-5 flex justify-end gap-2">{loading && <button type="button" onClick={cancelLoading} className={buttonClass}>ยกเลิก</button>}<button type="submit" disabled={loading} className="rounded-lg bg-blue-600 px-6 py-3 text-sm font-bold text-white disabled:opacity-50">{loading ? 'กำลังสร้างรายงาน...' : 'แสดงรายงาน'}</button></div></form>
+      </fieldset><div role="status" aria-live="polite" className="mt-3 text-sm font-semibold text-blue-700">{progress}</div>{error && <p role="alert" className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</p>}<div className="mt-5 flex justify-end gap-2">{loading && <button type="button" onClick={cancelLoading} className={buttonClass}>ยกเลิก</button>}<button type="submit" disabled={loading} className="rounded-lg bg-blue-600 px-6 py-3 text-sm font-bold text-white disabled:opacity-50">{loading ? 'กำลังสร้างรายงาน...' : 'แสดงรายงาน'}</button></div></form>
     </div> : <div className="mx-auto max-w-7xl">
       <div className="flex flex-wrap items-start justify-between gap-4"><div><button type="button" onClick={() => setResult(null)} className="text-sm font-bold text-blue-700">← แก้ไขเงื่อนไขรายงาน</button><h1 className="mt-3 text-xl font-black text-slate-900">{reportTitle}</h1><p className="mt-2 text-sm text-slate-500">{result.start} {result.startTime} ถึง {result.end} {result.endTime} · เฉพาะโครงการ INBOUND · โหลดครบ {result.days.length} วัน</p></div><div className="flex flex-wrap items-end gap-2"><label className="text-xs font-bold text-slate-500">สังกัด<select value={supplier} onChange={event => setSupplier(event.target.value)} className="mt-1 block max-w-56 rounded-lg border border-slate-300 bg-white p-2 text-sm text-slate-800"><option value="">ทุกสังกัด</option>{suppliers.map(item => <option key={item}>{item}</option>)}</select></label><button type="button" onClick={exportCsv} className={buttonClass}>ส่งออก CSV</button><button type="button" onClick={() => { setResult(null); setSelectedKind(null); }} className={buttonClass}>เลือกรายงานประเภทอื่น</button></div></div>
       <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-5">{summary.map(([label, item]) => <div key={String(label)} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"><p className="text-xs font-bold text-slate-500">{label}</p><p className="mt-2 text-2xl font-black text-slate-900">{item}</p></div>)}</div>
       <section className="mt-5 rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex flex-wrap items-center justify-between gap-2"><h2 className="font-black text-slate-900">{reportTitle}</h2><span className="text-xs font-bold text-slate-500">แสดง {metricRows.length} รายการ</span></div>
-        {!rows.length ? <p className="py-20 text-center text-slate-500">ไม่พบเที่ยว INBOUND ในช่วงวันที่และสังกัดที่เลือก</p> : <div className="mt-6 space-y-4">{metricRows.slice(0, kind === 'ROUTE' ? 15 : 30).map(item => {
+        {!rows.length ? <p className="py-20 text-center text-slate-500">ไม่พบเที่ยวในเงื่อนไขที่เลือก</p> : <div className="mt-6 space-y-4">{metricRows.slice(0, kind === 'ROUTE' ? 15 : 30).map(item => {
           const compactValue = kind === 'SUMMARY'
             ? `${item.count} เที่ยว · ${percentage(item.rate)}`
             : kind === 'DWELL'
