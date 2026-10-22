@@ -145,6 +145,39 @@ function metricBy(rows: ReportRow[], key: (row: ReportRow) => string, kind: Kind
   }).sort((a, b) => (b.rate ?? -1) - (a.rate ?? -1) || b.count - a.count || a.name.localeCompare(b.name, 'th'));
 }
 
+function MultiSelectField({ label, options, values, onChange, placeholder = 'ทั้งหมด' }: { label: string; options: string[]; values: string[]; onChange: (values: string[]) => void; placeholder?: string }) {
+  const [open, setOpen] = useState(false);
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const close = (event: MouseEvent) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, []);
+  const toggle = (value: string) => onChange(values.includes(value) ? values.filter(item => item !== value) : [...values, value]);
+  return <div ref={wrapperRef} className="relative">
+    <label className="text-sm font-bold text-slate-700">{label}</label>
+    <button type="button" onClick={() => setOpen(current => !current)} aria-expanded={open} className="mt-2 flex min-h-[52px] w-full items-center justify-between gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-left focus:outline-none focus:ring-2 focus:ring-blue-500">
+      <span className="flex min-w-0 flex-1 flex-wrap gap-1.5">
+        {!values.length ? <span className="py-1 text-sm text-slate-500">{placeholder}</span> : values.map(value => <span key={value} className="inline-flex max-w-full items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-xs font-bold text-blue-800">
+          <span className="truncate">{value}</span>
+          <span role="button" tabIndex={0} aria-label={`ยกเลิก ${value}`} onClick={event => { event.stopPropagation(); onChange(values.filter(item => item !== value)); }} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.stopPropagation(); onChange(values.filter(item => item !== value)); } }} className="cursor-pointer text-base leading-none text-blue-500 hover:text-red-600">×</span>
+        </span>)}
+      </span>
+      <span className={`shrink-0 text-slate-500 transition-transform ${open ? 'rotate-180' : ''}`}>▾</span>
+    </button>
+    {open && <div className="absolute z-30 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-slate-200 bg-white p-2 shadow-xl">
+      <button type="button" onClick={() => onChange([])} className="mb-1 w-full rounded-md px-3 py-2 text-left text-sm font-semibold text-slate-600 hover:bg-slate-100">ทั้งหมด</button>
+      {options.map(option => <label key={option} className="flex cursor-pointer items-center gap-2 rounded-md px-3 py-2 text-sm text-slate-700 hover:bg-blue-50">
+        <input type="checkbox" checked={values.includes(option)} onChange={() => toggle(option)} className="h-4 w-4 rounded border-slate-300 text-blue-600" />
+        <span className="truncate">{option}</span>
+      </label>)}
+      {!options.length && <p className="px-3 py-4 text-center text-sm text-slate-500">ไม่มีรายการให้เลือก</p>}
+    </div>}
+  </div>;
+}
+
 export default function Report({ trucks, selectedDate = '' }: ReportProps) {
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
   const initial = /^\d{4}-\d{2}-\d{2}$/.test(selectedDate) ? selectedDate : today;
@@ -170,7 +203,6 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
   const projectOptions = useMemo(() => Array.from(new Set(['INBOUND', ...trucks.map(truck => upper(truck.project)).filter(Boolean)])).sort(), [trucks]);
   const routeOptions = useMemo(() => Array.from(new Set(trucks.map(truck => text(truck.route)).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'th')), [trucks]);
   const dropPointOptions = useMemo(() => Array.from(new Set(trucks.map(truck => text(truck.dropPoint)).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'th')), [trucks]);
-  const selectedValues = (event: React.ChangeEvent<HTMLSelectElement>): string[] => Array.from(event.currentTarget.selectedOptions, option => option.value);
   useEffect(() => () => { generation.current += 1; }, []);
 
   const openReport = (kind: Kind) => { setSelectedKind(kind); setResult(null); setError(''); setShowDetails(false); };
@@ -275,9 +307,9 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
           <label className="text-sm font-bold text-slate-700">เวลา<input type="time" required value={endTime} onChange={event => setEndTime(event.target.value)} className="mt-2 block w-full rounded-lg border border-slate-300 p-3" /></label>
         </div>
         <div className="grid gap-4 md:grid-cols-3">
-          <label className="text-sm font-bold text-slate-700">Project<select multiple value={selectedProjects} onChange={event => setSelectedProjects(selectedValues(event))} className="mt-2 block h-32 w-full rounded-lg border border-slate-300 bg-white p-3">{projectOptions.map(item => <option key={item} value={item}>{item}</option>)}</select></label>
-          <label className="text-sm font-bold text-slate-700">Route<select multiple value={selectedRoutes} onChange={event => setSelectedRoutes(selectedValues(event))} className="mt-2 block h-32 w-full rounded-lg border border-slate-300 bg-white p-3">{routeOptions.map(item => <option key={item} value={item}>{item}</option>)}</select></label>
-          <label className="text-sm font-bold text-slate-700">จุดลงงาน<select multiple value={selectedDropPoints} onChange={event => setSelectedDropPoints(selectedValues(event))} className="mt-2 block h-32 w-full rounded-lg border border-slate-300 bg-white p-3">{dropPointOptions.map(item => <option key={item} value={item}>{item}</option>)}</select></label>
+          <MultiSelectField label="Project" options={projectOptions} values={selectedProjects} onChange={setSelectedProjects} />
+          <MultiSelectField label="Route" options={routeOptions} values={selectedRoutes} onChange={setSelectedRoutes} />
+          <MultiSelectField label="จุดลงงาน" options={dropPointOptions} values={selectedDropPoints} onChange={setSelectedDropPoints} />
         </div>
         {selectedKind && ['EARLY','ONTIME','LATE','DWELL'].includes(selectedKind) && <div className="rounded-lg border border-blue-100 bg-blue-50 p-4"><p className="text-sm font-black text-blue-900">เกณฑ์เวลา (นาที)</p><div className="mt-3 flex flex-wrap items-center gap-4"><label className="inline-flex items-center gap-2 text-sm"><input type="radio" checked={toleranceMode === 'PRESET'} onChange={() => setToleranceMode('PRESET')} />เลือกนาที</label><select disabled={toleranceMode !== 'PRESET'} value={presetTolerance} onChange={event => setPresetTolerance(Number(event.target.value))} className="rounded-lg border border-slate-300 bg-white px-3 py-2 disabled:bg-slate-100">{TOLERANCE_OPTIONS.map(value => <option key={value} value={value}>{value} นาที</option>)}</select><label className="inline-flex items-center gap-2 text-sm"><input type="radio" checked={toleranceMode === 'CUSTOM'} onChange={() => setToleranceMode('CUSTOM')} />ระบุนาที</label><input type="number" min="1" max="720" step="1" disabled={toleranceMode !== 'CUSTOM'} value={customTolerance} onChange={event => setCustomTolerance(event.target.value)} className="w-28 rounded-lg border border-slate-300 bg-white px-3 py-2 disabled:bg-slate-100" /><span className="text-sm text-slate-600">นาที</span></div></div>}
       </fieldset><div role="status" aria-live="polite" className="mt-3 text-sm font-semibold text-blue-700">{progress}</div>{error && <p role="alert" className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</p>}<div className="mt-5 flex justify-end gap-2">{loading && <button type="button" onClick={cancelLoading} className={buttonClass}>ยกเลิก</button>}<button type="submit" disabled={loading} className="rounded-lg bg-blue-600 px-6 py-3 text-sm font-bold text-white disabled:opacity-50">{loading ? 'กำลังสร้างรายงาน...' : 'แสดงรายงาน'}</button></div></form>
