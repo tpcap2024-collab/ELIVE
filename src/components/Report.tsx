@@ -368,6 +368,15 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
     window.setTimeout(() => { if (!popup.closed) { popup.focus(); popup.print(); } }, 500);
   };
   const summaryStatusCounts = useMemo(() => summaryDetailRows.reduce<Record<SummaryStatus, number>>((counts, item) => { counts[item.status] += 1; return counts; }, { EARLY: 0, ONTIME: 0, LATE: 0, EXCLUDED: 0 }), [summaryDetailRows]);
+  // Weighted overall distribution: each trip has equal weight across all selected days.
+  // Uses the same supplier-filtered statuses as the daily bars and legend.
+  const overallSummaryTotal = summaryDetailRows.length;
+  const overallSummaryParts: Array<[SummaryStatus, string]> = [
+    ['EARLY', 'bg-gradient-to-r from-blue-600 to-blue-400'],
+    ['ONTIME', 'bg-gradient-to-r from-emerald-600 to-emerald-400'],
+    ['LATE', 'bg-gradient-to-r from-red-600 to-red-400'],
+    ['EXCLUDED', 'bg-gradient-to-r from-slate-500 to-slate-400'],
+  ];
   const metricRows = useMemo(() => {
     if (!kind) return [];
     if (kind === 'SUMMARY') {
@@ -463,6 +472,23 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
               <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-100 px-3 py-1.5"><i className="h-2.5 w-2.5 rounded-full bg-slate-400 shadow-sm" />No Drop / Cancel {summaryStatusCounts.EXCLUDED} เที่ยว</span>
             </div></div>
           </div>
+          {overallSummaryTotal > 0 && <div className="border-b border-slate-200 bg-blue-50/40 px-6 py-6">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3 text-sm">
+              <strong className="rounded-md border border-blue-200 bg-blue-100 px-3 py-1.5 font-black text-blue-900">ภาพรวมทุกวัน (เฉลี่ยถ่วงน้ำหนัก)</strong>
+              <span className="font-black text-slate-700">{overallSummaryTotal} เที่ยว · 100.0%</span>
+            </div>
+            <div role="img" aria-label={`สัดส่วนสถานะรวมทุกวัน ${overallSummaryTotal} เที่ยว`} className="flex h-12 w-full overflow-hidden rounded-xl bg-slate-100 shadow-inner ring-1 ring-blue-200">
+              {overallSummaryParts.map(([status, color]) => {
+                const count = summaryStatusCounts[status];
+                const rate = count / overallSummaryTotal * 100;
+                if (!count) return null;
+                return <div key={status} title={`${summaryStatusLabel(status)} ${count} เที่ยว · ${rate.toFixed(1)}%`} className={`${color} flex min-w-0 items-center justify-center overflow-hidden border-r border-white/30 px-2 text-xs font-black text-white last:border-r-0`} style={{ width: `${rate}%` }}>
+                  {rate >= 8 ? <span className="truncate">{rate.toFixed(1)}%</span> : null}
+                </div>;
+              })}
+            </div>
+            <p className="mt-2 text-xs text-slate-500">คำนวณจากจำนวนเที่ยวรวมทุกวันในช่วงรายงาน โดยถ่วงน้ำหนักตามจำนวนเที่ยวของแต่ละวัน</p>
+          </div>}
           {!summaryChartRows.length ? <p className="py-20 text-center text-slate-500">ไม่มีเที่ยวที่สามารถแสดงในกราฟได้</p> : <div className="space-y-6 px-6 py-6">{summaryChartRows.map(item => <div key={item.date}>
             <div className="mb-3 flex items-center justify-between gap-3 text-sm"><strong className="rounded-md bg-slate-100 px-2.5 py-1 text-slate-800">{item.date}</strong><span className="font-black text-slate-700">{item.total} เที่ยว · 100.0%</span></div>
             <div className="flex h-12 w-full overflow-hidden rounded-xl bg-slate-100 shadow-inner ring-1 ring-slate-200">{([
