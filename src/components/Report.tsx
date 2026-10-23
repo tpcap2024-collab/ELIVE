@@ -39,7 +39,7 @@ function isNoWork(truck: Truck & { planRemark?: string }): boolean {
   const status = upper(truck.status).replace(/[\s-]+/g, '_');
   const performanceStatus = upper(truck.performanceStatus).replace(/[\s-]+/g, '_');
   const remark = upper(truck.planRemark).replace(/[\s-]+/g, '_');
-  return status === 'NO_WORK' || performanceStatus === 'NO_DROP' || remark === 'NO_WORK' || text(truck.actionProblem).includes('ไม่มีงาน');
+  return ['NO_WORK', 'NO_DROP'].includes(status) || ['NO_WORK', 'NO_DROP'].includes(performanceStatus) || ['NO_WORK', 'NO_DROP'].includes(remark) || text(truck.actionProblem).includes('ไม่มีงาน');
 }
 function isTimeEligible(truck: Truck & { planRemark?: string }): boolean { return !isCancelled(truck) && !isNoWork(truck); }
 function timeMinutes(value: unknown): number | null {
@@ -54,8 +54,8 @@ function etaDifference(truck: Truck & { planRemark?: string }): number | null {
   const plan = timeMinutes(truck.planEta); const actual = timeMinutes(truck.stampEta || truck.actualEta);
   if (plan === null || actual === null) return null;
   const raw = actual - plan;
-  if (Math.abs(raw) > 720) return null;
-  return raw;
+  const difference = raw > 720 ? raw - 1440 : raw < -720 ? raw + 1440 : raw;
+  return Math.abs(difference) > 720 ? null : difference;
 }
 function duration(start: unknown, end: unknown): number | null {
   const first = timeMinutes(start); const last = timeMinutes(end);
@@ -226,8 +226,8 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
   const [presetTolerance, setPresetTolerance] = useState(DEFAULT_TOLERANCE_MINUTES);
   const [customTolerance, setCustomTolerance] = useState('10');
   const [selectedProjects, setSelectedProjects] = useState<string[]>(['INBOUND']);
-  const [selectedRoutes, setSelectedRoutes] = useState<string[]>([]);
-  const [selectedDropPoints, setSelectedDropPoints] = useState<string[]>([]);
+  const [selectedRoutes, setSelectedRoutes] = useState<string[]>(['ทั้งหมด']);
+  const [selectedDropPoints, setSelectedDropPoints] = useState<string[]>(['ทั้งหมด']);
   const [result, setResult] = useState<{ kind: Kind; days: string[]; rows: ReportRow[]; start: string; end: string; startTime: string; endTime: string; allDay: boolean; toleranceMinutes: number } | null>(null);
   const [supplier, setSupplier] = useState('');
   const [loading, setLoading] = useState(false);
@@ -329,10 +329,17 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
 
   const exportCsv = () => {
     if (!result || !kind) return;
-    const output: unknown[][] = [['รายงาน', reportTitle], ['ช่วงวันและเวลา', `${result.start} ${result.startTime}`, `${result.end} ${result.endTime}`], ['Project', !selectedProjects.length || selectedProjects.includes('ทั้งหมด') ? 'ทั้งหมด' : selectedProjects.join(' | ')], ['เกณฑ์ตรงเวลา', `±${toleranceMinutes} นาที`], ['สังกัด', supplier || 'ทั้งหมด'], []];
-    output.push(['รายการ', 'เที่ยวทั้งหมด', 'ประเมินได้', 'จำนวนที่เข้าเงื่อนไข', 'อัตรา %', 'เฉลี่ยนาที', 'สูงสุดนาที', 'สาเหตุหลัก'], ...metricRows.map(item => [item.name, item.total, item.measured, item.count, item.rate?.toFixed(1) || '', item.average?.toFixed(1) || '', item.maximum?.toFixed(1) || '', item.topReason || '']));
-    output.push([], ['รายละเอียดเที่ยว'], ['วันที่', 'Route', 'สังกัด', 'ทะเบียน', 'จุดลงงาน', 'Plan ETA', 'Actual ETA', 'Plan ETD', 'Actual ETD', 'ความต่าง ETA (นาที)', 'เกินเวลาปฏิบัติงาน (นาที)', 'ปัญหา']);
-    (kind === 'SUMMARY' ? summaryDetailRows.map(item => item.row) : rows).forEach(row => output.push([row.date, row.truck.route, row.truck.supplierName, row.truck.licensePlate, row.truck.dropPoint, row.truck.planEta, row.truck.stampEta || row.truck.actualEta, row.truck.planEtd, row.truck.stampEtd || (row.truck as Truck & { actualEtd?: unknown }).actualEtd, timeBeyondOnPlan(row.truck, toleranceMinutes), dwellBeyondTolerance(row.truck, toleranceMinutes), row.truck.actionProblem]));
+    const output: unknown[][] = [['รายงาน', reportTitle], ['ช่วงวันและเวลา', `${result.start} ${result.startTime}`, `${result.end} ${result.endTime}`], ['Project', !selectedProjects.length || selectedProjects.includes('ทั้งหมด') ? 'ทั้งหมด' : selectedProjects.join(' | ')], ['สังกัด', supplier || 'ทั้งหมด'], []];
+    if (kind === 'SUMMARY') {
+      output.push(['สถานะ', 'จำนวนเที่ยว'], ['Early', summaryStatusCounts.EARLY], ['On Plan', summaryStatusCounts.ONTIME], ['Delay', summaryStatusCounts.LATE], ['No Drop / Cancel', summaryStatusCounts.EXCLUDED]);
+      output.push([], ['รายละเอียดเที่ยว'], ['วันที่', 'Project', 'Route', 'สังกัด', 'ทะเบียน', 'จุดลงงาน', 'Plan ETA', 'Actual ETA', 'Plan ETD', 'Actual ETD', 'สถานะ', 'Remark']);
+      summaryDetailRows.forEach(({ row, status }) => output.push([row.date, row.truck.project, row.truck.route, row.truck.supplierName, row.truck.licensePlate, row.truck.dropPoint, row.truck.planEta, row.truck.stampEta || row.truck.actualEta, row.truck.planEtd, row.truck.stampEtd || (row.truck as Truck & { actualEtd?: unknown }).actualEtd, summaryStatusLabel(status), timeResultText(row.truck, status)]));
+    } else {
+      output.push(['เกณฑ์ตรงเวลา', `±${toleranceMinutes} นาที`]);
+      output.push(['รายการ', 'เที่ยวทั้งหมด', 'ประเมินได้', 'จำนวนที่เข้าเงื่อนไข', 'อัตรา %', 'เฉลี่ยนาที', 'สูงสุดนาที', 'สาเหตุหลัก'], ...metricRows.map(item => [item.name, item.total, item.measured, item.count, item.rate?.toFixed(1) || '', item.average?.toFixed(1) || '', item.maximum?.toFixed(1) || '', item.topReason || '']));
+      output.push([], ['รายละเอียดเที่ยว'], ['วันที่', 'Route', 'สังกัด', 'ทะเบียน', 'จุดลงงาน', 'Plan ETA', 'Actual ETA', 'Plan ETD', 'Actual ETD', 'ความต่าง ETA (นาที)', 'เกินเวลาปฏิบัติงาน (นาที)', 'ปัญหา']);
+      rows.forEach(row => output.push([row.date, row.truck.route, row.truck.supplierName, row.truck.licensePlate, row.truck.dropPoint, row.truck.planEta, row.truck.stampEta || row.truck.actualEta, row.truck.planEtd, row.truck.stampEtd || (row.truck as Truck & { actualEtd?: unknown }).actualEtd, timeBeyondOnPlan(row.truck, toleranceMinutes), dwellBeyondTolerance(row.truck, toleranceMinutes), row.truck.actionProblem]));
+    }
     const url = URL.createObjectURL(new Blob(['\uFEFF' + output.map(line => line.map(csvCell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' }));
     const anchor = document.createElement('a'); anchor.href = url; anchor.download = `INBOUND-${kind}-${result.start}-${result.end}.csv`; document.body.appendChild(anchor); anchor.click(); anchor.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
@@ -360,7 +367,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
         {selectedKind && ['EARLY','ONTIME','LATE','DWELL'].includes(selectedKind) && <div className="rounded-lg border border-blue-100 bg-blue-50 p-4"><p className="text-sm font-black text-blue-900">เกณฑ์เวลา (นาที)</p><div className="mt-3 flex flex-wrap items-center gap-4"><label className="inline-flex items-center gap-2 text-sm"><input type="radio" checked={toleranceMode === 'PRESET'} onChange={() => setToleranceMode('PRESET')} />เลือกนาที</label><select disabled={toleranceMode !== 'PRESET'} value={presetTolerance} onChange={event => setPresetTolerance(Number(event.target.value))} className="rounded-lg border border-slate-300 bg-white px-3 py-2 disabled:bg-slate-100">{TOLERANCE_OPTIONS.map(value => <option key={value} value={value}>{value} นาที</option>)}</select><label className="inline-flex items-center gap-2 text-sm"><input type="radio" checked={toleranceMode === 'CUSTOM'} onChange={() => setToleranceMode('CUSTOM')} />ระบุนาที</label><input type="number" min="1" max="720" step="1" disabled={toleranceMode !== 'CUSTOM'} value={customTolerance} onChange={event => setCustomTolerance(event.target.value)} className="w-28 rounded-lg border border-slate-300 bg-white px-3 py-2 disabled:bg-slate-100" /><span className="text-sm text-slate-600">นาที</span></div></div>}
       </fieldset><div role="status" aria-live="polite" className="mt-3 text-sm font-semibold text-blue-700">{progress}</div>{error && <p role="alert" className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</p>}<div className="mt-5 flex justify-end gap-2">{loading && <button type="button" onClick={cancelLoading} className={buttonClass}>ยกเลิก</button>}<button type="submit" disabled={loading} className="rounded-lg bg-blue-600 px-6 py-3 text-sm font-bold text-white disabled:opacity-50">{loading ? 'กำลังสร้างรายงาน...' : 'แสดงรายงาน'}</button></div></form>
     </div> : <div className="mx-auto max-w-7xl">
-      <div className="flex flex-wrap items-start justify-between gap-4"><div><button type="button" onClick={() => setResult(null)} className="rounded-lg border border-slate-300 bg-slate-200 px-5 py-2.5 text-base text-slate-900 shadow-sm hover:bg-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-400" style={{ fontWeight: 900 }}>ย้อนกลับ</button><h1 className="mt-3 text-xl font-black text-slate-900">{reportTitle}</h1><p className="mt-2 text-sm text-slate-500">{result.start} {result.startTime} ถึง {result.end} {result.endTime} · เฉพาะโครงการ INBOUND · โหลดครบ {result.days.length} วัน</p></div><div className="flex flex-wrap items-end gap-2"><label className="text-xs font-black text-slate-700">สังกัด<select value={supplier} onChange={event => setSupplier(event.target.value)} className="mt-1 block min-w-36 rounded-xl border-2 border-blue-300 bg-blue-50 px-3 py-2.5 text-sm font-black text-blue-900 shadow-sm outline-none transition hover:border-blue-400 hover:bg-blue-100 focus:border-blue-500 focus:ring-4 focus:ring-blue-100"><option value="">ทุกสังกัด</option>{suppliers.map(item => <option key={item}>{item}</option>)}</select></label><button type="button" onClick={exportCsv} className="rounded-xl border-2 border-emerald-600 bg-emerald-600 px-5 py-3 text-sm font-black text-white shadow-md transition hover:-translate-y-0.5 hover:bg-emerald-700 hover:shadow-lg focus:outline-none focus:ring-4 focus:ring-emerald-200 active:translate-y-0">ส่งออก CSV</button></div></div>
+      <div className="flex flex-wrap items-start justify-between gap-4"><div><button type="button" onClick={() => setResult(null)} className="rounded-lg border border-slate-300 bg-slate-200 px-5 py-2.5 text-base text-slate-900 shadow-sm hover:bg-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-400" style={{ fontWeight: 900 }}>ย้อนกลับ</button><h1 className="mt-3 text-xl font-black text-slate-900">{reportTitle}</h1></div><div className="flex flex-wrap items-end gap-2"><label className="text-xs font-black text-slate-700">สังกัด<select value={supplier} onChange={event => setSupplier(event.target.value)} className="mt-1 block min-w-36 rounded-xl border-2 border-blue-300 bg-blue-50 px-3 py-2.5 text-sm font-black text-blue-900 shadow-sm outline-none transition hover:border-blue-400 hover:bg-blue-100 focus:border-blue-500 focus:ring-4 focus:ring-blue-100"><option value="">ทุกสังกัด</option>{suppliers.map(item => <option key={item}>{item}</option>)}</select></label><button type="button" onClick={exportCsv} className="rounded-xl border-2 border-emerald-600 bg-emerald-600 px-5 py-3 text-sm font-black text-white shadow-md transition hover:-translate-y-0.5 hover:bg-emerald-700 hover:shadow-lg focus:outline-none focus:ring-4 focus:ring-emerald-200 active:translate-y-0">ส่งออก CSV</button></div></div>
       <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-5">{summary.map(([label, item]) => {
         const labelText = String(label);
         const accent = kind === 'SUMMARY'
@@ -382,12 +389,12 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
       {kind === 'SUMMARY' ? <>
         <section className="mt-5 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-md">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white px-6 py-5">
-            <div><h2 className="text-lg font-black text-slate-900">สรุปสถานะรถเข้าพื้นที่</h2><p className="mt-1 text-xs font-semibold text-slate-500">สัดส่วนสถานะเทียบกับเที่ยวที่แสดงในกราฟ</p></div>
+            <div><h2 className="text-lg font-black text-slate-900">สรุปสถานะรถเข้าพื้นที่</h2></div>
             <div className="flex flex-wrap gap-2 text-xs font-black text-slate-700">
-              <span className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5"><i className="h-2.5 w-2.5 rounded-full bg-blue-500 shadow-sm" />Early</span>
-              <span className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5"><i className="h-2.5 w-2.5 rounded-full bg-emerald-500 shadow-sm" />On Plan</span>
-              <span className="inline-flex items-center gap-2 rounded-full border border-red-200 bg-red-50 px-3 py-1.5"><i className="h-2.5 w-2.5 rounded-full bg-red-500 shadow-sm" />Delay</span>
-              <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-100 px-3 py-1.5"><i className="h-2.5 w-2.5 rounded-full bg-slate-400 shadow-sm" />No Drop / Cancel</span>
+              <span className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5"><i className="h-2.5 w-2.5 rounded-full bg-blue-500 shadow-sm" />Early {summaryStatusCounts.EARLY} เที่ยว</span>
+              <span className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5"><i className="h-2.5 w-2.5 rounded-full bg-emerald-500 shadow-sm" />On Plan {summaryStatusCounts.ONTIME} เที่ยว</span>
+              <span className="inline-flex items-center gap-2 rounded-full border border-red-200 bg-red-50 px-3 py-1.5"><i className="h-2.5 w-2.5 rounded-full bg-red-500 shadow-sm" />Delay {summaryStatusCounts.LATE} เที่ยว</span>
+              <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-100 px-3 py-1.5"><i className="h-2.5 w-2.5 rounded-full bg-slate-400 shadow-sm" />No Drop / Cancel {summaryStatusCounts.EXCLUDED} เที่ยว</span>
             </div>
           </div>
           {!summaryChartRows.length ? <p className="py-20 text-center text-slate-500">ไม่มีเที่ยวที่สามารถแสดงในกราฟได้</p> : <div className="space-y-6 px-6 py-6">{summaryChartRows.map(item => <div key={item.date}>
@@ -398,7 +405,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
               const count = item.counts[status]; const rate = item.total ? count / item.total * 100 : 0;
               if (!count) return null;
               return <div key={status} title={`${summaryStatusLabel(status)} ${count} เที่ยว · ${rate.toFixed(1)}%`} className={`${color} flex min-w-0 items-center justify-center overflow-hidden border-r border-white/30 px-2 text-xs font-black text-white transition-all duration-300 last:border-r-0 hover:brightness-110`} style={{ width: `${rate}%` }}>
-                {rate >= 8 ? <span className="truncate">{count} · {rate.toFixed(1)}%</span> : null}
+                {rate >= 8 ? <span className="truncate">{rate.toFixed(1)}%</span> : null}
               </div>;
             })}</div>
           </div>)}</div>}
