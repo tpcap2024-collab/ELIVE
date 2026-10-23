@@ -632,7 +632,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
             </div></div>
           </div>
           <p className="px-6 pt-4 text-xs font-semibold text-slate-500">ช่วง On Plan: Plan ETA ลบ {toleranceMinutes} นาที ถึง Plan ETD บวก {toleranceMinutes} นาที</p>
-          {overallSummaryTotal > 0 && <div className="border-b border-slate-200 bg-blue-50/40 px-6 py-6">
+          {result.days.length > 1 && overallSummaryTotal > 0 && <div className="border-b border-slate-200 bg-blue-50/40 px-6 py-6">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3 text-sm">
               <strong className="rounded-md border border-blue-200 bg-blue-100 px-3 py-1.5 font-black text-blue-900">ค่าเฉลี่ยของทุกวัน</strong>
               <span className="font-black text-slate-700">{overallSummaryTotal} เที่ยว · 100.0%</span>
@@ -646,13 +646,6 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
                 </div>;
               })}
               </div>
-              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs font-bold text-slate-700">
-                {overallSummaryParts.map(([status]) => {
-                  const count = summaryStatusCounts[status];
-                  const rate = count / overallSummaryTotal * 100;
-                  return count > 0 && rate < 5 ? <span key={status}>{summaryStatusLabel(status)} {rate.toFixed(1)}%</span> : null;
-                })}
-              </div>
             </div>}
             {!summaryChartRows.length ? <p className="py-20 text-center text-slate-500">ไม่มีเที่ยวที่สามารถแสดงในกราฟได้</p> : <div className="space-y-6 px-6 py-6">{summaryChartRows.map(item => <div key={item.date}>
             <div className="mb-3 flex items-center justify-between gap-3 text-sm"><strong className="rounded-md bg-slate-100 px-2.5 py-1 text-slate-800">{item.date}</strong><span className="font-black text-slate-700">{item.total} เที่ยว · 100.0%</span></div>
@@ -665,13 +658,6 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
                 <span className="shrink-0 whitespace-nowrap" style={{ fontSize: rate < 5 ? '10px' : undefined }}>{rate.toFixed(1)}%</span>
               </div>;
             })}</div>
-            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs font-bold text-slate-700">
-              {overallSummaryParts.map(([status]) => {
-                const count = item.counts[status];
-                const rate = item.total ? count / item.total * 100 : 0;
-                return count > 0 && rate < 5 ? <span key={status}>{summaryStatusLabel(status)} {rate.toFixed(1)}%</span> : null;
-              })}
-            </div>
           </div>)}</div>}
         </section>
         <section className="mt-5 overflow-hidden border border-[#cccccc] bg-white">
