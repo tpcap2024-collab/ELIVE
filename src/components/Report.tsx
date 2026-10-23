@@ -484,9 +484,6 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
                 </div>;
               })}
             </div>
-            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs font-bold text-slate-600">
-              {overallSummaryParts.map(([status]) => <span key={status}>{summaryStatusLabel(status)} {((summaryStatusCounts[status] / overallSummaryTotal) * 100).toFixed(1)}%</span>)}
-            </div>
           </div>}
           {!summaryChartRows.length ? <p className="py-20 text-center text-slate-500">ไม่มีเที่ยวที่สามารถแสดงในกราฟได้</p> : <div className="space-y-6 px-6 py-6">{summaryChartRows.map(item => <div key={item.date}>
             <div className="mb-3 flex items-center justify-between gap-3 text-sm"><strong className="rounded-md bg-slate-100 px-2.5 py-1 text-slate-800">{item.date}</strong><span className="font-black text-slate-700">{item.total} เที่ยว · 100.0%</span></div>
@@ -499,14 +496,11 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
                 {rate >= 5 ? <span className="truncate">{rate.toFixed(1)}%</span> : null}
               </div>;
             })}</div>
-            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs font-bold text-slate-600">
-              {overallSummaryParts.map(([status]) => <span key={status}>{summaryStatusLabel(status)} {((item.counts[status] / item.total) * 100).toFixed(1)}%</span>)}
-            </div>
           </div>)}</div>}
         </section>
         <section className="mt-5 overflow-hidden border border-[#cccccc] bg-white">
           <div className="flex min-h-[46px] flex-wrap items-center justify-between gap-2 border-b border-[#999999] bg-[#eeeeee] pr-4">
-            <div className="flex min-w-0 items-center"><span aria-hidden="true" className="flex h-[46px] w-11 shrink-0 items-center justify-center border-r border-[#d4d4d4] text-lg text-[#68ace0]">▦</span><h2 className="px-4 text-sm font-bold text-[#555555]">รายละเอียดเที่ยวในกราฟ</h2><span aria-live="polite" className="text-xs text-slate-600">{visibleDetails.length} / {summaryDetailRows.length} เที่ยว</span></div>
+            <div className="flex min-w-0 items-center"><span aria-hidden="true" className="flex h-[46px] w-11 shrink-0 items-center justify-center border-r border-[#d4d4d4] text-lg text-[#68ace0]">▦</span><h2 className="px-4 text-sm font-bold text-[#555555]">รายละเอียดในกราฟ</h2></div>
             <div className="flex gap-4 py-1"><button type="button" onClick={exportDetailsPdf} title="พิมพ์หรือบันทึกเป็น PDF" className="min-w-[75px] bg-[#388438] px-4 py-2 text-base font-semibold text-white hover:bg-[#2c6c2c] focus:outline-none focus:ring-2 focus:ring-green-600">PDF</button><button type="button" onClick={exportDetailsExcel} title="ดาวน์โหลด Excel (.xlsx) ตามข้อมูลที่กรอง" className="min-w-[75px] bg-[#388438] px-4 py-2 text-base font-semibold text-white hover:bg-[#2c6c2c] focus:outline-none focus:ring-2 focus:ring-green-600">Excel</button></div>
           </div>
           {exportError && <p role="alert" className="bg-red-50 px-3 py-2 text-sm text-red-700">{exportError}</p>}
