@@ -9,6 +9,26 @@ type MetricRow = { name: string; total: number; measured: number; count: number;
 type SummaryStatus = 'EARLY' | 'ONTIME' | 'LATE' | 'EXCLUDED';
 type SummaryChartRow = { date: string; total: number; counts: Record<SummaryStatus, number> };
 
+type DwellOptions = {
+  standardMode: 'PLAN' | 'CUSTOM'; standardMinutes: number;
+  scope: 'ALL' | 'EXCEEDED'; excessMinutes: number;
+  arrival: 'ALL' | 'EARLY' | 'ONTIME' | 'LATE'; problem: 'ALL' | 'RECORDED' | 'UNRECORDED';
+};
+function dwellExcess(truck: ReportRow['truck'], options: DwellOptions): number | null {
+  if (!isTimeEligible(truck)) return null;
+  const actual = duration(truck.stampEta || truck.actualEta, truck.stampEtd || (truck as Truck & { actualEtd?: unknown }).actualEtd);
+  const standard = options.standardMode === 'CUSTOM' ? options.standardMinutes : duration(truck.planEta, truck.planEtd);
+  return actual === null || standard === null ? null : actual - standard;
+}
+function matchesDwell(row: ReportRow, options: DwellOptions): boolean {
+  if (!isInbound(row.truck)) return false;
+  const excess = dwellExcess(row.truck, options);
+  if (excess === null) return false;
+  if (options.scope === 'EXCEEDED' && !(excess > 0 && excess >= options.excessMinutes)) return false;
+  if (options.arrival !== 'ALL' && summaryStatus(row.truck, 0) !== options.arrival) return false;
+  const recorded = Boolean(text(row.truck.actionProblem));
+  return options.problem === 'ALL' || (options.problem === 'RECORDED' ? recorded : !recorded);
+}
 const DEFAULT_TOLERANCE_MINUTES = 10;
 const TOLERANCE_OPTIONS = [0, 3, 5, 10, 15, 20, 30, 45, 60];
 const MAX_REPORT_DAYS = 92;
@@ -304,7 +324,15 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
   const [selectedProjects, setSelectedProjects] = useState<string[]>(['INBOUND']);
   const [selectedRoutes, setSelectedRoutes] = useState<string[]>(['ทั้งหมด']);
   const [selectedDropPoints, setSelectedDropPoints] = useState<string[]>(['ทั้งหมด']);
-  const [result, setResult] = useState<{ kind: Kind; days: string[]; rows: ReportRow[]; start: string; end: string; startTime: string; endTime: string; allDay: boolean; toleranceMinutes: number } | null>(null);
+  const [dwellStandardMode, setDwellStandardMode] = useState<'PLAN' | 'CUSTOM'>('PLAN');
+  const [dwellStandardMinutes, setDwellStandardMinutes] = useState('15');
+  const [dwellScope, setDwellScope] = useState<'ALL' | 'EXCEEDED'>('EXCEEDED');
+  const [dwellThreshold, setDwellThreshold] = useState('10');
+  const [dwellArrival, setDwellArrival] = useState<DwellOptions['arrival']>('ALL');
+  const [dwellProblem, setDwellProblem] = useState<DwellOptions['problem']>('ALL');
+  const [dwellSuppliers, setDwellSuppliers] = useState<string[]>(['ทั้งหมด']);
+  const dwellSupplierOptions = useMemo(() => Array.from(new Set(trucks.filter(isInbound).map(truck => text(truck.supplierName) || 'ไม่ระบุสังกัด'))).sort(), [trucks]);
+  const [result, setResult] = useState<{ kind: Kind; days: string[]; rows: ReportRow[]; start: string; end: string; startTime: string; endTime: string; allDay: boolean; toleranceMinutes: number; dwellOptions?: DwellOptions } | null>(null);
   const [supplier, setSupplier] = useState('');
   const [detailFilters, setDetailFilters] = useState<string[]>(Array(12).fill(''));
   const [exportError, setExportError] = useState('');
@@ -335,9 +363,19 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
     event.preventDefault(); if (!selectedKind || loading) return;
     let days: string[];
     try { days = datesBetween(startDate, endDate); } catch (loadError) { setError(loadError instanceof Error ? loadError.message : 'ช่วงวันที่ไม่ถูกต้อง'); return; }
-    const toleranceMinutes = toleranceMode === 'CUSTOM' ? Number(customTolerance) : presetTolerance;
+    const toleranceMinutes = selectedKind === 'DWELL' ? 0 : toleranceMode === 'CUSTOM' ? Number(customTolerance) : presetTolerance;
+    const dwellOptions: DwellOptions | undefined = selectedKind === 'DWELL' ? {
+      standardMode: dwellStandardMode, standardMinutes: Number(dwellStandardMinutes), scope: dwellScope,
+      excessMinutes: Number(dwellThreshold), arrival: dwellArrival, problem: dwellProblem,
+    } : undefined;
+    if (dwellOptions && dwellOptions.standardMode === 'CUSTOM' && (!dwellStandardMinutes.trim() || !Number.isInteger(dwellOptions.standardMinutes) || dwellOptions.standardMinutes < 1 || dwellOptions.standardMinutes > 720)) {
+      setError('กรุณาระบุมาตรฐาน 1–720 นาที'); return;
+    }
+    if (dwellOptions && dwellOptions.scope === 'EXCEEDED' && (!dwellThreshold.trim() || !Number.isInteger(dwellOptions.excessMinutes) || dwellOptions.excessMinutes < 0 || dwellOptions.excessMinutes > 720)) {
+      setError('กรุณาระบุระยะเวลาเกินมาตรฐาน 0–720 นาที'); return;
+    }
     const isTimeReport = ['SUMMARY', 'EARLY', 'ONTIME', 'LATE', 'DWELL'].includes(selectedKind);
-    const minimumTolerance = ['SUMMARY', 'ONTIME'].includes(selectedKind) ? 0 : 1;
+    const minimumTolerance = ['SUMMARY', 'ONTIME', 'DWELL'].includes(selectedKind) ? 0 : 1;
     if (isTimeReport && (!Number.isInteger(toleranceMinutes) || toleranceMinutes < minimumTolerance || toleranceMinutes > 720)) { setError(`กรุณาระบุเกณฑ์เวลา ${minimumTolerance}–720 นาที`); return; }
     const effectiveStartTime = startTime;
     const effectiveEndTime = endTime;
@@ -357,18 +395,23 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
         const usedIds = new Set<string>();
         for (const plan of plans.rows) {
           const planProject = upper(plan.project);
-          if (selectedProjects.length && !selectedProjects.includes('ทั้งหมด') && !selectedProjects.includes(planProject)) continue;
+                      if (selectedKind === 'DWELL' && planProject !== 'INBOUND') continue;
+            if (selectedKind !== 'DWELL' && selectedProjects.length && !selectedProjects.includes('ทั้งหมด') && !selectedProjects.includes(planProject)) continue;
           if (selectedRoutes.length && !selectedRoutes.includes('ทั้งหมด') && !selectedRoutes.includes(text(plan.route))) continue;
           if (selectedDropPoints.length && !selectedDropPoints.includes('ทั้งหมด') && !selectedDropPoints.includes(text(plan.dropPoint))) continue;
           const id = upper(plan.codeRun); if (!id || usedIds.has(id)) continue; usedIds.add(id);
           const actual = actualById.get(id);
           const truck = { ...actual, id, planDate: date, project: plan.project, route: plan.route, supplierName: plan.company, licensePlate: plan.truckName, dropPoint: plan.dropPoint, planEta: plan.planEta, planEtd: plan.planEtd, planRemark: plan.remark } as Truck & { planRemark?: string };
-          const reportRow = { truck, date };
+                      const reportRow = { truck, date };
+            if (dwellOptions) {
+              if (dwellSuppliers.length && !dwellSuppliers.includes('ทั้งหมด') && !dwellSuppliers.includes(text(truck.supplierName) || 'ไม่ระบุสังกัด')) continue;
+              if (!matchesDwell(reportRow, dwellOptions)) continue;
+            }
           const plannedAt = planDateTimeValue(reportRow);
           if (plannedAt !== null && plannedAt >= rangeStart && plannedAt <= rangeEnd) rows.push(reportRow);
         }
       }
-      setResult({ kind: selectedKind, days, rows, start: startDate, end: endDate, startTime: effectiveStartTime, endTime: effectiveEndTime, allDay, toleranceMinutes }); setSupplier(''); setProgress(''); setShowDetails(false); setDetailFilters(Array(12).fill('')); setEarlySelectedBucket(null); setEarlySelectedDate(null); setEarlyFilters(Array(12).fill('')); setLateSelectedBucket(null); setLateSelectedDate(null); setLateFilters(Array(12).fill('')); setOntimeSelectedBucket(null); setOntimeSelectedDate(null); setOntimeFilters(Array(12).fill('')); setExportError('');
+      setResult({ kind: selectedKind, days, rows, start: startDate, end: endDate, startTime: effectiveStartTime, endTime: effectiveEndTime, allDay, toleranceMinutes, dwellOptions }); setSupplier(''); setProgress(''); setShowDetails(false); setDetailFilters(Array(12).fill('')); setEarlySelectedBucket(null); setEarlySelectedDate(null); setEarlyFilters(Array(12).fill('')); setLateSelectedBucket(null); setLateSelectedDate(null); setLateFilters(Array(12).fill('')); setOntimeSelectedBucket(null); setOntimeSelectedDate(null); setOntimeFilters(Array(12).fill('')); setExportError('');
     } catch (loadError) {
       if (token === generation.current) setError(`${loadError instanceof Error ? loadError.message : 'โหลดข้อมูลไม่สำเร็จ'} · ไม่แสดงผลจากข้อมูลที่โหลดไม่ครบ`);
     } finally { if (token === generation.current) setLoading(false); }
@@ -495,7 +538,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
       popup.document.close(); window.setTimeout(() => { if (!popup.closed) popup.print(); }, 500);
     } catch { setExportError('ส่งออกไฟล์ไม่สำเร็จ กรุณาลองอีกครั้ง'); }
   };
-  const dwellMeasured = useMemo(() => rows.map(row => dwellBeyondTolerance(row.truck, toleranceMinutes)).filter((item): item is number => item !== null), [rows]);
+  const dwellMeasured = useMemo(() => rows.map(row => result?.kind === 'DWELL' && result.dwellOptions ? dwellExcess(row.truck, result.dwellOptions) : dwellBeyondTolerance(row.truck, toleranceMinutes)).filter((item): item is number => item !== null), [rows, result, toleranceMinutes]);
   const dwellExceeded = useMemo(() => dwellMeasured.filter(item => item > 0), [dwellMeasured]);
   const problemRows = useMemo(() => rows.filter(row => problemReason(row.truck)), [rows]);
   const summaryChartRows = useMemo<SummaryChartRow[]>(() => {
@@ -544,33 +587,44 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
         return { name, total: group.length, measured: group.length, count: group.length, rate: rows.length ? group.length / rows.length * 100 : null, average: null, maximum: null, topReason: undefined } as MetricRow;
       }).sort((a, b) => a.name.localeCompare(b.name));
     }
+    if (kind === 'DWELL' && result?.dwellOptions) {
+      const options = result.dwellOptions;
+      return Array.from(new Set(rows.map(row => text(row.truck.dropPoint) || 'ไม่ระบุจุดลงงาน'))).map(name => {
+        const group = rows.filter(row => (text(row.truck.dropPoint) || 'ไม่ระบุจุดลงงาน') === name);
+        const values = group.map(row => dwellExcess(row.truck, options)).filter((value): value is number => value !== null);
+        const exceeded = values.filter(value => value > 0);
+        return { name, total: group.length, measured: values.length, count: exceeded.length, rate: values.length ? exceeded.length / values.length * 100 : null, average: average(exceeded), maximum: exceeded.length ? Math.max(...exceeded) : null } as MetricRow;
+      }).sort((a, b) => (b.average ?? -1) - (a.average ?? -1));
+    }
     if (kind === 'DWELL' || kind === 'POINT') return metricBy(rows, row => text(row.truck.dropPoint) || 'ไม่ระบุจุดลงงาน', kind, toleranceMinutes);
     if (kind === 'ROUTE') return metricBy(rows, row => text(row.truck.route) || 'ไม่ระบุ Route', kind, toleranceMinutes).filter(item => item.total >= 3);
     if (kind === 'SUPPLIER') return metricBy(rows, row => text(row.truck.supplierName) || 'ไม่ระบุสังกัด', kind, toleranceMinutes);
     return metricBy(rows, row => row.date, kind, toleranceMinutes);
-  }, [kind, rows, toleranceMinutes]);
+  }, [kind, rows, toleranceMinutes, result]);
   const reportTitle = flatReports.find(item => item.id === (kind || selectedKind))?.title || 'รายงาน';
   const maximumBar = Math.max(1, ...metricRows.map(item => item.rate ?? 0));
   const summary = kind === 'SUMMARY'
     ? [['ประเมินได้ทั้งหมด', summaryDetailRows.length], ['Early', summaryStatusCounts.EARLY], ['On Plan', summaryStatusCounts.ONTIME], ['Delay', summaryStatusCounts.LATE], ['No Drop / Cancel', summaryStatusCounts.EXCLUDED]]
     : kind === 'DWELL'
-    ? [['เที่ยวทั้งหมด', rows.length], ['ประเมินเวลาได้', dwellMeasured.length], ['ใช้เวลาเกินแผน', dwellExceeded.length], ['เกินแผนเฉลี่ย', minuteText(average(dwellExceeded))], ['เกินแผนสูงสุด', minuteText(dwellExceeded.length ? Math.max(...dwellExceeded) : null)]]
+    ? [['เที่ยวตามเงื่อนไข', rows.length], ['ประเมินเวลาได้', dwellMeasured.length], ['ใช้เวลาเกินมาตรฐาน', dwellExceeded.length], ['เกินมาตรฐานเฉลี่ย', minuteText(average(dwellExceeded))], ['เกินมาตรฐานสูงสุด', minuteText(dwellExceeded.length ? Math.max(...dwellExceeded) : null)]]
     : kind && ['POINT', 'ROUTE', 'SUPPLIER'].includes(kind)
       ? [['เที่ยวทั้งหมด', rows.length], ['เที่ยวที่มีปัญหา', problemRows.length], ['อัตราเกิดปัญหา', percentage(rows.length ? problemRows.length / rows.length * 100 : null)], ['ปัญหาที่ยังไม่เสร็จสิ้น', problemRows.filter(row => upper(row.truck.actionStatus) !== 'CLOSED').length]]
       : [['เที่ยวทั้งหมด', rows.length], ['ประเมินเวลาได้', measuredArrival.length], [kind === 'EARLY' ? 'เข้าก่อนเวลา' : kind === 'ONTIME' ? 'มาตรงเวลา' : 'มาช้ากว่าแผน', matchedArrival.length], ['อัตรา', percentage(measuredArrival.length ? matchedArrival.length / measuredArrival.length * 100 : null)], [kind === 'ONTIME' ? `ช่วงตรงเวลา` : 'เฉลี่ย', kind === 'ONTIME' ? `±${toleranceMinutes} นาที` : minuteText(average(arrivalValues))]];
 
   const exportCsv = () => {
     if (!result || !kind) return;
-    const output: unknown[][] = [['รายงาน', reportTitle], ['ช่วงวันและเวลา', `${result.start} ${result.startTime}`, `${result.end} ${result.endTime}`], ['Project', !selectedProjects.length || selectedProjects.includes('ทั้งหมด') ? 'ทั้งหมด' : selectedProjects.join(' | ')], ['สังกัด', supplier || 'ทั้งหมด'], []];
+    const output: unknown[][] = [['รายงาน', reportTitle], ['ช่วงวันและเวลา', `${result.start} ${result.startTime}`, `${result.end} ${result.endTime}`], ['Project', kind === 'DWELL' ? 'INBOUND' : !selectedProjects.length || selectedProjects.includes('ทั้งหมด') ? 'ทั้งหมด' : selectedProjects.join(' | ')], ['สังกัด', supplier || 'ทั้งหมด'], []];
     if (kind === 'SUMMARY') {
       output.push(['สถานะ', 'จำนวนเที่ยว'], ['Early', summaryStatusCounts.EARLY], ['On Plan', summaryStatusCounts.ONTIME], ['Delay', summaryStatusCounts.LATE], ['No Drop / Cancel', summaryStatusCounts.EXCLUDED]);
       output.push([], ['รายละเอียดเที่ยว'], ['วันที่', 'Project', 'Route', 'สังกัด', 'ทะเบียน', 'จุดลงงาน', 'Plan ETA', 'Actual ETA', 'Plan ETD', 'Actual ETD', 'สถานะ', 'Remark']);
       summaryDetailRows.forEach(({ row, status }) => output.push([row.date, row.truck.project, row.truck.route, row.truck.supplierName, row.truck.licensePlate, row.truck.dropPoint, row.truck.planEta, row.truck.stampEta || row.truck.actualEta, row.truck.planEtd, row.truck.stampEtd || (row.truck as Truck & { actualEtd?: unknown }).actualEtd, summaryStatusLabel(status), timeResultText(row.truck, status, toleranceMinutes)]));
     } else {
-      output.push(['เกณฑ์ตรงเวลา', `±${toleranceMinutes} นาที`]);
+              if (kind === 'DWELL' && result.dwellOptions) {
+          output.push(['มาตรฐาน', result.dwellOptions.standardMode === 'PLAN' ? 'Plan ETD − Plan ETA' : `${result.dwellOptions.standardMinutes} นาที`], ['แสดงเที่ยว', result.dwellOptions.scope === 'ALL' ? 'ทุกเที่ยวที่มีเวลาเข้า–ออกครบ' : `เกินมาตรฐานตั้งแต่ ${result.dwellOptions.excessMinutes} นาที`], ['สถานะการเข้า', result.dwellOptions.arrival], ['ข้อมูลปัญหา', result.dwellOptions.problem]);
+        } else output.push(['เกณฑ์ตรงเวลา', `±${toleranceMinutes} นาที`]);
       output.push(['รายการ', 'เที่ยวทั้งหมด', 'ประเมินได้', 'จำนวนที่เข้าเงื่อนไข', 'อัตรา %', 'เฉลี่ยนาที', 'สูงสุดนาที', 'สาเหตุหลัก'], ...metricRows.map(item => [item.name, item.total, item.measured, item.count, item.rate?.toFixed(1) || '', item.average?.toFixed(1) || '', item.maximum?.toFixed(1) || '', item.topReason || '']));
-      output.push([], ['รายละเอียดเที่ยว'], ['วันที่', 'Route', 'สังกัด', 'ทะเบียน', 'จุดลงงาน', 'Plan ETA', 'Actual ETA', 'Plan ETD', 'Actual ETD', 'ความต่าง ETA (นาที)', 'เกินเวลาปฏิบัติงาน (นาที)', 'ปัญหา']);
-      rows.forEach(row => output.push([row.date, row.truck.route, row.truck.supplierName, row.truck.licensePlate, row.truck.dropPoint, row.truck.planEta, row.truck.stampEta || row.truck.actualEta, row.truck.planEtd, row.truck.stampEtd || (row.truck as Truck & { actualEtd?: unknown }).actualEtd, timeBeyondOnPlan(row.truck, toleranceMinutes), dwellBeyondTolerance(row.truck, toleranceMinutes), row.truck.actionProblem]));
+      output.push([], ['รายละเอียดเที่ยว'], ['วันที่', 'Route', 'สังกัด', 'ทะเบียน', 'จุดลงงาน', 'Plan ETA', 'Actual ETA', 'Plan ETD', 'Actual ETD', 'ความต่าง ETA (นาที)', kind === 'DWELL' ? 'เกินมาตรฐาน (นาที)' : 'เกินเวลาปฏิบัติงาน (นาที)', 'ปัญหา']);
+      rows.forEach(row => output.push([row.date, row.truck.route, row.truck.supplierName, row.truck.licensePlate, row.truck.dropPoint, row.truck.planEta, row.truck.stampEta || row.truck.actualEta, row.truck.planEtd, row.truck.stampEtd || (row.truck as Truck & { actualEtd?: unknown }).actualEtd, timeBeyondOnPlan(row.truck, toleranceMinutes), kind === 'DWELL' && result.dwellOptions ? Math.max(0, dwellExcess(row.truck, result.dwellOptions) ?? 0) : dwellBeyondTolerance(row.truck, toleranceMinutes), row.truck.actionProblem]));
     }
     const url = URL.createObjectURL(new Blob(['\uFEFF' + output.map(line => line.map(csvCell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' }));
     const anchor = document.createElement('a'); anchor.href = url; anchor.download = `INBOUND-${kind}-${result.start}-${result.end}.csv`; document.body.appendChild(anchor); anchor.click(); anchor.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -592,12 +646,34 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
           <label className="text-sm font-bold text-slate-700">เวลา<input type="time" required value={endTime} onChange={event => setEndTime(event.target.value)} className="mt-2 block w-full rounded-lg border border-slate-300 p-3" /></label>
         </div>
         <div className="grid gap-4 md:grid-cols-3">
-          <MultiSelectField label="Project" options={projectOptions} values={selectedProjects} onChange={setSelectedProjects} />
+          {selectedKind === 'DWELL' ? <div><label className="text-sm font-bold text-slate-700">Project</label><div className="mt-2 flex min-h-[52px] items-center rounded-lg border border-slate-300 bg-slate-50 px-3 text-sm font-bold text-blue-800">INBOUND</div></div> : <MultiSelectField label="Project" options={projectOptions} values={selectedProjects} onChange={setSelectedProjects} />}
           <MultiSelectField label="Route" options={routeOptions} values={selectedRoutes} onChange={setSelectedRoutes} />
           <MultiSelectField label="จุดลงงาน" options={dropPointOptions} values={selectedDropPoints} onChange={setSelectedDropPoints} />
         </div>
-        {selectedKind && ['SUMMARY','EARLY','ONTIME','LATE','DWELL'].includes(selectedKind) && <div className="rounded-lg border border-blue-100 bg-blue-50 p-4"><p className="text-sm font-black text-blue-900">{['SUMMARY', 'ONTIME'].includes(selectedKind) ? 'กำหนดเวลาเผื่อ' : 'เงื่อนไขเวลามากกว่า'}</p><div className="mt-3 flex flex-wrap items-center gap-4"><label className="inline-flex items-center gap-2 text-sm"><input type="radio" checked={toleranceMode === 'PRESET'} onChange={() => setToleranceMode('PRESET')} />เลือกนาที</label><select disabled={toleranceMode !== 'PRESET'} value={presetTolerance} onChange={event => setPresetTolerance(Number(event.target.value))} className="rounded-lg border border-slate-300 bg-white px-3 py-2 disabled:bg-slate-100">{TOLERANCE_OPTIONS.map(value => <option key={value} value={value}>{value} นาที</option>)}</select><label className="inline-flex items-center gap-2 text-sm"><input type="radio" checked={toleranceMode === 'CUSTOM'} onChange={() => setToleranceMode('CUSTOM')} />ระบุนาที</label><input type="number" min={selectedKind === 'SUMMARY' || selectedKind === 'ONTIME' ? 0 : 1} max="720" step="1" disabled={toleranceMode !== 'CUSTOM'} value={customTolerance} onChange={event => setCustomTolerance(event.target.value)} className="w-28 rounded-lg border border-slate-300 bg-white px-3 py-2 disabled:bg-slate-100" /><span className="text-sm text-slate-600">นาที</span></div></div>}
-      </fieldset><div role="status" aria-live="polite" className="mt-3 text-sm font-semibold text-blue-700">{progress}</div>{error && <p role="alert" className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</p>}<div className="mt-5 flex justify-end gap-2">{loading && <button type="button" onClick={cancelLoading} className={buttonClass}>ยกเลิก</button>}<button type="submit" disabled={loading} className="rounded-lg bg-blue-600 px-6 py-3 text-sm font-bold text-white disabled:opacity-50">{loading ? 'กำลังสร้างรายงาน...' : 'แสดงรายงาน'}</button></div></form>
+        {selectedKind && ['SUMMARY','EARLY','ONTIME','LATE'].includes(selectedKind) && <div className="rounded-lg border border-blue-100 bg-blue-50 p-4"><p className="text-sm font-black text-blue-900">{['SUMMARY', 'ONTIME'].includes(selectedKind) ? 'กำหนดเวลาเผื่อ' : 'เงื่อนไขเวลามากกว่า'}</p><div className="mt-3 flex flex-wrap items-center gap-4"><label className="inline-flex items-center gap-2 text-sm"><input type="radio" checked={toleranceMode === 'PRESET'} onChange={() => setToleranceMode('PRESET')} />เลือกนาที</label><select disabled={toleranceMode !== 'PRESET'} value={presetTolerance} onChange={event => setPresetTolerance(Number(event.target.value))} className="rounded-lg border border-slate-300 bg-white px-3 py-2 disabled:bg-slate-100">{TOLERANCE_OPTIONS.map(value => <option key={value} value={value}>{value} นาที</option>)}</select><label className="inline-flex items-center gap-2 text-sm"><input type="radio" checked={toleranceMode === 'CUSTOM'} onChange={() => setToleranceMode('CUSTOM')} />ระบุนาที</label><input type="number" min={selectedKind === 'SUMMARY' || selectedKind === 'ONTIME' ? 0 : 1} max="720" step="1" disabled={toleranceMode !== 'CUSTOM'} value={customTolerance} onChange={event => setCustomTolerance(event.target.value)} className="w-28 rounded-lg border border-slate-300 bg-white px-3 py-2 disabled:bg-slate-100" /><span className="text-sm text-slate-600">นาที</span></div></div>}
+                {selectedKind === 'DWELL' && <>
+            <MultiSelectField label="สังกัด" options={dwellSupplierOptions} values={dwellSuppliers} onChange={setDwellSuppliers} />
+            <section className="space-y-4 rounded-lg border border-blue-100 bg-blue-50 p-4">
+              <h2 className="text-sm font-black text-blue-900">เกณฑ์ระยะเวลาปฏิบัติงาน</h2>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <label className="text-sm font-bold text-slate-700">เกณฑ์มาตรฐาน<select value={dwellStandardMode} onChange={event => setDwellStandardMode(event.target.value as 'PLAN' | 'CUSTOM')} className="mt-2 block w-full rounded-lg border border-slate-300 bg-white p-3"><option value="PLAN">ตามแผน: Plan ETD − Plan ETA</option><option value="CUSTOM">กำหนดเอง</option></select></label>
+                {dwellStandardMode === 'CUSTOM' && <label className="text-sm font-bold text-slate-700">มาตรฐาน (นาที)<input type="number" required min="1" max="720" step="1" value={dwellStandardMinutes} onChange={event => setDwellStandardMinutes(event.target.value)} className="mt-2 block w-full rounded-lg border border-slate-300 bg-white p-3" /></label>}
+              </div>
+              <label className="block text-sm font-bold text-slate-700">แสดงเที่ยว<select value={dwellScope} onChange={event => setDwellScope(event.target.value as 'ALL' | 'EXCEEDED')} className="mt-2 block w-full rounded-lg border border-slate-300 bg-white p-3"><option value="ALL">ทุกเที่ยวที่มีเวลาเข้า–ออกครบ</option><option value="EXCEEDED">เฉพาะเที่ยวที่เกินมาตรฐาน</option></select></label>
+              {dwellScope === 'EXCEEDED' && <label className="flex flex-wrap items-center gap-3 text-sm font-bold text-slate-700">เกินมาตรฐานตั้งแต่<input type="number" required min="0" max="720" step="1" list="dwell-thresholds" value={dwellThreshold} onChange={event => setDwellThreshold(event.target.value)} className="w-28 rounded-lg border border-slate-300 bg-white p-3" /><datalist id="dwell-thresholds">{TOLERANCE_OPTIONS.map(value => <option key={value} value={value} />)}</datalist>นาที</label>}
+              <p className="text-xs leading-6 text-slate-600">เวลาจริง = Actual ETD − Actual ETA · เกินมาตรฐาน = เวลาจริง − มาตรฐาน · เกณฑ์ 0 นาทีแสดงเฉพาะเที่ยวที่เกินจริง ไม่รวมเที่ยวที่เท่ามาตรฐาน</p>
+              <p className="text-xs leading-6 text-slate-600">คำนวณจากเวลาเข้า–ออกพื้นที่ ซึ่งอาจรวมเวลารอ ไม่ใช่เวลาเริ่ม–จบลงงานโดยตรง · ไม่รวม No Drop / Cancel และช่วงเวลาที่เกิน 12 ชั่วโมงตามกติกาเดิม</p>
+            </section>
+            <details className="rounded-lg border border-slate-200 bg-white p-4">
+              <summary className="cursor-pointer text-sm font-bold text-slate-800">ตัวกรองเพิ่มเติม</summary>
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                <label className="text-sm font-bold text-slate-700">สถานะการเข้าพื้นที่<select value={dwellArrival} onChange={event => setDwellArrival(event.target.value as DwellOptions['arrival'])} className="mt-2 block w-full rounded-lg border border-slate-300 bg-white p-3"><option value="ALL">ทั้งหมด</option><option value="EARLY">ก่อนเวลา</option><option value="ONTIME">ตามแผน</option><option value="LATE">ล่าช้า</option></select></label>
+                <label className="text-sm font-bold text-slate-700">ข้อมูลปัญหา<select value={dwellProblem} onChange={event => setDwellProblem(event.target.value as DwellOptions['problem'])} className="mt-2 block w-full rounded-lg border border-slate-300 bg-white p-3"><option value="ALL">ทั้งหมด</option><option value="RECORDED">มีการบันทึกปัญหา</option><option value="UNRECORDED">ยังไม่มีการบันทึกปัญหา</option></select></label>
+              </div>
+              <p className="mt-3 text-xs text-slate-500">สถานะการเข้าใช้ช่วง Plan ETA ถึง Plan ETD โดยไม่เพิ่มเวลาเผื่อ และแยกจากเกณฑ์ระยะเวลาเกินมาตรฐาน</p>
+            </details>
+          </>}
+        </fieldset><div role="status" aria-live="polite" className="mt-3 text-sm font-semibold text-blue-700">{progress}</div>{error && <p role="alert" className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</p>}<div className="mt-5 flex justify-end gap-2">{loading && <button type="button" onClick={cancelLoading} className={buttonClass}>ยกเลิก</button>}<button type="submit" disabled={loading} className="rounded-lg bg-blue-600 px-6 py-3 text-sm font-bold text-white disabled:opacity-50">{loading ? 'กำลังสร้างรายงาน...' : 'แสดงรายงาน'}</button></div></form>
     </div> : <div className="mx-auto max-w-7xl">
       <div className="flex flex-wrap items-start justify-between gap-4"><div><button type="button" onClick={() => setResult(null)} className="rounded-lg border border-slate-300 bg-slate-200 px-5 py-2.5 text-base text-slate-900 shadow-sm hover:bg-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-400" style={{ fontWeight: 900 }}>ย้อนกลับ</button>{kind !== 'SUMMARY' && <h1 className="mt-3 text-xl font-black text-slate-900">{reportTitle}</h1>}</div><div className="flex flex-wrap items-end gap-2"><button type="button" onClick={() => kind === 'EARLY' ? earlyExport('csv') : kind === 'LATE' ? lateExport('csv') : kind === 'ONTIME' ? ontimeExport('csv') : exportCsv()} className="rounded-xl border border-teal-500 bg-gradient-to-r from-teal-600 to-cyan-600 px-6 py-3 text-sm font-black tracking-wide text-white shadow-lg shadow-teal-100 transition hover:from-teal-700 hover:to-cyan-700 hover:shadow-xl focus:outline-none focus:ring-4 focus:ring-cyan-200">Export CSV</button></div></div>
       {kind !== 'SUMMARY' && kind !== 'EARLY' && kind !== 'LATE' && kind !== 'ONTIME' && <>
@@ -812,7 +888,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
             : ['POINT','ROUTE','SUPPLIER'].includes(kind || '')
               ? `${item.count} เที่ยว · ${percentage(item.rate)}`
               : percentage(item.rate);
-          return <div key={item.name} title={kind === 'DWELL' ? `เกินแผน ${item.count} จาก ${item.measured} เที่ยว · เฉลี่ย ${minuteText(item.average)} · สูงสุด ${minuteText(item.maximum)}` : ['POINT','ROUTE','SUPPLIER'].includes(kind || '') ? `มีปัญหา ${item.count} จาก ${item.total} เที่ยว · สาเหตุหลัก ${item.topReason || '-'}` : `${item.count} จาก ${item.measured} เที่ยว · เฉลี่ย ${minuteText(item.average)}`}>
+          return <div key={item.name} title={kind === 'DWELL' ? `เกินมาตรฐาน ${item.count} จาก ${item.measured} เที่ยว · เฉลี่ย ${minuteText(item.average)} · สูงสุด ${minuteText(item.maximum)}` : ['POINT','ROUTE','SUPPLIER'].includes(kind || '') ? `มีปัญหา ${item.count} จาก ${item.total} เที่ยว · สาเหตุหลัก ${item.topReason || '-'}` : `${item.count} จาก ${item.measured} เที่ยว · เฉลี่ย ${minuteText(item.average)}`}>
             <div className="mb-1.5 flex items-center justify-between gap-3 text-sm">
               <strong className="truncate text-slate-900">{item.name}</strong>
               <span className="shrink-0 font-black text-slate-700">{compactValue}</span>
@@ -823,9 +899,9 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
       </section>
       </>}
       {kind === 'ROUTE' && <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-xs leading-6 text-amber-900">การจัดอันดับ Route แสดงเฉพาะ Route ที่มีอย่างน้อย 3 เที่ยวในช่วงรายงาน เพื่อป้องกัน Route ที่มีข้อมูลน้อยถูกจัดอันดับสูงเกินจริง</p>}
-      {kind === 'DWELL' && <p className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-4 text-xs leading-6 text-blue-900">เวลาเกินเกณฑ์ = (Actual ETD − Actual ETA) − (Plan ETD − Plan ETA) − เกณฑ์ {toleranceMinutes} นาที · ต้องมีเวลาครบทั้ง 4 ค่า · รองรับงานข้ามเที่ยงคืน · ไม่รวม NO WORK และ CANCEL · เวลาปฏิบัติงานที่เกิน 12 ชั่วโมงถูกตัดออกจากการประเมินเพื่อป้องกันข้อมูลผิดปกติ</p>}
+      {kind === 'DWELL' && result.dwellOptions && <p className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-4 text-xs leading-6 text-blue-900">มาตรฐาน: {result.dwellOptions.standardMode === 'PLAN' ? 'Plan ETD − Plan ETA' : `${result.dwellOptions.standardMinutes} นาที`} · {result.dwellOptions.scope === 'ALL' ? 'ทุกเที่ยวที่มีเวลาเข้า–ออกครบ' : `เฉพาะเที่ยวที่เกินมาตรฐานตั้งแต่ ${result.dwellOptions.excessMinutes} นาที`} · ระยะเวลาเกินมาตรฐานแสดงเต็มจำนวน ไม่หักเกณฑ์กรองออก · เวลาเข้า–ออกอาจรวมเวลารอ · ไม่รวม No Drop / Cancel และช่วงเวลาที่เกิน 12 ชั่วโมง</p>}
       {kind !== 'SUMMARY' && kind !== 'EARLY' && kind !== 'LATE' && kind !== 'ONTIME' && <button type="button" onClick={() => setShowDetails(current => !current)} aria-expanded={showDetails} className={`${buttonClass} mt-4`}>{showDetails ? 'ซ่อน' : 'ดู'}รายละเอียดเที่ยว ({rows.length})</button>}
-      {kind !== 'SUMMARY' && kind !== 'EARLY' && kind !== 'LATE' && kind !== 'ONTIME' && showDetails && <div className="mt-3 max-h-[430px] overflow-auto rounded-xl border border-slate-200 bg-white"><table className="w-full min-w-[1200px] text-left text-xs"><thead className="sticky top-0 bg-slate-100"><tr>{['วันที่','Route','สังกัด','ทะเบียน','จุดลงงาน','Plan ETA','Actual ETA','Plan ETD','Actual ETD','ผลต่าง ETA','เกินเวลาปฏิบัติงาน','ปัญหา'].map(heading => <th key={heading} className="whitespace-nowrap p-3 font-black">{heading}</th>)}</tr></thead><tbody>{rows.map(row => <tr key={`${row.date}:${row.truck.id}`} className="hover:bg-slate-50">{[row.date,row.truck.route,row.truck.supplierName,row.truck.licensePlate,row.truck.dropPoint,row.truck.planEta,row.truck.stampEta || row.truck.actualEta,row.truck.planEtd,row.truck.stampEtd || (row.truck as Truck & { actualEtd?: unknown }).actualEtd,timeBeyondOnPlan(row.truck, toleranceMinutes) === null ? '-' : `${Math.round(timeBeyondOnPlan(row.truck, toleranceMinutes)!)} นาที`,dwellBeyondTolerance(row.truck, toleranceMinutes) === null ? '-' : `${Math.round(dwellBeyondTolerance(row.truck, toleranceMinutes)!)} นาที`,row.truck.actionProblem].map((item,index) => <td key={index} className="border-t border-slate-100 p-3">{text(item) || '-'}</td>)}</tr>)}</tbody></table></div>}
+      {kind !== 'SUMMARY' && kind !== 'EARLY' && kind !== 'LATE' && kind !== 'ONTIME' && showDetails && <div className="mt-3 max-h-[430px] overflow-auto rounded-xl border border-slate-200 bg-white"><table className="w-full min-w-[1200px] text-left text-xs"><thead className="sticky top-0 bg-slate-100"><tr>{['วันที่','Route','สังกัด','ทะเบียน','จุดลงงาน','Plan ETA','Actual ETA','Plan ETD','Actual ETD','ผลต่าง ETA',kind === 'DWELL' ? 'เกินมาตรฐาน' : 'เกินเวลาปฏิบัติงาน','ปัญหา'].map(heading => <th key={heading} className="whitespace-nowrap p-3 font-black">{heading}</th>)}</tr></thead><tbody>{rows.map(row => <tr key={`${row.date}:${row.truck.id}`} className="hover:bg-slate-50">{[row.date,row.truck.route,row.truck.supplierName,row.truck.licensePlate,row.truck.dropPoint,row.truck.planEta,row.truck.stampEta || row.truck.actualEta,row.truck.planEtd,row.truck.stampEtd || (row.truck as Truck & { actualEtd?: unknown }).actualEtd,timeBeyondOnPlan(row.truck, toleranceMinutes) === null ? '-' : `${Math.round(timeBeyondOnPlan(row.truck, toleranceMinutes)!)} นาที`,kind === 'DWELL' && result.dwellOptions ? minuteText(Math.max(0, dwellExcess(row.truck, result.dwellOptions) ?? 0)) : dwellBeyondTolerance(row.truck, toleranceMinutes) === null ? '-' : `${Math.round(dwellBeyondTolerance(row.truck, toleranceMinutes)!)} นาที`,row.truck.actionProblem].map((item,index) => <td key={index} className="border-t border-slate-100 p-3">{text(item) || '-'}</td>)}</tr>)}</tbody></table></div>}
     </div>}
   </div>;
 }
