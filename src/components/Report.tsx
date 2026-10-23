@@ -266,7 +266,7 @@ function earlyActualBucket(row: ReportRow, bucketSize: number): number | null {
 }
 const lateTableColumns = ['วันที่', 'Project', 'Route', 'สังกัด', 'ทะเบียน', 'จุดลงงาน', 'Plan ETA', 'Actual ETA', 'Plan ETD', 'Actual ETD', 'สถานะ', 'Remark'];
 function lateTableCells(row: ReportRow): string[] {
-  const minutes = etaDifference(row.truck);
+  const minutes = summaryDelayMinutes(row.truck);
   return [row.date, row.truck.project, row.truck.route, row.truck.supplierName, row.truck.licensePlate, row.truck.dropPoint, row.truck.planEta, row.truck.stampEta || row.truck.actualEta, row.truck.planEtd, row.truck.stampEtd || (row.truck as Truck & { actualEtd?: unknown }).actualEtd, 'Delay', minutes === null ? '-' : `ล่าช้า ${Math.round(minutes)} นาที`].map(text);
 }
 function lateActualBucket(row: ReportRow, bucketSize: number): number | null {
@@ -401,13 +401,13 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
     } catch { setExportError('ส่งออกไฟล์ไม่สำเร็จ กรุณาลองอีกครั้ง'); }
   };
   const lateQualified = useMemo(() => rows.filter(row => {
-    const difference = etaDifference(row.truck);
+    const difference = summaryDelayMinutes(row.truck);
     return difference !== null && difference >= toleranceMinutes;
   }), [rows, toleranceMinutes]);
   const lateHourBins = useMemo(() => Array.from({ length: 1440 / lateBucketSize }, (_, index) => {
     const start = index * lateBucketSize;
     const group = lateQualified.filter(row => lateActualBucket(row, lateBucketSize) === start);
-    const difference = group.map(row => (etaDifference(row.truck) || 0));
+    const difference = group.map(row => (summaryDelayMinutes(row.truck) || 0));
     return { start, name: `${clockLabel(start)}–${clockLabel((start + lateBucketSize) % 1440)}`, count: group.length, average: average(difference) };
   }), [lateQualified, lateBucketSize]);
   const latePeak = useMemo(() => lateHourBins.reduce((best, bin) => bin.count > best.count ? bin : best, lateHourBins[0]), [lateHourBins]);
@@ -664,7 +664,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
           {[
             { label: 'เข้าล่าช้าตามเกณฑ์', value: `${lateQualified.length} เที่ยว` },
             { label: 'ช่วงเวลาที่เข้าล่าช้าหนาแน่นที่สุด', value: latePeak && latePeak.count ? latePeak.name : '-' },
-            { label: 'เข้าล่าช้าเฉลี่ย', value: minuteText(average(lateQualified.map(row => (etaDifference(row.truck) || 0)))) },
+            { label: 'เข้าล่าช้าเฉลี่ย', value: minuteText(average(lateQualified.map(row => (summaryDelayMinutes(row.truck) || 0)))) },
             { label: 'ช่วงเวลาที่พบมากที่สุด', value: latePeak && latePeak.count ? `${latePeak.count} เที่ยว` : '0 เที่ยว' },
           ].map(card => <div key={card.label} className="rounded-xl border border-red-100 border-l-4 border-l-red-500 bg-white p-4 shadow-sm"><p className="text-xs font-bold text-slate-600">{card.label}</p><p className="mt-2 text-lg font-black text-red-800">{card.value}</p></div>)}
         </div>
