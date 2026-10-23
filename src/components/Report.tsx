@@ -368,8 +368,6 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
     window.setTimeout(() => { if (!popup.closed) { popup.focus(); popup.print(); } }, 500);
   };
   const summaryStatusCounts = useMemo(() => summaryDetailRows.reduce<Record<SummaryStatus, number>>((counts, item) => { counts[item.status] += 1; return counts; }, { EARLY: 0, ONTIME: 0, LATE: 0, EXCLUDED: 0 }), [summaryDetailRows]);
-  // Weighted overall distribution: each trip has equal weight across all selected days.
-  // Uses the same supplier-filtered statuses as the daily bars and legend.
   const overallSummaryTotal = summaryDetailRows.length;
   const overallSummaryParts: Array<[SummaryStatus, string]> = [
     ['EARLY', 'bg-gradient-to-r from-blue-600 to-blue-400'],
@@ -440,7 +438,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
         {selectedKind && ['EARLY','ONTIME','LATE','DWELL'].includes(selectedKind) && <div className="rounded-lg border border-blue-100 bg-blue-50 p-4"><p className="text-sm font-black text-blue-900">เกณฑ์เวลา (นาที)</p><div className="mt-3 flex flex-wrap items-center gap-4"><label className="inline-flex items-center gap-2 text-sm"><input type="radio" checked={toleranceMode === 'PRESET'} onChange={() => setToleranceMode('PRESET')} />เลือกนาที</label><select disabled={toleranceMode !== 'PRESET'} value={presetTolerance} onChange={event => setPresetTolerance(Number(event.target.value))} className="rounded-lg border border-slate-300 bg-white px-3 py-2 disabled:bg-slate-100">{TOLERANCE_OPTIONS.map(value => <option key={value} value={value}>{value} นาที</option>)}</select><label className="inline-flex items-center gap-2 text-sm"><input type="radio" checked={toleranceMode === 'CUSTOM'} onChange={() => setToleranceMode('CUSTOM')} />ระบุนาที</label><input type="number" min="1" max="720" step="1" disabled={toleranceMode !== 'CUSTOM'} value={customTolerance} onChange={event => setCustomTolerance(event.target.value)} className="w-28 rounded-lg border border-slate-300 bg-white px-3 py-2 disabled:bg-slate-100" /><span className="text-sm text-slate-600">นาที</span></div></div>}
       </fieldset><div role="status" aria-live="polite" className="mt-3 text-sm font-semibold text-blue-700">{progress}</div>{error && <p role="alert" className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</p>}<div className="mt-5 flex justify-end gap-2">{loading && <button type="button" onClick={cancelLoading} className={buttonClass}>ยกเลิก</button>}<button type="submit" disabled={loading} className="rounded-lg bg-blue-600 px-6 py-3 text-sm font-bold text-white disabled:opacity-50">{loading ? 'กำลังสร้างรายงาน...' : 'แสดงรายงาน'}</button></div></form>
     </div> : <div className="mx-auto max-w-7xl">
-      <div className="flex flex-wrap items-start justify-between gap-4"><div><button type="button" onClick={() => setResult(null)} className="rounded-lg border border-slate-300 bg-slate-200 px-5 py-2.5 text-base text-slate-900 shadow-sm hover:bg-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-400" style={{ fontWeight: 900 }}>ย้อนกลับ</button>{kind !== 'SUMMARY' && <h1 className="mt-3 text-xl font-black text-slate-900">{reportTitle}</h1>}</div><div className="flex flex-wrap items-end gap-2"><button type="button" onClick={exportCsv} className="rounded-xl border-2 border-emerald-600 bg-emerald-600 px-5 py-3 text-sm font-black text-white shadow-md transition hover:-translate-y-0.5 hover:bg-emerald-700 hover:shadow-lg focus:outline-none focus:ring-4 focus:ring-emerald-200 active:translate-y-0">ส่งออก CSV</button></div></div>
+      <div className="flex flex-wrap items-start justify-between gap-4"><div><button type="button" onClick={() => setResult(null)} className="rounded-lg border border-slate-300 bg-slate-200 px-5 py-2.5 text-base text-slate-900 shadow-sm hover:bg-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-400" style={{ fontWeight: 900 }}>ย้อนกลับ</button>{kind !== 'SUMMARY' && <h1 className="mt-3 text-xl font-black text-slate-900">{reportTitle}</h1>}</div><div className="flex flex-wrap items-end gap-2"><button type="button" onClick={exportCsv} className="rounded-xl border border-teal-500 bg-gradient-to-r from-teal-600 to-cyan-600 px-6 py-3 text-sm font-black tracking-wide text-white shadow-lg shadow-teal-100 transition hover:from-teal-700 hover:to-cyan-700 hover:shadow-xl focus:outline-none focus:ring-4 focus:ring-cyan-200">Export CSV</button></div></div>
       {kind !== 'SUMMARY' && <>
       <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-5">{summary.map(([label, item]) => {
         const labelText = String(label);
@@ -465,7 +463,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
         <section className="mt-5 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-md">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white px-6 py-5">
             <div><h2 className="text-lg font-black text-slate-900">{reportTitle}</h2></div>
-            <div className="flex flex-wrap items-end gap-3"><label className="text-xs font-black text-slate-700">สังกัด<select value={supplier} onChange={event => setSupplier(event.target.value)} className="mt-1 block min-w-36 rounded-xl border-2 border-blue-300 bg-blue-50 px-3 py-2.5 text-sm font-black text-blue-900 shadow-sm outline-none transition hover:border-blue-400 hover:bg-blue-100 focus:border-blue-500 focus:ring-4 focus:ring-blue-100"><option value="">ทุกสังกัด</option>{suppliers.map(item => <option key={item}>{item}</option>)}</select></label><div className="flex flex-wrap gap-2 pb-1 text-xs font-black text-slate-700">
+            <div className="flex flex-wrap items-end gap-3"><label className="text-xs font-black text-slate-700"><span className="sr-only">สังกัด</span><select aria-label="สังกัด" value={supplier} onChange={event => setSupplier(event.target.value)} className="mt-1 block min-w-36 rounded-xl border-2 border-blue-300 bg-blue-50 px-3 py-2.5 text-sm font-black text-blue-900 shadow-sm outline-none transition hover:border-blue-400 hover:bg-blue-100 focus:border-blue-500 focus:ring-4 focus:ring-blue-100"><option value="">ทุกสังกัด</option>{suppliers.map(item => <option key={item}>{item}</option>)}</select></label><div className="flex flex-wrap gap-2 pb-1 text-xs font-black text-slate-700">
               <span className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5"><i className="h-2.5 w-2.5 rounded-full bg-blue-500 shadow-sm" />Early {summaryStatusCounts.EARLY} เที่ยว</span>
               <span className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5"><i className="h-2.5 w-2.5 rounded-full bg-emerald-500 shadow-sm" />On Plan {summaryStatusCounts.ONTIME} เที่ยว</span>
               <span className="inline-flex items-center gap-2 rounded-full border border-red-200 bg-red-50 px-3 py-1.5"><i className="h-2.5 w-2.5 rounded-full bg-red-500 shadow-sm" />Delay {summaryStatusCounts.LATE} เที่ยว</span>
@@ -474,20 +472,21 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
           </div>
           {overallSummaryTotal > 0 && <div className="border-b border-slate-200 bg-blue-50/40 px-6 py-6">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3 text-sm">
-              <strong className="rounded-md border border-blue-200 bg-blue-100 px-3 py-1.5 font-black text-blue-900">ภาพรวมทุกวัน (เฉลี่ยถ่วงน้ำหนัก)</strong>
+              <strong className="rounded-md border border-blue-200 bg-blue-100 px-3 py-1.5 font-black text-blue-900">ค่าเฉลี่ยของทุกวัน</strong>
               <span className="font-black text-slate-700">{overallSummaryTotal} เที่ยว · 100.0%</span>
             </div>
             <div role="img" aria-label={`สัดส่วนสถานะรวมทุกวัน ${overallSummaryTotal} เที่ยว`} className="flex h-12 w-full overflow-hidden rounded-xl bg-slate-100 shadow-inner ring-1 ring-blue-200">
               {overallSummaryParts.map(([status, color]) => {
-                const count = summaryStatusCounts[status];
-                const rate = count / overallSummaryTotal * 100;
+                const count = summaryStatusCounts[status]; const rate = count / overallSummaryTotal * 100;
                 if (!count) return null;
-                return <div key={status} title={`${summaryStatusLabel(status)} ${count} เที่ยว · ${rate.toFixed(1)}%`} className={`${color} flex min-w-0 items-center justify-center overflow-hidden border-r border-white/30 px-2 text-xs font-black text-white last:border-r-0`} style={{ width: `${rate}%` }}>
-                  {rate >= 8 ? <span className="truncate">{rate.toFixed(1)}%</span> : null}
+                return <div key={status} title={`${summaryStatusLabel(status)} ${count} เที่ยว · ${rate.toFixed(1)}%`} className={`${color} flex min-w-0 items-center justify-center overflow-hidden border-r border-white/30 px-1 text-xs font-black text-white last:border-r-0`} style={{ width: `${rate}%` }}>
+                  {rate >= 5 ? <span className="truncate">{rate.toFixed(1)}%</span> : null}
                 </div>;
               })}
             </div>
-            <p className="mt-2 text-xs text-slate-500">คำนวณจากจำนวนเที่ยวรวมทุกวันในช่วงรายงาน โดยถ่วงน้ำหนักตามจำนวนเที่ยวของแต่ละวัน</p>
+            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs font-bold text-slate-600">
+              {overallSummaryParts.map(([status]) => <span key={status}>{summaryStatusLabel(status)} {((summaryStatusCounts[status] / overallSummaryTotal) * 100).toFixed(1)}%</span>)}
+            </div>
           </div>}
           {!summaryChartRows.length ? <p className="py-20 text-center text-slate-500">ไม่มีเที่ยวที่สามารถแสดงในกราฟได้</p> : <div className="space-y-6 px-6 py-6">{summaryChartRows.map(item => <div key={item.date}>
             <div className="mb-3 flex items-center justify-between gap-3 text-sm"><strong className="rounded-md bg-slate-100 px-2.5 py-1 text-slate-800">{item.date}</strong><span className="font-black text-slate-700">{item.total} เที่ยว · 100.0%</span></div>
@@ -497,9 +496,12 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
               const count = item.counts[status]; const rate = item.total ? count / item.total * 100 : 0;
               if (!count) return null;
               return <div key={status} title={`${summaryStatusLabel(status)} ${count} เที่ยว · ${rate.toFixed(1)}%`} className={`${color} flex min-w-0 items-center justify-center overflow-hidden border-r border-white/30 px-2 text-xs font-black text-white transition-all duration-300 last:border-r-0 hover:brightness-110`} style={{ width: `${rate}%` }}>
-                {rate >= 8 ? <span className="truncate">{rate.toFixed(1)}%</span> : null}
+                {rate >= 5 ? <span className="truncate">{rate.toFixed(1)}%</span> : null}
               </div>;
             })}</div>
+            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs font-bold text-slate-600">
+              {overallSummaryParts.map(([status]) => <span key={status}>{summaryStatusLabel(status)} {((item.counts[status] / item.total) * 100).toFixed(1)}%</span>)}
+            </div>
           </div>)}</div>}
         </section>
         <section className="mt-5 overflow-hidden border border-[#cccccc] bg-white">
