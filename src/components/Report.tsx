@@ -77,12 +77,21 @@ function arrivalClass(truck: Truck & { planRemark?: string }, toleranceMinutes: 
   if (difference > toleranceMinutes) return 'LATE';
   return 'ONTIME';
 }
+// Only the overall SUMMARY report uses Plan ETD as the start of Delay.
+// Compare all clock times relative to Plan ETA so midnight crossings remain valid.
+function summaryDelayMinutes(truck: Truck & { planRemark?: string }): number | null {
+  const arrivalDiff = etaDifference(truck);
+  const plannedWindow = duration(truck.planEta, truck.planEtd);
+  if (arrivalDiff === null || plannedWindow === null) return null;
+  return Math.max(0, arrivalDiff - plannedWindow);
+}
 function summaryStatus(truck: Truck & { planRemark?: string }): SummaryStatus | null {
   if (isCancelled(truck) || isNoWork(truck)) return 'EXCLUDED';
   const difference = etaDifference(truck);
-  if (difference === null) return null;
+  const delay = summaryDelayMinutes(truck);
+  if (difference === null || delay === null) return null;
   if (difference < 0) return 'EARLY';
-  if (difference > 0) return 'LATE';
+  if (delay > 0) return 'LATE';
   return 'ONTIME';
 }
 function summaryStatusLabel(status: SummaryStatus): string {
@@ -94,7 +103,7 @@ function summaryStatusLabel(status: SummaryStatus): string {
 function timeResultText(truck: Truck & { planRemark?: string }, status: SummaryStatus): string {
   if (status === 'EXCLUDED') return isCancelled(truck) ? 'Cancel' : 'No Drop';
   if (status === 'ONTIME') return 'On Plan';
-  const difference = etaDifference(truck);
+  const difference = status === 'LATE' ? summaryDelayMinutes(truck) : etaDifference(truck);
   const minutes = difference === null ? 0 : Math.abs(difference);
   return `${status === 'EARLY' ? 'ก่อนเวลา' : 'ล่าช้า'} ${Math.round(minutes)} นาที`;
 }
