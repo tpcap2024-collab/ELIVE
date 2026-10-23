@@ -567,8 +567,8 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
         <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
           {[
             { label: 'เข้าก่อนเวลาตามเกณฑ์', value: `${earlyQualified.length} เที่ยว` },
-            { label: 'ช่วงเวลาเข้าหนาแน่นที่สุด', value: earlyPeak && earlyPeak.count ? earlyPeak.name : '-' },
-            { label: 'ก่อนเวลาเฉลี่ย', value: minuteText(average(earlyQualified.map(row => -(etaDifference(row.truck) || 0)))) },
+            { label: 'ช่วงเวลาที่เข้าก่อนเวลาหนาแน่นที่สุด', value: earlyPeak && earlyPeak.count ? earlyPeak.name : '-' },
+            { label: 'เข้าก่อนเวลาเฉลี่ย', value: minuteText(average(earlyQualified.map(row => -(etaDifference(row.truck) || 0)))) },
             { label: 'ช่วงเวลาที่พบมากที่สุด', value: earlyPeak && earlyPeak.count ? `${earlyPeak.count} เที่ยว` : '0 เที่ยว' },
           ].map(card => <div key={card.label} className="rounded-xl border border-blue-100 border-l-4 border-l-blue-500 bg-white p-4 shadow-sm"><p className="text-xs font-bold text-slate-600">{card.label}</p><p className="mt-2 text-lg font-black text-blue-800">{card.value}</p></div>)}
         </div>
@@ -587,7 +587,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
               </button>)}
             </div>
             <div className="mt-2 flex justify-between text-xs text-slate-600"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>24:00</span></div>
-            <p className="mt-2 text-xs text-slate-500">แตะแท่งเพื่อดูเฉพาะเที่ยวในช่วงเวลานั้น</p>
+            <p className="mt-2 text-xs text-slate-500">คลิ้กที่แท่งเพื่อดูเฉพาะเที่ยวในช่วงเวลานั้น</p>
           </div>}
         </section>
         <section className="mt-5 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -600,7 +600,6 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
               const intensity = count / maximum;
               return <button type="button" key={bin.start} aria-label={`${date} ${bin.name}: ${count} เที่ยว`} title={`${date} ${bin.name} · ${count} เที่ยว`} onClick={() => { setEarlySelectedDate(date); setEarlySelectedBucket(bin.start); }} className={`h-8 min-w-0 flex-1 rounded-sm border border-white text-[9px] font-black focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 ${earlySelectedDate === date && earlySelectedBucket === bin.start ? 'ring-2 ring-indigo-700' : ''} ${count ? 'text-white' : 'text-slate-400'}`} style={{ backgroundColor: count ? `rgb(${Math.round(135 - intensity * 100)}, ${Math.round(190 - intensity * 115)}, ${Math.round(235 - intensity * 40)})` : '#f1f5f9' }}>{count || ''}</button>;
             })}</div>)}
-            <p className="mt-3 text-xs text-slate-500">สีน้ำเงินเข้มหมายถึงจำนวนเที่ยวมาก · คลิกช่องเพื่อกรองตาราง</p>
           </div></div>}
         </section>
         <section className="mt-5 overflow-hidden border border-slate-200 bg-white shadow-sm">
