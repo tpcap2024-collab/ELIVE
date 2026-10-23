@@ -614,7 +614,12 @@ export default function App() {
     const time = new Intl.DateTimeFormat('en-GB', {
       timeZone: 'Asia/Bangkok', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
     }).format(new Date());
-    await handleUpdateTruck(truck.id, type === 'ETA' ? { stampEta: time } : { stampEtd: time });
+    await handleUpdateTruck(
+      truck.id,
+      type === 'ETA'
+        ? { stampEta: time, status: 'UNLOADING_AT_TPCAP' }
+        : { stampEtd: time, status: 'COMPLETED' }
+    );
   };
   const handleOpenGps = (truckId: string) => {
     const openedFromMobile = currentView === 'mobile';
