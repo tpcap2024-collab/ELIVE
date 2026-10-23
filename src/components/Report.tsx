@@ -273,7 +273,21 @@ function lateActualBucket(row: ReportRow, bucketSize: number): number | null {
   const minute = timeMinutes(row.truck.stampEta || row.truck.actualEta);
   return minute === null ? null : Math.floor(minute / bucketSize) * bucketSize;
 }
+const ontimeTableColumns = ['วันที่', 'Project', 'Route', 'สังกัด', 'ทะเบียน', 'จุดลงงาน', 'Plan ETA', 'Actual ETA', 'Plan ETD', 'Actual ETD', 'สถานะ', 'Remark'];
+function ontimeTableCells(row: ReportRow): string[] {
+  
+  return [row.date, row.truck.project, row.truck.route, row.truck.supplierName, row.truck.licensePontime, row.truck.dropPoint, row.truck.planEta, row.truck.stampEta || row.truck.actualEta, row.truck.planEtd, row.truck.stampEtd || (row.truck as Truck & { actualEtd?: unknown }).actualEtd, 'On Plan', 'อยู่ในช่วงเวลาตามแผนรวมเวลาเผื่อ'].map(text);
+}
+function ontimeActualBucket(row: ReportRow, bucketSize: number): number | null {
+  const minute = timeMinutes(row.truck.stampEta || row.truck.actualEta);
+  return minute === null ? null : Math.floor(minute / bucketSize) * bucketSize;
+}
 function clockLabel(minutes: number): string { return `${String(Math.floor(minutes / 60) % 24).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`; }
+function isWithinPlanWindow(truck: Truck & { planRemark?: string }, allowance: number): boolean {
+  const difference = etaDifference(truck);
+  const window = duration(truck.planEta, truck.planEtd);
+  return difference !== null && window !== null && difference >= -allowance && difference <= window + allowance;
+}
 export default function Report({ trucks, selectedDate = '' }: ReportProps) {
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
   const initial = /^\d{4}-\d{2}-\d{2}$/.test(selectedDate) ? selectedDate : today;
@@ -301,6 +315,10 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
   const [lateSelectedBucket, setLateSelectedBucket] = useState<number | null>(null);
   const [lateSelectedDate, setLateSelectedDate] = useState<string | null>(null);
   const [lateFilters, setLateFilters] = useState<string[]>(Array(12).fill(''));
+  const [ontimeBucketSize, setOntimeBucketSize] = useState<30 | 60>(60);
+  const [ontimeSelectedBucket, setOntimeSelectedBucket] = useState<number | null>(null);
+  const [ontimeSelectedDate, setOntimeSelectedDate] = useState<string | null>(null);
+  const [ontimeFilters, setOntimeFilters] = useState<string[]>(Array(12).fill(''));
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState('');
   const [error, setError] = useState('');
@@ -311,7 +329,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
   const dropPointOptions = useMemo(() => Array.from(new Set(trucks.map(truck => text(truck.dropPoint)).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'th')), [trucks]);
   useEffect(() => () => { generation.current += 1; }, []);
 
-  const openReport = (kind: Kind) => { setSelectedKind(kind); setResult(null); setError(''); setShowDetails(false); setDetailFilters(Array(12).fill('')); setExportError(''); setEarlySelectedBucket(null); setEarlySelectedDate(null); setEarlyFilters(Array(12).fill('')); setLateSelectedBucket(null); setLateSelectedDate(null); setLateFilters(Array(12).fill('')); };
+  const openReport = (kind: Kind) => { setSelectedKind(kind); setResult(null); setError(''); setShowDetails(false); setDetailFilters(Array(12).fill('')); setExportError(''); setEarlySelectedBucket(null); setEarlySelectedDate(null); setEarlyFilters(Array(12).fill('')); setLateSelectedBucket(null); setLateSelectedDate(null); setLateFilters(Array(12).fill('')); setOntimeSelectedBucket(null); setOntimeSelectedDate(null); setOntimeFilters(Array(12).fill('')); };
   const loadReport = async (event: React.FormEvent) => {
     event.preventDefault(); if (!selectedKind || loading) return;
     let days: string[];
@@ -348,7 +366,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
           if (plannedAt !== null && plannedAt >= rangeStart && plannedAt <= rangeEnd) rows.push(reportRow);
         }
       }
-      setResult({ kind: selectedKind, days, rows, start: startDate, end: endDate, startTime: effectiveStartTime, endTime: effectiveEndTime, allDay, toleranceMinutes }); setSupplier(''); setProgress(''); setShowDetails(false); setDetailFilters(Array(12).fill('')); setEarlySelectedBucket(null); setEarlySelectedDate(null); setEarlyFilters(Array(12).fill('')); setLateSelectedBucket(null); setLateSelectedDate(null); setLateFilters(Array(12).fill('')); setExportError('');
+      setResult({ kind: selectedKind, days, rows, start: startDate, end: endDate, startTime: effectiveStartTime, endTime: effectiveEndTime, allDay, toleranceMinutes }); setSupplier(''); setProgress(''); setShowDetails(false); setDetailFilters(Array(12).fill('')); setEarlySelectedBucket(null); setEarlySelectedDate(null); setEarlyFilters(Array(12).fill('')); setLateSelectedBucket(null); setLateSelectedDate(null); setLateFilters(Array(12).fill('')); setOntimeSelectedBucket(null); setOntimeSelectedDate(null); setOntimeFilters(Array(12).fill('')); setExportError('');
     } catch (loadError) {
       if (token === generation.current) setError(`${loadError instanceof Error ? loadError.message : 'โหลดข้อมูลไม่สำเร็จ'} · ไม่แสดงผลจากข้อมูลที่โหลดไม่ครบ`);
     } finally { if (token === generation.current) setLoading(false); }
@@ -436,6 +454,42 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
       const cellHtml = (name: string) => escapeMarkup(name || '-');
       popup.document.open();
       popup.document.write('<!doctype html><html lang="th"><head><meta charset="utf-8"><title>ELIVE Late Report</title><style>@page{size:A3 landscape;margin:10mm}body{font-family:Tahoma,Arial,sans-serif;color:#222;font-size:11px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #bbb;padding:5px;text-align:left}th{background:#eee}thead{display:table-header-group}tr{break-inside:avoid}@media print{button{display:none}}</style></head><body><button onclick="window.print()">พิมพ์ / บันทึก PDF</button><h2>รายงานรถเข้าพื้นที่ล่าช้า</h2><table><thead><tr>' + data[0].map(v => `<th>${cellHtml(v)}</th>`).join('') + '</tr></thead><tbody>' + data.slice(1).map(line => '<tr>' + line.map(v => `<td>${cellHtml(v)}</td>`).join('') + '</tr>').join('') + '</tbody></table></body></html>');
+      popup.document.close(); window.setTimeout(() => { if (!popup.closed) popup.print(); }, 500);
+    } catch { setExportError('ส่งออกไฟล์ไม่สำเร็จ กรุณาลองอีกครั้ง'); }
+  };
+  const ontimeQualified = useMemo(() => rows.filter(row => isWithinPlanWindow(row.truck, toleranceMinutes)), [rows, toleranceMinutes]);
+  const ontimeHourBins = useMemo(() => Array.from({ length: 1440 / ontimeBucketSize }, (_, index) => {
+    const start = index * ontimeBucketSize;
+    const group = ontimeQualified.filter(row => ontimeActualBucket(row, ontimeBucketSize) === start);
+    const difference = group.map(row => (summaryDelayMinutes(row.truck) || 0));
+    return { start, name: `${clockLabel(start)}–${clockLabel((start + ontimeBucketSize) % 1440)}`, count: group.length, average: average(difference) };
+  }), [ontimeQualified, ontimeBucketSize]);
+  const ontimePeak = useMemo(() => ontimeHourBins.reduce((best, bin) => bin.count > best.count ? bin : best, ontimeHourBins[0]), [ontimeHourBins]);
+  const ontimeHeatDates = useMemo(() => Array.from(new Set(ontimeQualified.map(row => row.date))).sort(), [ontimeQualified]);
+  const ontimeAfterClick = useMemo(() => ontimeQualified.filter(row =>
+    (ontimeSelectedDate === null || row.date === ontimeSelectedDate) &&
+    (ontimeSelectedBucket === null || ontimeActualBucket(row, ontimeBucketSize) === ontimeSelectedBucket)
+  ), [ontimeQualified, ontimeSelectedDate, ontimeSelectedBucket, ontimeBucketSize]);
+  const ontimeDisplayed = useMemo(() => ontimeAfterClick.filter(row => {
+    const cells = ontimeTableCells(row);
+    return ontimeFilters.every((query, index) => !query.trim() || cells[index].toLocaleLowerCase('th').includes(query.trim().toLocaleLowerCase('th')));
+  }), [ontimeAfterClick, ontimeFilters]);
+  const ontimeExport = (format: 'csv' | 'excel' | 'pdf') => {
+    const data = [ontimeTableColumns, ...ontimeDisplayed.map(ontimeTableCells)];
+    const filename = `ELIVE-Ontime-${result?.start || 'report'}-${result?.end || 'report'}`;
+    try {
+      setExportError('');
+      if (format === 'excel') { downloadWorkbook(data, `${filename}.xlsx`); return; }
+      if (format === 'csv') {
+        const output = '\uFEFF' + data.map(line => line.map(csvCell).join(',')).join('\r\n');
+        const url = URL.createObjectURL(new Blob([output], { type: 'text/csv;charset=utf-8' }));
+        const link = document.createElement('a'); link.href = url; link.download = `${filename}.csv`; document.body.appendChild(link); link.click(); link.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1000); return;
+      }
+      const popup = window.open('', '_blank', 'width=1200,height=800');
+      if (!popup) { setExportError('กรุณาอนุญาตป๊อปอัปเพื่อบันทึก PDF'); return; }
+      const cellHtml = (name: string) => escapeMarkup(name || '-');
+      popup.document.open();
+      popup.document.write('<!doctype html><html lang="th"><head><meta charset="utf-8"><title>ELIVE Ontime Report</title><style>@page{size:A3 landscape;margin:10mm}body{font-family:Tahoma,Arial,sans-serif;color:#222;font-size:11px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #bbb;padding:5px;text-align:left}th{background:#eee}thead{display:table-header-group}tr{break-inside:avoid}@media print{button{display:none}}</style></head><body><button onclick="window.print()">พิมพ์ / บันทึก PDF</button><h2>รายงานรถเข้าพื้นที่ตามแผน</h2><table><thead><tr>' + data[0].map(v => `<th>${cellHtml(v)}</th>`).join('') + '</tr></thead><tbody>' + data.slice(1).map(line => '<tr>' + line.map(v => `<td>${cellHtml(v)}</td>`).join('') + '</tr>').join('') + '</tbody></table></body></html>');
       popup.document.close(); window.setTimeout(() => { if (!popup.closed) popup.print(); }, 500);
     } catch { setExportError('ส่งออกไฟล์ไม่สำเร็จ กรุณาลองอีกครั้ง'); }
   };
@@ -540,11 +594,11 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
           <MultiSelectField label="Route" options={routeOptions} values={selectedRoutes} onChange={setSelectedRoutes} />
           <MultiSelectField label="จุดลงงาน" options={dropPointOptions} values={selectedDropPoints} onChange={setSelectedDropPoints} />
         </div>
-        {selectedKind && ['EARLY','ONTIME','LATE','DWELL'].includes(selectedKind) && <div className="rounded-lg border border-blue-100 bg-blue-50 p-4"><p className="text-sm font-black text-blue-900">เงื่อนไขเวลามากกว่า</p><div className="mt-3 flex flex-wrap items-center gap-4"><label className="inline-flex items-center gap-2 text-sm"><input type="radio" checked={toleranceMode === 'PRESET'} onChange={() => setToleranceMode('PRESET')} />เลือกนาที</label><select disabled={toleranceMode !== 'PRESET'} value={presetTolerance} onChange={event => setPresetTolerance(Number(event.target.value))} className="rounded-lg border border-slate-300 bg-white px-3 py-2 disabled:bg-slate-100">{TOLERANCE_OPTIONS.map(value => <option key={value} value={value}>{value} นาที</option>)}</select><label className="inline-flex items-center gap-2 text-sm"><input type="radio" checked={toleranceMode === 'CUSTOM'} onChange={() => setToleranceMode('CUSTOM')} />ระบุนาที</label><input type="number" min="1" max="720" step="1" disabled={toleranceMode !== 'CUSTOM'} value={customTolerance} onChange={event => setCustomTolerance(event.target.value)} className="w-28 rounded-lg border border-slate-300 bg-white px-3 py-2 disabled:bg-slate-100" /><span className="text-sm text-slate-600">นาที</span></div></div>}
+        {selectedKind && ['EARLY','ONTIME','LATE','DWELL'].includes(selectedKind) && <div className="rounded-lg border border-blue-100 bg-blue-50 p-4"><p className="text-sm font-black text-blue-900">{selectedKind === 'ONTIME' ? 'กำหนดเวลาเผื่อ' : 'เงื่อนไขเวลามากกว่า'}</p><div className="mt-3 flex flex-wrap items-center gap-4"><label className="inline-flex items-center gap-2 text-sm"><input type="radio" checked={toleranceMode === 'PRESET'} onChange={() => setToleranceMode('PRESET')} />เลือกนาที</label><select disabled={toleranceMode !== 'PRESET'} value={presetTolerance} onChange={event => setPresetTolerance(Number(event.target.value))} className="rounded-lg border border-slate-300 bg-white px-3 py-2 disabled:bg-slate-100">{TOLERANCE_OPTIONS.map(value => <option key={value} value={value}>{value} นาที</option>)}</select><label className="inline-flex items-center gap-2 text-sm"><input type="radio" checked={toleranceMode === 'CUSTOM'} onChange={() => setToleranceMode('CUSTOM')} />ระบุนาที</label><input type="number" min="1" max="720" step="1" disabled={toleranceMode !== 'CUSTOM'} value={customTolerance} onChange={event => setCustomTolerance(event.target.value)} className="w-28 rounded-lg border border-slate-300 bg-white px-3 py-2 disabled:bg-slate-100" /><span className="text-sm text-slate-600">นาที</span></div></div>}
       </fieldset><div role="status" aria-live="polite" className="mt-3 text-sm font-semibold text-blue-700">{progress}</div>{error && <p role="alert" className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</p>}<div className="mt-5 flex justify-end gap-2">{loading && <button type="button" onClick={cancelLoading} className={buttonClass}>ยกเลิก</button>}<button type="submit" disabled={loading} className="rounded-lg bg-blue-600 px-6 py-3 text-sm font-bold text-white disabled:opacity-50">{loading ? 'กำลังสร้างรายงาน...' : 'แสดงรายงาน'}</button></div></form>
     </div> : <div className="mx-auto max-w-7xl">
-      <div className="flex flex-wrap items-start justify-between gap-4"><div><button type="button" onClick={() => setResult(null)} className="rounded-lg border border-slate-300 bg-slate-200 px-5 py-2.5 text-base text-slate-900 shadow-sm hover:bg-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-400" style={{ fontWeight: 900 }}>ย้อนกลับ</button>{kind !== 'SUMMARY' && <h1 className="mt-3 text-xl font-black text-slate-900">{reportTitle}</h1>}</div><div className="flex flex-wrap items-end gap-2"><button type="button" onClick={() => kind === 'EARLY' ? earlyExport('csv') : kind === 'LATE' ? lateExport('csv') : exportCsv()} className="rounded-xl border border-teal-500 bg-gradient-to-r from-teal-600 to-cyan-600 px-6 py-3 text-sm font-black tracking-wide text-white shadow-lg shadow-teal-100 transition hover:from-teal-700 hover:to-cyan-700 hover:shadow-xl focus:outline-none focus:ring-4 focus:ring-cyan-200">Export CSV</button></div></div>
-      {kind !== 'SUMMARY' && kind !== 'EARLY' && kind !== 'LATE' && <>
+      <div className="flex flex-wrap items-start justify-between gap-4"><div><button type="button" onClick={() => setResult(null)} className="rounded-lg border border-slate-300 bg-slate-200 px-5 py-2.5 text-base text-slate-900 shadow-sm hover:bg-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-400" style={{ fontWeight: 900 }}>ย้อนกลับ</button>{kind !== 'SUMMARY' && <h1 className="mt-3 text-xl font-black text-slate-900">{reportTitle}</h1>}</div><div className="flex flex-wrap items-end gap-2"><button type="button" onClick={() => kind === 'EARLY' ? earlyExport('csv') : kind === 'LATE' ? lateExport('csv') : kind === 'ONTIME' ? ontimeExport('csv') : exportCsv()} className="rounded-xl border border-teal-500 bg-gradient-to-r from-teal-600 to-cyan-600 px-6 py-3 text-sm font-black tracking-wide text-white shadow-lg shadow-teal-100 transition hover:from-teal-700 hover:to-cyan-700 hover:shadow-xl focus:outline-none focus:ring-4 focus:ring-cyan-200">Export CSV</button></div></div>
+      {kind !== 'SUMMARY' && kind !== 'EARLY' && kind !== 'LATE' && kind !== 'ONTIME' && <>
       <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-5">{summary.map(([label, item]) => {
         const labelText = String(label);
         const accent = kind === 'SUMMARY'
@@ -703,6 +757,50 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
           {exportError && <p role="alert" className="bg-red-50 p-3 text-sm text-red-800">{exportError}</p>}
           <div className="max-h-[460px] overflow-auto"><table className="w-full min-w-[1400px] border-separate border-spacing-0 text-left text-xs"><thead className="sticky top-0 z-10"><tr>{lateTableColumns.map(name => <th key={name} className="border-b border-r border-slate-200 bg-slate-100 p-2 text-center font-bold">{name}</th>)}</tr><tr>{lateTableColumns.map((name, index) => <th key={name} className="border-r border-sky-200 bg-sky-200 p-1.5"><input aria-label={`กรอง ${name}`} value={lateFilters[index]} onChange={event => setLateFilters(previous => previous.map((value, cell) => cell === index ? event.target.value : value))} className="w-full min-w-[75px] border border-slate-200 bg-white px-2 py-1.5 outline-none focus:border-red-500" /></th>)}</tr></thead><tbody>{lateDisplayed.map(row => <tr key={`${row.date}:${row.truck.id}`} className="even:bg-slate-50 hover:bg-red-50">{lateTableCells(row).map((cell, index) => <td key={index} className="whitespace-nowrap border-b border-r border-slate-100 p-2.5">{index === 10 ? <span className="rounded bg-red-100 px-2 py-1 font-bold text-red-700">{cell}</span> : cell || '-'}</td>)}</tr>)}</tbody></table>{lateDisplayed.length === 0 && <p className="p-8 text-center text-sm text-slate-500">ไม่พบข้อมูลตามเงื่อนไข</p>}</div>
         </section>
+      </> : kind === 'ONTIME' ? <>
+        <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {[
+            { label: 'เข้าตามแผนตามเกณฑ์', value: `${ontimeQualified.length} เที่ยว` },
+            { label: 'ช่วงเวลาที่เข้าตามแผนหนาแน่นที่สุด', value: ontimePeak && ontimePeak.count ? ontimePeak.name : '-' },
+            { label: 'เวลาเผื่อก่อนและหลังแผน', value: `${toleranceMinutes} นาที` },
+            { label: 'ช่วงเวลาที่พบมากที่สุด', value: ontimePeak && ontimePeak.count ? `${ontimePeak.count} เที่ยว` : '0 เที่ยว' },
+          ].map(card => <div key={card.label} className="rounded-xl border border-emerald-100 border-l-4 border-l-emerald-500 bg-white p-4 shadow-sm"><p className="text-xs font-bold text-slate-600">{card.label}</p><p className="mt-2 text-lg font-black text-emerald-800">{card.value}</p></div>)}
+        </div>
+        <section className="mt-5 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-5 py-4">
+            <div><h2 className="font-black text-slate-900">ความหนาแน่นของรถเข้าตามแผน</h2><p className="mt-1 text-xs text-slate-500">จัดกลุ่มตาม Actual ETA · ช่วง Plan ETA − {toleranceMinutes} นาที ถึง Plan ETD + {toleranceMinutes} นาที</p></div>
+            <div className="flex items-end gap-3"><label className="text-xs font-bold text-slate-700"><span className="sr-only">สังกัด</span><select aria-label="สังกัด" value={supplier} onChange={event => { setSupplier(event.target.value); setOntimeSelectedBucket(null); setOntimeSelectedDate(null); }} className="block rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-900"><option value="">ทุกสังกัด</option>{suppliers.map(item => <option key={item}>{item}</option>)}</select></label>
+              <label className="text-xs font-bold text-slate-700">ช่วงเวลา<select value={ontimeBucketSize} onChange={event => { setOntimeBucketSize(Number(event.target.value) as 30 | 60); setOntimeSelectedBucket(null); setOntimeSelectedDate(null); }} className="ml-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"><option value={60}>1 ชั่วโมง</option><option value={30}>30 นาที</option></select></label></div>
+          </div>
+          {!ontimeQualified.length ? <p className="p-12 text-center text-sm text-slate-500">ไม่พบเที่ยวที่อยู่ในช่วงเวลาตามแผนรวมเวลาเผื่อ</p> : <div className="px-4 py-5 md:px-6">
+            <div className="flex items-center justify-between text-xs font-bold text-slate-600"><span>จำนวนเที่ยวรถเข้าตามแผน</span><span>รวม {ontimeQualified.length} เที่ยว</span></div>
+            <div className="mt-5 flex h-56 items-end gap-1 border-b border-slate-200 pb-1" role="group" aria-label="จำนวนเที่ยวเข้าตามแผนตามช่วงเวลา">
+              {ontimeHourBins.map(bin => <button key={bin.start} type="button" title={`${bin.name}: ${bin.count} เที่ยว · ${(bin.count / ontimeQualified.length * 100).toFixed(1)}%`} aria-label={`${bin.name} ${bin.count} เที่ยว`} aria-pressed={ontimeSelectedBucket === bin.start && ontimeSelectedDate === null} onClick={() => { setOntimeSelectedDate(null); setOntimeSelectedBucket(previous => previous === bin.start ? null : bin.start); }} className="group relative flex h-full min-w-0 flex-1 flex-col justify-end focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600" >
+                {bin.count > 0 && <span className="mb-1 text-center text-[10px] font-black text-emerald-800">{bin.count}</span>}
+                <span className={`block w-full rounded-t-sm transition-colors ${ontimeSelectedBucket === bin.start && ontimeSelectedDate === null ? 'bg-green-800' : bin.count === ontimePeak?.count && bin.count > 0 ? 'bg-emerald-800' : 'bg-emerald-400 group-hover:bg-emerald-600'}`} style={{ height: `${bin.count ? Math.max(5, (bin.count / Math.max(1, ontimePeak?.count || 1)) * 85) : 1}%` }} />
+              </button>)}
+            </div>
+            <div className="mt-2 flex justify-between text-xs text-slate-600"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>24:00</span></div>
+            <p className="mt-2 text-xs text-slate-500">คลิ้กที่แท่งเพื่อดูเฉพาะเที่ยวในช่วงเวลานั้น</p>
+          </div>}
+        </section>
+        <section className="mt-5 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-200 bg-slate-50 px-5 py-4"><h2 className="font-black text-slate-900">ความหนาแน่นรายวันและช่วงเวลา</h2></div>
+          {ontimeHeatDates.length === 0 ? <p className="p-8 text-center text-slate-500">ไม่มีข้อมูล</p> : <div className="overflow-auto p-4"><div className="min-w-[780px]">
+            <div className="mb-2 flex gap-1"><span className="w-28 shrink-0" />{ontimeHourBins.map(bin => <span key={bin.start} className="flex-1 text-center text-[9px] font-bold text-slate-600">{bin.start % 120 === 0 ? clockLabel(bin.start) : ''}</span>)}</div>
+            {ontimeHeatDates.map(date => <div key={date} className="mb-1 flex items-center gap-1"><span className="w-28 shrink-0 text-xs font-bold text-slate-700">{date}</span>{ontimeHourBins.map(bin => {
+              const count = ontimeQualified.filter(row => row.date === date && ontimeActualBucket(row, ontimeBucketSize) === bin.start).length;
+              const maximum = Math.max(1, ontimePeak?.count || 1);
+              const intensity = count / maximum;
+              return <button type="button" key={bin.start} aria-label={`${date} ${bin.name}: ${count} เที่ยว`} title={`${date} ${bin.name} · ${count} เที่ยว`} onClick={() => { setOntimeSelectedDate(date); setOntimeSelectedBucket(bin.start); }} className={`h-8 min-w-0 flex-1 rounded-sm border border-white text-[9px] font-black focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 ${ontimeSelectedDate === date && ontimeSelectedBucket === bin.start ? 'ring-2 ring-green-700' : ''} ${count ? 'text-white' : 'text-slate-400'}`} style={{ backgroundColor: count ? `rgb(${Math.round(130 - intensity * 110)}, ${Math.round(210 - intensity * 80)}, ${Math.round(160 - intensity * 80)})` : '#f1f5f9' }}>{count || ''}</button>;
+            })}</div>)}
+          </div></div>}
+        </section>
+        <section className="mt-5 overflow-hidden border border-slate-200 bg-white shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-100 px-4 py-3"><div className="flex flex-wrap items-center gap-3"><h2 className="font-black text-slate-800">รายละเอียดในกราฟ</h2><span className="text-xs text-slate-600">{ontimeDisplayed.length} เที่ยว</span>{(ontimeSelectedBucket !== null || ontimeSelectedDate !== null) && <button type="button" onClick={() => { setOntimeSelectedBucket(null); setOntimeSelectedDate(null); }} className="rounded-lg border border-slate-300 bg-white px-3 py-1 text-xs font-bold">ล้างการเลือกช่วงเวลา</button>}</div><div className="flex gap-2"><button type="button" onClick={() => ontimeExport('pdf')} className="bg-emerald-700 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-800">PDF</button><button type="button" onClick={() => ontimeExport('excel')} className="bg-emerald-700 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-800">Excel</button></div></div>
+          {exportError && <p role="alert" className="bg-emerald-50 p-3 text-sm text-emerald-800">{exportError}</p>}
+          <div className="max-h-[460px] overflow-auto"><table className="w-full min-w-[1400px] border-separate border-spacing-0 text-left text-xs"><thead className="sticky top-0 z-10"><tr>{ontimeTableColumns.map(name => <th key={name} className="border-b border-r border-slate-200 bg-slate-100 p-2 text-center font-bold">{name}</th>)}</tr><tr>{ontimeTableColumns.map((name, index) => <th key={name} className="border-r border-sky-200 bg-sky-200 p-1.5"><input aria-label={`กรอง ${name}`} value={ontimeFilters[index]} onChange={event => setOntimeFilters(previous => previous.map((value, cell) => cell === index ? event.target.value : value))} className="w-full min-w-[75px] border border-slate-200 bg-white px-2 py-1.5 outline-none focus:border-emerald-500" /></th>)}</tr></thead><tbody>{ontimeDisplayed.map(row => <tr key={`${row.date}:${row.truck.id}`} className="even:bg-slate-50 hover:bg-emerald-50">{ontimeTableCells(row).map((cell, index) => <td key={index} className="whitespace-nowrap border-b border-r border-slate-100 p-2.5">{index === 10 ? <span className="rounded bg-emerald-100 px-2 py-1 font-bold text-emerald-700">{cell}</span> : cell || '-'}</td>)}</tr>)}</tbody></table>{ontimeDisplayed.length === 0 && <p className="p-8 text-center text-sm text-slate-500">ไม่พบข้อมูลตามเงื่อนไข</p>}</div>
+        </section>
       </> : <>
       <section className="mt-5 rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex flex-wrap items-center justify-between gap-2"><h2 className="font-black text-slate-900">{reportTitle}</h2><span className="text-xs font-bold text-slate-500">แสดง {metricRows.length} รายการ</span></div>
         {!rows.length ? <p className="py-20 text-center text-slate-500">ไม่พบเที่ยวในเงื่อนไขที่เลือก</p> : <div className="mt-6 space-y-4">{metricRows.slice(0, kind === 'ROUTE' ? 15 : 30).map(item => {
@@ -722,10 +820,9 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
       </section>
       </>}
       {kind === 'ROUTE' && <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-xs leading-6 text-amber-900">การจัดอันดับ Route แสดงเฉพาะ Route ที่มีอย่างน้อย 3 เที่ยวในช่วงรายงาน เพื่อป้องกัน Route ที่มีข้อมูลน้อยถูกจัดอันดับสูงเกินจริง</p>}
-      {kind === 'ONTIME' && <p className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-4 text-xs leading-6 text-blue-900">เกณฑ์มาตรฐาน: ก่อนเวลา = เร็วกว่า Plan ETA มากกว่า {toleranceMinutes} นาที · ตรงเวลา = อยู่ในช่วง ±{toleranceMinutes} นาที · ล่าช้า = ช้ากว่า Plan ETA มากกว่า {toleranceMinutes} นาที · ตัวหารใช้เฉพาะเที่ยวที่มี Plan ETA และ Actual ETA ครบ โดยไม่รวม NO WORK และ CANCEL</p>}
       {kind === 'DWELL' && <p className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-4 text-xs leading-6 text-blue-900">เวลาเกินเกณฑ์ = (Actual ETD − Actual ETA) − (Plan ETD − Plan ETA) − เกณฑ์ {toleranceMinutes} นาที · ต้องมีเวลาครบทั้ง 4 ค่า · รองรับงานข้ามเที่ยงคืน · ไม่รวม NO WORK และ CANCEL · เวลาปฏิบัติงานที่เกิน 12 ชั่วโมงถูกตัดออกจากการประเมินเพื่อป้องกันข้อมูลผิดปกติ</p>}
-      {kind !== 'SUMMARY' && kind !== 'EARLY' && kind !== 'LATE' && <button type="button" onClick={() => setShowDetails(current => !current)} aria-expanded={showDetails} className={`${buttonClass} mt-4`}>{showDetails ? 'ซ่อน' : 'ดู'}รายละเอียดเที่ยว ({rows.length})</button>}
-      {kind !== 'SUMMARY' && kind !== 'EARLY' && kind !== 'LATE' && showDetails && <div className="mt-3 max-h-[430px] overflow-auto rounded-xl border border-slate-200 bg-white"><table className="w-full min-w-[1200px] text-left text-xs"><thead className="sticky top-0 bg-slate-100"><tr>{['วันที่','Route','สังกัด','ทะเบียน','จุดลงงาน','Plan ETA','Actual ETA','Plan ETD','Actual ETD','ผลต่าง ETA','เกินเวลาปฏิบัติงาน','ปัญหา'].map(heading => <th key={heading} className="whitespace-nowrap p-3 font-black">{heading}</th>)}</tr></thead><tbody>{rows.map(row => <tr key={`${row.date}:${row.truck.id}`} className="hover:bg-slate-50">{[row.date,row.truck.route,row.truck.supplierName,row.truck.licensePlate,row.truck.dropPoint,row.truck.planEta,row.truck.stampEta || row.truck.actualEta,row.truck.planEtd,row.truck.stampEtd || (row.truck as Truck & { actualEtd?: unknown }).actualEtd,timeBeyondOnPlan(row.truck, toleranceMinutes) === null ? '-' : `${Math.round(timeBeyondOnPlan(row.truck, toleranceMinutes)!)} นาที`,dwellBeyondTolerance(row.truck, toleranceMinutes) === null ? '-' : `${Math.round(dwellBeyondTolerance(row.truck, toleranceMinutes)!)} นาที`,row.truck.actionProblem].map((item,index) => <td key={index} className="border-t border-slate-100 p-3">{text(item) || '-'}</td>)}</tr>)}</tbody></table></div>}
+      {kind !== 'SUMMARY' && kind !== 'EARLY' && kind !== 'LATE' && kind !== 'ONTIME' && <button type="button" onClick={() => setShowDetails(current => !current)} aria-expanded={showDetails} className={`${buttonClass} mt-4`}>{showDetails ? 'ซ่อน' : 'ดู'}รายละเอียดเที่ยว ({rows.length})</button>}
+      {kind !== 'SUMMARY' && kind !== 'EARLY' && kind !== 'LATE' && kind !== 'ONTIME' && showDetails && <div className="mt-3 max-h-[430px] overflow-auto rounded-xl border border-slate-200 bg-white"><table className="w-full min-w-[1200px] text-left text-xs"><thead className="sticky top-0 bg-slate-100"><tr>{['วันที่','Route','สังกัด','ทะเบียน','จุดลงงาน','Plan ETA','Actual ETA','Plan ETD','Actual ETD','ผลต่าง ETA','เกินเวลาปฏิบัติงาน','ปัญหา'].map(heading => <th key={heading} className="whitespace-nowrap p-3 font-black">{heading}</th>)}</tr></thead><tbody>{rows.map(row => <tr key={`${row.date}:${row.truck.id}`} className="hover:bg-slate-50">{[row.date,row.truck.route,row.truck.supplierName,row.truck.licensePlate,row.truck.dropPoint,row.truck.planEta,row.truck.stampEta || row.truck.actualEta,row.truck.planEtd,row.truck.stampEtd || (row.truck as Truck & { actualEtd?: unknown }).actualEtd,timeBeyondOnPlan(row.truck, toleranceMinutes) === null ? '-' : `${Math.round(timeBeyondOnPlan(row.truck, toleranceMinutes)!)} นาที`,dwellBeyondTolerance(row.truck, toleranceMinutes) === null ? '-' : `${Math.round(dwellBeyondTolerance(row.truck, toleranceMinutes)!)} นาที`,row.truck.actionProblem].map((item,index) => <td key={index} className="border-t border-slate-100 p-3">{text(item) || '-'}</td>)}</tr>)}</tbody></table></div>}
     </div>}
   </div>;
 }
