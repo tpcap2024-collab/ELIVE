@@ -20,6 +20,25 @@ function dwellExcess(truck: ReportRow['truck'], options: DwellOptions): number |
   const standard = options.standardMode === 'CUSTOM' ? options.standardMinutes : duration(truck.planEta, truck.planEtd);
   return actual === null || standard === null ? null : actual - standard;
 }
+type DwellTrip = ReturnType<typeof makeDwellTrip>;
+const DWELL_COLUMNS = ['วันที่','Route','สังกัด','ทะเบียน','จุดลงงาน','Plan ETA','Actual ETA','Plan ETD','Actual ETD','สถานะการเข้า','ก่อนเวลา / ล่าช้า','มาตรฐาน (นาที)','เวลาจริง (นาที)','เกินมาตรฐาน (นาที)','ปัญหาที่บันทึก','สถานะการดำเนินการ'];
+function makeDwellTrip(row: ReportRow, options: DwellOptions) {
+  const truck = row.truck;
+  const actual = duration(truck.stampEta || truck.actualEta, truck.stampEtd || (truck as Truck & { actualEtd?: unknown }).actualEtd);
+  const standard = options.standardMode === 'CUSTOM' ? options.standardMinutes : duration(truck.planEta, truck.planEtd);
+  const excess = dwellExcess(truck, options);
+  const status = summaryStatus(truck, 0);
+  const statusLabel = status === 'EARLY' ? 'ก่อนเวลา' : status === 'ONTIME' ? 'ตามแผน' : status === 'LATE' ? 'ล่าช้า' : 'ประเมินไม่ได้';
+  const arrivalText = status && status !== 'EXCLUDED' ? status === 'ONTIME' ? 'ตามแผน' : timeResultText(truck, status, 0) : 'ประเมินไม่ได้';
+  const problem = text(truck.actionProblem) || 'ยังไม่มีการบันทึกสาเหตุ';
+  return { row, key: `${row.date}:${truck.id}`, actual, standard, excess, status, statusLabel, arrivalText, problem };
+}
+function dwellTripCells(item: DwellTrip): string[] {
+  const t = item.row.truck;
+  const minutes = (value: number | null) => value === null ? '-' : String(Math.round(value * 10) / 10);
+  return [item.row.date, text(t.route), text(t.supplierName), text(t.licensePlate), text(t.dropPoint), text(t.planEta), text(t.stampEta || t.actualEta), text(t.planEtd), text(t.stampEtd || (t as Truck & { actualEtd?: unknown }).actualEtd), item.statusLabel, item.arrivalText, minutes(item.standard), minutes(item.actual), minutes(item.excess === null ? null : Math.max(0, item.excess)), item.problem, text(t.actionStatus) || 'ยังไม่มีข้อมูล'];
+}
+
 function matchesDwell(row: ReportRow, options: DwellOptions): boolean {
   if (!isInbound(row.truck)) return false;
   const excess = dwellExcess(row.truck, options);
@@ -324,6 +343,10 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
   const [selectedProjects, setSelectedProjects] = useState<string[]>(['INBOUND']);
   const [selectedRoutes, setSelectedRoutes] = useState<string[]>(['ทั้งหมด']);
   const [selectedDropPoints, setSelectedDropPoints] = useState<string[]>(['ทั้งหมด']);
+  const [dwellSelectedTrip, setDwellSelectedTrip] = useState<string | null>(null);
+  const [dwellTableFilters, setDwellTableFilters] = useState<string[]>(Array(DWELL_COLUMNS.length).fill(''));
+  const [dwellChartPage, setDwellChartPage] = useState(0);
+  const [dwellArrivalSelection, setDwellArrivalSelection] = useState<string | null>(null);
   const [dwellStandardMode, setDwellStandardMode] = useState<'PLAN' | 'CUSTOM'>('PLAN');
   const [dwellStandardMinutes, setDwellStandardMinutes] = useState('15');
   const [dwellScope, setDwellScope] = useState<'ALL' | 'EXCEEDED'>('EXCEEDED');
@@ -411,7 +434,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
           if (plannedAt !== null && plannedAt >= rangeStart && plannedAt <= rangeEnd) rows.push(reportRow);
         }
       }
-      setResult({ kind: selectedKind, days, rows, start: startDate, end: endDate, startTime: effectiveStartTime, endTime: effectiveEndTime, allDay, toleranceMinutes, dwellOptions }); setSupplier(''); setProgress(''); setShowDetails(false); setDetailFilters(Array(12).fill('')); setEarlySelectedBucket(null); setEarlySelectedDate(null); setEarlyFilters(Array(12).fill('')); setLateSelectedBucket(null); setLateSelectedDate(null); setLateFilters(Array(12).fill('')); setOntimeSelectedBucket(null); setOntimeSelectedDate(null); setOntimeFilters(Array(12).fill('')); setExportError('');
+      setResult({ kind: selectedKind, days, rows, start: startDate, end: endDate, startTime: effectiveStartTime, endTime: effectiveEndTime, allDay, toleranceMinutes, dwellOptions }); setSupplier(''); setDwellSelectedTrip(null); setDwellArrivalSelection(null); setDwellChartPage(0); setDwellTableFilters(Array(DWELL_COLUMNS.length).fill('')); setProgress(''); setShowDetails(false); setDetailFilters(Array(12).fill('')); setEarlySelectedBucket(null); setEarlySelectedDate(null); setEarlyFilters(Array(12).fill('')); setLateSelectedBucket(null); setLateSelectedDate(null); setLateFilters(Array(12).fill('')); setOntimeSelectedBucket(null); setOntimeSelectedDate(null); setOntimeFilters(Array(12).fill('')); setExportError('');
     } catch (loadError) {
       if (token === generation.current) setError(`${loadError instanceof Error ? loadError.message : 'โหลดข้อมูลไม่สำเร็จ'} · ไม่แสดงผลจากข้อมูลที่โหลดไม่ครบ`);
     } finally { if (token === generation.current) setLoading(false); }
@@ -601,6 +624,14 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
     if (kind === 'SUPPLIER') return metricBy(rows, row => text(row.truck.supplierName) || 'ไม่ระบุสังกัด', kind, toleranceMinutes);
     return metricBy(rows, row => row.date, kind, toleranceMinutes);
   }, [kind, rows, toleranceMinutes, result]);
+  const dwellTrips = useMemo(() => result?.kind === 'DWELL' && result.dwellOptions
+    ? rows.map(row => makeDwellTrip(row, result.dwellOptions!)).sort((a, b) => (b.excess ?? -Infinity) - (a.excess ?? -Infinity) || a.key.localeCompare(b.key)) : [], [rows, result]);
+  const dwellChartTrips = useMemo(() => dwellTrips.filter(item => !dwellArrivalSelection || (item.status || 'UNKNOWN') === dwellArrivalSelection), [dwellTrips, dwellArrivalSelection]);
+  const dwellVisibleTrips = useMemo(() => dwellChartTrips.filter(item => (!dwellSelectedTrip || item.key === dwellSelectedTrip) && dwellTripCells(item).every((value, index) => !dwellTableFilters[index] || value.toLocaleLowerCase().includes(dwellTableFilters[index].trim().toLocaleLowerCase()))), [dwellChartTrips, dwellSelectedTrip, dwellTableFilters]);
+  const dwellChartPages = Math.max(1, Math.ceil(dwellChartTrips.length / 20));
+  const dwellCurrentPage = Math.min(dwellChartPage, dwellChartPages - 1);
+  const dwellScale = dwellChartTrips.reduce((maximum, item) => Math.max(maximum, item.actual ?? 0, item.standard ?? 0), 1);
+  useEffect(() => { setDwellSelectedTrip(null); setDwellChartPage(0); }, [supplier]);
   const reportTitle = flatReports.find(item => item.id === (kind || selectedKind))?.title || 'รายงาน';
   const maximumBar = Math.max(1, ...metricRows.map(item => item.rate ?? 0));
   const summary = kind === 'SUMMARY'
@@ -618,13 +649,13 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
       output.push(['สถานะ', 'จำนวนเที่ยว'], ['Early', summaryStatusCounts.EARLY], ['On Plan', summaryStatusCounts.ONTIME], ['Delay', summaryStatusCounts.LATE], ['No Drop / Cancel', summaryStatusCounts.EXCLUDED]);
       output.push([], ['รายละเอียดเที่ยว'], ['วันที่', 'Project', 'Route', 'สังกัด', 'ทะเบียน', 'จุดลงงาน', 'Plan ETA', 'Actual ETA', 'Plan ETD', 'Actual ETD', 'สถานะ', 'Remark']);
       summaryDetailRows.forEach(({ row, status }) => output.push([row.date, row.truck.project, row.truck.route, row.truck.supplierName, row.truck.licensePlate, row.truck.dropPoint, row.truck.planEta, row.truck.stampEta || row.truck.actualEta, row.truck.planEtd, row.truck.stampEtd || (row.truck as Truck & { actualEtd?: unknown }).actualEtd, summaryStatusLabel(status), timeResultText(row.truck, status, toleranceMinutes)]));
+    } else if (kind === 'DWELL' && result.dwellOptions) {
+      output.push(['มาตรฐาน', result.dwellOptions.standardMode === 'PLAN' ? 'Plan ETD − Plan ETA' : `${result.dwellOptions.standardMinutes} นาที`], ['แสดงเที่ยว', result.dwellOptions.scope === 'ALL' ? 'ทุกเที่ยวที่มีเวลาเข้า–ออกครบ' : `เกินมาตรฐานตั้งแต่ ${result.dwellOptions.excessMinutes} นาที`], ['รายละเอียดตามตัวกรอง', dwellVisibleTrips.length], [], DWELL_COLUMNS, ...dwellVisibleTrips.map(dwellTripCells));
     } else {
-              if (kind === 'DWELL' && result.dwellOptions) {
-          output.push(['มาตรฐาน', result.dwellOptions.standardMode === 'PLAN' ? 'Plan ETD − Plan ETA' : `${result.dwellOptions.standardMinutes} นาที`], ['แสดงเที่ยว', result.dwellOptions.scope === 'ALL' ? 'ทุกเที่ยวที่มีเวลาเข้า–ออกครบ' : `เกินมาตรฐานตั้งแต่ ${result.dwellOptions.excessMinutes} นาที`], ['สถานะการเข้า', result.dwellOptions.arrival], ['ข้อมูลปัญหา', result.dwellOptions.problem]);
-        } else output.push(['เกณฑ์ตรงเวลา', `±${toleranceMinutes} นาที`]);
+      output.push(['เกณฑ์ตรงเวลา', `±${toleranceMinutes} นาที`]);
       output.push(['รายการ', 'เที่ยวทั้งหมด', 'ประเมินได้', 'จำนวนที่เข้าเงื่อนไข', 'อัตรา %', 'เฉลี่ยนาที', 'สูงสุดนาที', 'สาเหตุหลัก'], ...metricRows.map(item => [item.name, item.total, item.measured, item.count, item.rate?.toFixed(1) || '', item.average?.toFixed(1) || '', item.maximum?.toFixed(1) || '', item.topReason || '']));
-      output.push([], ['รายละเอียดเที่ยว'], ['วันที่', 'Route', 'สังกัด', 'ทะเบียน', 'จุดลงงาน', 'Plan ETA', 'Actual ETA', 'Plan ETD', 'Actual ETD', 'ความต่าง ETA (นาที)', kind === 'DWELL' ? 'เกินมาตรฐาน (นาที)' : 'เกินเวลาปฏิบัติงาน (นาที)', 'ปัญหา']);
-      rows.forEach(row => output.push([row.date, row.truck.route, row.truck.supplierName, row.truck.licensePlate, row.truck.dropPoint, row.truck.planEta, row.truck.stampEta || row.truck.actualEta, row.truck.planEtd, row.truck.stampEtd || (row.truck as Truck & { actualEtd?: unknown }).actualEtd, timeBeyondOnPlan(row.truck, toleranceMinutes), kind === 'DWELL' && result.dwellOptions ? Math.max(0, dwellExcess(row.truck, result.dwellOptions) ?? 0) : dwellBeyondTolerance(row.truck, toleranceMinutes), row.truck.actionProblem]));
+      output.push([], ['รายละเอียดเที่ยว'], ['วันที่', 'Route', 'สังกัด', 'ทะเบียน', 'จุดลงงาน', 'Plan ETA', 'Actual ETA', 'Plan ETD', 'Actual ETD', 'ความต่าง ETA (นาที)', 'เกินเวลาปฏิบัติงาน (นาที)', 'ปัญหา']);
+      rows.forEach(row => output.push([row.date, row.truck.route, row.truck.supplierName, row.truck.licensePlate, row.truck.dropPoint, row.truck.planEta, row.truck.stampEta || row.truck.actualEta, row.truck.planEtd, row.truck.stampEtd || (row.truck as Truck & { actualEtd?: unknown }).actualEtd, timeBeyondOnPlan(row.truck, toleranceMinutes), dwellBeyondTolerance(row.truck, toleranceMinutes), row.truck.actionProblem]));
     }
     const url = URL.createObjectURL(new Blob(['\uFEFF' + output.map(line => line.map(csvCell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' }));
     const anchor = document.createElement('a'); anchor.href = url; anchor.download = `INBOUND-${kind}-${result.start}-${result.end}.csv`; document.body.appendChild(anchor); anchor.click(); anchor.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -676,7 +707,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
         </fieldset><div role="status" aria-live="polite" className="mt-3 text-sm font-semibold text-blue-700">{progress}</div>{error && <p role="alert" className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</p>}<div className="mt-5 flex justify-end gap-2">{loading && <button type="button" onClick={cancelLoading} className={buttonClass}>ยกเลิก</button>}<button type="submit" disabled={loading} className="rounded-lg bg-blue-600 px-6 py-3 text-sm font-bold text-white disabled:opacity-50">{loading ? 'กำลังสร้างรายงาน...' : 'แสดงรายงาน'}</button></div></form>
     </div> : <div className="mx-auto max-w-7xl">
       <div className="flex flex-wrap items-start justify-between gap-4"><div><button type="button" onClick={() => setResult(null)} className="rounded-lg border border-slate-300 bg-slate-200 px-5 py-2.5 text-base text-slate-900 shadow-sm hover:bg-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-400" style={{ fontWeight: 900 }}>ย้อนกลับ</button>{kind !== 'SUMMARY' && <h1 className="mt-3 text-xl font-black text-slate-900">{reportTitle}</h1>}</div><div className="flex flex-wrap items-end gap-2"><button type="button" onClick={() => kind === 'EARLY' ? earlyExport('csv') : kind === 'LATE' ? lateExport('csv') : kind === 'ONTIME' ? ontimeExport('csv') : exportCsv()} className="rounded-xl border border-teal-500 bg-gradient-to-r from-teal-600 to-cyan-600 px-6 py-3 text-sm font-black tracking-wide text-white shadow-lg shadow-teal-100 transition hover:from-teal-700 hover:to-cyan-700 hover:shadow-xl focus:outline-none focus:ring-4 focus:ring-cyan-200">Export CSV</button></div></div>
-      {kind !== 'SUMMARY' && kind !== 'EARLY' && kind !== 'LATE' && kind !== 'ONTIME' && <>
+      {kind !== 'DWELL' && kind !== 'SUMMARY' && kind !== 'EARLY' && kind !== 'LATE' && kind !== 'ONTIME' && <>
       <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-5">{summary.map(([label, item]) => {
         const labelText = String(label);
         const accent = kind === 'SUMMARY'
@@ -880,28 +911,53 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
           {exportError && <p role="alert" className="bg-emerald-50 p-3 text-sm text-emerald-800">{exportError}</p>}
           <div className="max-h-[460px] overflow-auto"><table className="w-full min-w-[1400px] border-separate border-spacing-0 text-left text-xs"><thead className="sticky top-0 z-10"><tr>{ontimeTableColumns.map(name => <th key={name} className="border-b border-r border-slate-200 bg-slate-100 p-2 text-center font-bold">{name}</th>)}</tr><tr>{ontimeTableColumns.map((name, index) => <th key={name} className="border-r border-sky-200 bg-sky-200 p-1.5"><input aria-label={`กรอง ${name}`} value={ontimeFilters[index]} onChange={event => setOntimeFilters(previous => previous.map((value, cell) => cell === index ? event.target.value : value))} className="w-full min-w-[75px] border border-slate-200 bg-white px-2 py-1.5 outline-none focus:border-emerald-500" /></th>)}</tr></thead><tbody>{ontimeDisplayed.map(row => <tr key={`${row.date}:${row.truck.id}`} className="even:bg-slate-50 hover:bg-emerald-50">{ontimeTableCells(row).map((cell, index) => <td key={index} className="whitespace-nowrap border-b border-r border-slate-100 p-2.5">{index === 10 ? <span className="rounded bg-emerald-100 px-2 py-1 font-bold text-emerald-700">{cell}</span> : cell || '-'}</td>)}</tr>)}</tbody></table>{ontimeDisplayed.length === 0 && <p className="p-8 text-center text-sm text-slate-500">ไม่พบข้อมูลตามเงื่อนไข</p>}</div>
         </section>
+      </> : kind === 'DWELL' ? <>
+        <section className="mt-5 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="font-black text-slate-900">สถานะการเข้าพื้นที่ของเที่ยวในรายงาน</h2>
+          <p className="mt-1 text-xs text-slate-500">กดสถานะเพื่อกรองกราฟและตาราง · สถานะการเข้าไม่ใช่สาเหตุของการใช้เวลานาน</p>
+          <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+            {([['EARLY','ก่อนเวลา','border-blue-200 bg-blue-50 text-blue-800'],['ONTIME','ตามแผน','border-emerald-200 bg-emerald-50 text-emerald-800'],['LATE','ล่าช้า','border-red-200 bg-red-50 text-red-800'],['UNKNOWN','ประเมินไม่ได้','border-slate-200 bg-slate-50 text-slate-700']] as const).map(([status,label,color]) => {
+              const count = dwellTrips.filter(item => (item.status || 'UNKNOWN') === status).length;
+              return <button key={status} type="button" aria-pressed={dwellArrivalSelection === status} onClick={() => { setDwellArrivalSelection(current => current === status ? null : status); setDwellSelectedTrip(null); setDwellChartPage(0); }} className={`rounded-xl border p-4 text-left focus:outline-none focus:ring-2 focus:ring-blue-600 ${color} ${dwellArrivalSelection === status ? 'ring-2 ring-blue-600' : ''}`}><span className="block text-sm font-bold">{label}</span><strong className="mt-2 block text-2xl">{count} เที่ยว</strong><span className="text-xs">{dwellTrips.length ? (count / dwellTrips.length * 100).toFixed(1) : '0.0'}%</span></button>;
+            })}
+          </div>
+          {dwellArrivalSelection && <button type="button" onClick={() => { setDwellArrivalSelection(null); setDwellSelectedTrip(null); setDwellChartPage(0); }} className="mt-3 rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold">แสดงทุกสถานะ</button>}
+        </section>
+        <section className="mt-5 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-black text-slate-900">เวลามาตรฐานเทียบเวลาจริงรายเที่ยว</h2><span className="text-xs text-slate-500">{dwellChartTrips.length} เที่ยว · เรียงตามเวลาเกินมาตรฐานมากที่สุด</span></div>
+          <div className="mt-3 flex flex-wrap gap-4 text-xs font-bold"><span className="text-slate-600">■ มาตรฐาน</span><span className="text-orange-700">■ เวลาจริงเกินมาตรฐาน</span><span className="text-emerald-700">■ เวลาจริงไม่เกินมาตรฐาน</span></div>
+          <p className="mt-2 text-xs text-slate-500">คลิกเที่ยวเพื่อดูรายละเอียดในตาราง · ความยาวแท่งเทียบด้วยสเกลนาทีเดียวกัน</p>
+          {!dwellChartTrips.length ? <p className="py-12 text-center text-slate-500">ไม่พบเที่ยวตามเงื่อนไข</p> : <div className="mt-5 space-y-3">{dwellChartTrips.slice(dwellCurrentPage * 20, (dwellCurrentPage + 1) * 20).map(item => <button key={item.key} type="button" aria-pressed={dwellSelectedTrip === item.key} onClick={() => setDwellSelectedTrip(current => current === item.key ? null : item.key)} className={`block w-full rounded-xl border p-4 text-left focus:outline-none focus:ring-2 focus:ring-blue-600 ${dwellSelectedTrip === item.key ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:bg-slate-50'}`}>
+            <div className="flex flex-wrap items-start justify-between gap-2"><div><strong className="text-sm text-slate-900">{text(item.row.truck.route)} · {text(item.row.truck.licensePlate)}</strong><p className="mt-1 text-xs text-slate-500">{item.row.date} · {text(item.row.truck.dropPoint)} · {text(item.row.truck.supplierName)}</p></div><div className="text-right"><span className={`text-xs font-bold ${item.status === 'EARLY' ? 'text-blue-700' : item.status === 'LATE' ? 'text-red-700' : item.status === 'ONTIME' ? 'text-emerald-700' : 'text-slate-500'}`}>{item.arrivalText}</span><p className={`mt-1 text-sm font-black ${(item.excess ?? 0) > 0 ? 'text-orange-700' : 'text-emerald-700'}`}>{(item.excess ?? 0) > 0 ? `เกินมาตรฐาน ${minuteText(item.excess)}` : 'ไม่เกินมาตรฐาน'}</p></div></div>
+            <div className="mt-3 grid grid-cols-[64px_minmax(0,1fr)_80px] items-center gap-x-3 gap-y-2 text-xs"><span>มาตรฐาน</span><div className="h-3 rounded bg-slate-100"><div className="h-3 rounded bg-slate-400" style={{ width: `${(item.standard ?? 0) / dwellScale * 100}%` }} /></div><span className="text-right">{minuteText(item.standard)}</span><span>เวลาจริง</span><div className="h-3 rounded bg-slate-100"><div className={`h-3 rounded ${(item.excess ?? 0) > 0 ? 'bg-orange-500' : 'bg-emerald-500'}`} style={{ width: `${(item.actual ?? 0) / dwellScale * 100}%` }} /></div><span className="text-right">{minuteText(item.actual)}</span></div>
+            <p className="mt-3 break-words text-xs text-slate-600">ปัญหา: {item.problem}</p>
+          </button>)}</div>}
+          {dwellChartPages > 1 && <div className="mt-4 flex flex-wrap items-center justify-end gap-3 text-sm"><button type="button" disabled={dwellCurrentPage === 0} onClick={() => setDwellChartPage(dwellCurrentPage - 1)} className="rounded border px-3 py-2 disabled:opacity-40">ก่อนหน้า</button><span>หน้า {dwellCurrentPage + 1} / {dwellChartPages}</span><button type="button" disabled={dwellCurrentPage + 1 >= dwellChartPages} onClick={() => setDwellChartPage(dwellCurrentPage + 1)} className="rounded border px-3 py-2 disabled:opacity-40">ถัดไป</button></div>}
+        </section>
+        <section className="mt-5 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-slate-100 p-4"><div><h2 className="font-black text-slate-900">รายละเอียดในกราฟ</h2><p role="status" className="mt-1 text-xs text-slate-500">{dwellVisibleTrips.length} เที่ยว · CSV ส่งออกตามตัวกรองตาราง</p></div><button type="button" onClick={() => { setDwellSelectedTrip(null); setDwellArrivalSelection(null); setDwellTableFilters(Array(DWELL_COLUMNS.length).fill('')); setDwellChartPage(0); }} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold">ล้างตัวกรองผลลัพธ์</button></div>
+          <div className="max-h-[520px] overflow-auto"><table className="w-full min-w-[1900px] border-separate border-spacing-0 text-left text-xs"><thead className="sticky top-0 z-10"><tr>{DWELL_COLUMNS.map(name => <th key={name} scope="col" className="whitespace-nowrap border-b bg-slate-100 p-3">{name}</th>)}</tr><tr>{DWELL_COLUMNS.map((name,index) => <th key={name} className="border-b bg-sky-100 p-1.5"><input type="text" aria-label={`กรอง ${name}`} value={dwellTableFilters[index]} onChange={event => setDwellTableFilters(previous => previous.map((value,cell) => cell === index ? event.target.value : value))} className="w-full min-w-[80px] rounded border border-slate-300 bg-white p-2 font-normal outline-none focus:border-blue-600" /></th>)}</tr></thead><tbody>{dwellVisibleTrips.map(item => <tr key={item.key} className="even:bg-slate-50 hover:bg-blue-50">{dwellTripCells(item).map((value,index) => <td key={index} className={`border-b border-slate-100 p-3 ${index === 14 ? 'min-w-[220px] whitespace-normal' : 'whitespace-nowrap'} ${index === 13 && (item.excess ?? 0) > 0 ? 'font-bold text-orange-700' : ''} ${index === 9 ? item.status === 'EARLY' ? 'font-bold text-blue-700' : item.status === 'LATE' ? 'font-bold text-red-700' : item.status === 'ONTIME' ? 'font-bold text-emerald-700' : '' : ''}`}>{value || '-'}</td>)}</tr>)}</tbody></table>{!dwellVisibleTrips.length && <p className="py-10 text-center text-sm text-slate-500">ไม่พบข้อมูลที่ตรงกับตัวกรอง</p>}</div>
+        </section>
       </> : <>
       <section className="mt-5 rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex flex-wrap items-center justify-between gap-2"><h2 className="font-black text-slate-900">{reportTitle}</h2><span className="text-xs font-bold text-slate-500">แสดง {metricRows.length} รายการ</span></div>
         {!rows.length ? <p className="py-20 text-center text-slate-500">ไม่พบเที่ยวในเงื่อนไขที่เลือก</p> : <div className="mt-6 space-y-4">{metricRows.slice(0, kind === 'ROUTE' ? 15 : 30).map(item => {
-          const compactValue = kind === 'DWELL'
-            ? `${percentage(item.rate)} · ${minuteText(item.average)}`
-            : ['POINT','ROUTE','SUPPLIER'].includes(kind || '')
+          const compactValue = ['POINT','ROUTE','SUPPLIER'].includes(kind || '')
               ? `${item.count} เที่ยว · ${percentage(item.rate)}`
               : percentage(item.rate);
-          return <div key={item.name} title={kind === 'DWELL' ? `เกินมาตรฐาน ${item.count} จาก ${item.measured} เที่ยว · เฉลี่ย ${minuteText(item.average)} · สูงสุด ${minuteText(item.maximum)}` : ['POINT','ROUTE','SUPPLIER'].includes(kind || '') ? `มีปัญหา ${item.count} จาก ${item.total} เที่ยว · สาเหตุหลัก ${item.topReason || '-'}` : `${item.count} จาก ${item.measured} เที่ยว · เฉลี่ย ${minuteText(item.average)}`}>
+          return <div key={item.name} title={['POINT','ROUTE','SUPPLIER'].includes(kind || '') ? `มีปัญหา ${item.count} จาก ${item.total} เที่ยว · สาเหตุหลัก ${item.topReason || '-'}` : `${item.count} จาก ${item.measured} เที่ยว · เฉลี่ย ${minuteText(item.average)}`}>
             <div className="mb-1.5 flex items-center justify-between gap-3 text-sm">
               <strong className="truncate text-slate-900">{item.name}</strong>
               <span className="shrink-0 font-black text-slate-700">{compactValue}</span>
             </div>
-            <div className="h-6 overflow-hidden rounded-md bg-slate-100"><div className={`h-full rounded-md ${kind === 'LATE' || kind === 'DWELL' || ['POINT','ROUTE','SUPPLIER'].includes(kind || '') ? 'bg-orange-500' : kind === 'EARLY' ? 'bg-cyan-500' : 'bg-emerald-500'}`} style={{ width: `${(item.rate ?? 0) / maximumBar * 100}%` }} /></div>
+            <div className="h-6 overflow-hidden rounded-md bg-slate-100"><div className={`h-full rounded-md ${kind === 'LATE' || ['POINT','ROUTE','SUPPLIER'].includes(kind || '') ? 'bg-orange-500' : kind === 'EARLY' ? 'bg-cyan-500' : 'bg-emerald-500'}`} style={{ width: `${(item.rate ?? 0) / maximumBar * 100}%` }} /></div>
           </div>;
         })}</div>}
       </section>
       </>}
       {kind === 'ROUTE' && <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-xs leading-6 text-amber-900">การจัดอันดับ Route แสดงเฉพาะ Route ที่มีอย่างน้อย 3 เที่ยวในช่วงรายงาน เพื่อป้องกัน Route ที่มีข้อมูลน้อยถูกจัดอันดับสูงเกินจริง</p>}
       {kind === 'DWELL' && result.dwellOptions && <p className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-4 text-xs leading-6 text-blue-900">มาตรฐาน: {result.dwellOptions.standardMode === 'PLAN' ? 'Plan ETD − Plan ETA' : `${result.dwellOptions.standardMinutes} นาที`} · {result.dwellOptions.scope === 'ALL' ? 'ทุกเที่ยวที่มีเวลาเข้า–ออกครบ' : `เฉพาะเที่ยวที่เกินมาตรฐานตั้งแต่ ${result.dwellOptions.excessMinutes} นาที`} · ระยะเวลาเกินมาตรฐานแสดงเต็มจำนวน ไม่หักเกณฑ์กรองออก · เวลาเข้า–ออกอาจรวมเวลารอ · ไม่รวม No Drop / Cancel และช่วงเวลาที่เกิน 12 ชั่วโมง</p>}
-      {kind !== 'SUMMARY' && kind !== 'EARLY' && kind !== 'LATE' && kind !== 'ONTIME' && <button type="button" onClick={() => setShowDetails(current => !current)} aria-expanded={showDetails} className={`${buttonClass} mt-4`}>{showDetails ? 'ซ่อน' : 'ดู'}รายละเอียดเที่ยว ({rows.length})</button>}
-      {kind !== 'SUMMARY' && kind !== 'EARLY' && kind !== 'LATE' && kind !== 'ONTIME' && showDetails && <div className="mt-3 max-h-[430px] overflow-auto rounded-xl border border-slate-200 bg-white"><table className="w-full min-w-[1200px] text-left text-xs"><thead className="sticky top-0 bg-slate-100"><tr>{['วันที่','Route','สังกัด','ทะเบียน','จุดลงงาน','Plan ETA','Actual ETA','Plan ETD','Actual ETD','ผลต่าง ETA',kind === 'DWELL' ? 'เกินมาตรฐาน' : 'เกินเวลาปฏิบัติงาน','ปัญหา'].map(heading => <th key={heading} className="whitespace-nowrap p-3 font-black">{heading}</th>)}</tr></thead><tbody>{rows.map(row => <tr key={`${row.date}:${row.truck.id}`} className="hover:bg-slate-50">{[row.date,row.truck.route,row.truck.supplierName,row.truck.licensePlate,row.truck.dropPoint,row.truck.planEta,row.truck.stampEta || row.truck.actualEta,row.truck.planEtd,row.truck.stampEtd || (row.truck as Truck & { actualEtd?: unknown }).actualEtd,timeBeyondOnPlan(row.truck, toleranceMinutes) === null ? '-' : `${Math.round(timeBeyondOnPlan(row.truck, toleranceMinutes)!)} นาที`,kind === 'DWELL' && result.dwellOptions ? minuteText(Math.max(0, dwellExcess(row.truck, result.dwellOptions) ?? 0)) : dwellBeyondTolerance(row.truck, toleranceMinutes) === null ? '-' : `${Math.round(dwellBeyondTolerance(row.truck, toleranceMinutes)!)} นาที`,row.truck.actionProblem].map((item,index) => <td key={index} className="border-t border-slate-100 p-3">{text(item) || '-'}</td>)}</tr>)}</tbody></table></div>}
+      {kind !== 'DWELL' && kind !== 'SUMMARY' && kind !== 'EARLY' && kind !== 'LATE' && kind !== 'ONTIME' && <button type="button" onClick={() => setShowDetails(current => !current)} aria-expanded={showDetails} className={`${buttonClass} mt-4`}>{showDetails ? 'ซ่อน' : 'ดู'}รายละเอียดเที่ยว ({rows.length})</button>}
+      {kind !== 'DWELL' && kind !== 'SUMMARY' && kind !== 'EARLY' && kind !== 'LATE' && kind !== 'ONTIME' && showDetails && <div className="mt-3 max-h-[430px] overflow-auto rounded-xl border border-slate-200 bg-white"><table className="w-full min-w-[1200px] text-left text-xs"><thead className="sticky top-0 bg-slate-100"><tr>{['วันที่','Route','สังกัด','ทะเบียน','จุดลงงาน','Plan ETA','Actual ETA','Plan ETD','Actual ETD','ผลต่าง ETA','เกินเวลาปฏิบัติงาน','ปัญหา'].map(heading => <th key={heading} className="whitespace-nowrap p-3 font-black">{heading}</th>)}</tr></thead><tbody>{rows.map(row => <tr key={`${row.date}:${row.truck.id}`} className="hover:bg-slate-50">{[row.date,row.truck.route,row.truck.supplierName,row.truck.licensePlate,row.truck.dropPoint,row.truck.planEta,row.truck.stampEta || row.truck.actualEta,row.truck.planEtd,row.truck.stampEtd || (row.truck as Truck & { actualEtd?: unknown }).actualEtd,timeBeyondOnPlan(row.truck, toleranceMinutes) === null ? '-' : `${Math.round(timeBeyondOnPlan(row.truck, toleranceMinutes)!)} นาที`,dwellBeyondTolerance(row.truck, toleranceMinutes) === null ? '-' : `${Math.round(dwellBeyondTolerance(row.truck, toleranceMinutes)!)} นาที`,row.truck.actionProblem].map((item,index) => <td key={index} className="border-t border-slate-100 p-3">{text(item) || '-'}</td>)}</tr>)}</tbody></table></div>}
     </div>}
   </div>;
 }
