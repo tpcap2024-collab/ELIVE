@@ -641,23 +641,37 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
               {overallSummaryParts.map(([status, color]) => {
                 const count = summaryStatusCounts[status]; const rate = count / overallSummaryTotal * 100;
                 if (!count) return null;
-                return <div key={status} title={`${summaryStatusLabel(status)} ${count} เที่ยว · ${rate.toFixed(1)}%`} className={`${color} flex min-w-0 items-center justify-center overflow-hidden border-r border-white/30 px-1 text-xs font-black text-white last:border-r-0`} style={{ width: `${rate}%` }}>
-                  {rate >= 5 ? <span className="truncate">{rate.toFixed(1)}%</span> : null}
+                return <div key={status} title={`${summaryStatusLabel(status)} ${count} เที่ยว · ${rate.toFixed(1)}%`} className={`${color} flex min-w-0 items-center justify-center overflow-hidden border-r border-white/30 text-xs font-black text-white last:border-r-0`} style={{ width: `${rate}%`, flexShrink: 0 }}>
+                  <span className="shrink-0 whitespace-nowrap" style={{ fontSize: rate < 5 ? '10px' : undefined }}>{rate.toFixed(1)}%</span>
                 </div>;
               })}
-            </div>
-          </div>}
-          {!summaryChartRows.length ? <p className="py-20 text-center text-slate-500">ไม่มีเที่ยวที่สามารถแสดงในกราฟได้</p> : <div className="space-y-6 px-6 py-6">{summaryChartRows.map(item => <div key={item.date}>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs font-bold text-slate-700">
+                {overallSummaryParts.map(([status]) => {
+                  const count = summaryStatusCounts[status];
+                  const rate = count / overallSummaryTotal * 100;
+                  return count > 0 && rate < 5 ? <span key={status}>{summaryStatusLabel(status)} {rate.toFixed(1)}%</span> : null;
+                })}
+              </div>
+            </div>}
+            {!summaryChartRows.length ? <p className="py-20 text-center text-slate-500">ไม่มีเที่ยวที่สามารถแสดงในกราฟได้</p> : <div className="space-y-6 px-6 py-6">{summaryChartRows.map(item => <div key={item.date}>
             <div className="mb-3 flex items-center justify-between gap-3 text-sm"><strong className="rounded-md bg-slate-100 px-2.5 py-1 text-slate-800">{item.date}</strong><span className="font-black text-slate-700">{item.total} เที่ยว · 100.0%</span></div>
             <div className="flex h-12 w-full overflow-hidden rounded-xl bg-slate-100 shadow-inner ring-1 ring-slate-200">{([
               ['EARLY','bg-gradient-to-r from-blue-600 to-blue-400'],['ONTIME','bg-gradient-to-r from-emerald-600 to-emerald-400'],['LATE','bg-gradient-to-r from-red-600 to-red-400'],['EXCLUDED','bg-gradient-to-r from-slate-500 to-slate-400']
             ] as Array<[SummaryStatus,string]>).map(([status,color]) => {
               const count = item.counts[status]; const rate = item.total ? count / item.total * 100 : 0;
               if (!count) return null;
-              return <div key={status} title={`${summaryStatusLabel(status)} ${count} เที่ยว · ${rate.toFixed(1)}%`} className={`${color} flex min-w-0 items-center justify-center overflow-hidden border-r border-white/30 px-2 text-xs font-black text-white transition-all duration-300 last:border-r-0 hover:brightness-110`} style={{ width: `${rate}%` }}>
-                {rate >= 5 ? <span className="truncate">{rate.toFixed(1)}%</span> : null}
+              return <div key={status} title={`${summaryStatusLabel(status)} ${count} เที่ยว · ${rate.toFixed(1)}%`} className={`${color} flex min-w-0 items-center justify-center overflow-hidden border-r border-white/30 text-xs font-black text-white transition-all duration-300 last:border-r-0 hover:brightness-110`} style={{ width: `${rate}%`, flexShrink: 0 }}>
+                <span className="shrink-0 whitespace-nowrap" style={{ fontSize: rate < 5 ? '10px' : undefined }}>{rate.toFixed(1)}%</span>
               </div>;
             })}</div>
+            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs font-bold text-slate-700">
+              {overallSummaryParts.map(([status]) => {
+                const count = item.counts[status];
+                const rate = item.total ? count / item.total * 100 : 0;
+                return count > 0 && rate < 5 ? <span key={status}>{summaryStatusLabel(status)} {rate.toFixed(1)}%</span> : null;
+              })}
+            </div>
           </div>)}</div>}
         </section>
         <section className="mt-5 overflow-hidden border border-[#cccccc] bg-white">
