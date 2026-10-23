@@ -213,6 +213,39 @@ function MultiSelectField({ label, options, values, onChange, placeholder = 'ท
   </div>;
 }
 
+
+const detailColumns = ['วันที่', 'Project', 'Route', 'สังกัด', 'ทะเบียน', 'จุดลงงาน', 'Plan ETA', 'Actual ETA', 'Plan ETD', 'Actual ETD', 'สถานะ', 'Remark'];
+function detailCells(row: ReportRow, status: SummaryStatus): string[] {
+  return [row.date, row.truck.project, row.truck.route, row.truck.supplierName, row.truck.licensePlate, row.truck.dropPoint, row.truck.planEta, row.truck.stampEta || row.truck.actualEta, row.truck.planEtd, row.truck.stampEtd || (row.truck as Truck & { actualEtd?: unknown }).actualEtd, summaryStatusLabel(status), timeResultText(row.truck, status)].map(text);
+}
+function escapeMarkup(value: string): string { return value.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' }[char] || char)).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, ''); }
+function downloadWorkbook(data: string[][], filename: string): void {
+  const enc = new TextEncoder();
+  const xml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+  const sheet = xml + '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols><col min="1" max="12" width="22" customWidth="1"/></cols><sheetData>' + data.map((row, r) => '<row r="' + (r + 1) + '">' + row.map((value, c) => '<c r="' + String.fromCharCode(65 + c) + (r + 1) + '" t="inlineStr"><is><t xml:space="preserve">' + escapeMarkup(value) + '</t></is></c>').join('') + '</row>').join('') + '</sheetData><autoFilter ref="A1:L' + Math.max(1, data.length) + '"/></worksheet>';
+  const files: [string, string][] = [
+    ['[Content_Types].xml', xml + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>'],
+    ['_rels/.rels', xml + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'],
+    ['xl/workbook.xml', xml + '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="ELIVE Report" sheetId="1" r:id="rId1"/></sheets></workbook>'],
+    ['xl/_rels/workbook.xml.rels', xml + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>'],
+    ['xl/worksheets/sheet1.xml', sheet]
+  ];
+  const chunks: Uint8Array[] = []; const directory: Uint8Array[] = []; let offset = 0;
+  const crc32 = (bytes: Uint8Array): number => { let crc = 0xffffffff; for (const byte of bytes) { crc ^= byte; for (let i = 0; i < 8; i++) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0); } return (crc ^ 0xffffffff) >>> 0; };
+  for (const [name, content] of files) {
+    const n = enc.encode(name); const b = enc.encode(content); const crc = crc32(b);
+    const local = new Uint8Array(30 + n.length); const lv = new DataView(local.buffer);
+    lv.setUint32(0, 0x04034b50, true); lv.setUint16(4, 20, true); lv.setUint16(12, 33, true); lv.setUint32(14, crc, true); lv.setUint32(18, b.length, true); lv.setUint32(22, b.length, true); lv.setUint16(26, n.length, true); local.set(n, 30);
+    const central = new Uint8Array(46 + n.length); const cv = new DataView(central.buffer);
+    cv.setUint32(0, 0x02014b50, true); cv.setUint16(4, 20, true); cv.setUint16(6, 20, true); cv.setUint16(14, 33, true); cv.setUint32(16, crc, true); cv.setUint32(20, b.length, true); cv.setUint32(24, b.length, true); cv.setUint16(28, n.length, true); cv.setUint32(42, offset, true); central.set(n, 46);
+    chunks.push(local, b); directory.push(central); offset += local.length + b.length;
+  }
+  const end = new Uint8Array(22); const ev = new DataView(end.buffer); ev.setUint32(0, 0x06054b50, true); ev.setUint16(8, files.length, true); ev.setUint16(10, files.length, true); ev.setUint32(12, directory.reduce((sum, item) => sum + item.length, 0), true); ev.setUint32(16, offset, true);
+  const parts = [...chunks, ...directory, end].map(part => new Uint8Array(part).buffer);
+  const url = URL.createObjectURL(new Blob(parts, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+  const anchor = document.createElement('a'); anchor.href = url; anchor.download = filename; document.body.appendChild(anchor); anchor.click(); anchor.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 export default function Report({ trucks, selectedDate = '' }: ReportProps) {
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
   const initial = /^\d{4}-\d{2}-\d{2}$/.test(selectedDate) ? selectedDate : today;
@@ -230,6 +263,8 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
   const [selectedDropPoints, setSelectedDropPoints] = useState<string[]>(['ทั้งหมด']);
   const [result, setResult] = useState<{ kind: Kind; days: string[]; rows: ReportRow[]; start: string; end: string; startTime: string; endTime: string; allDay: boolean; toleranceMinutes: number } | null>(null);
   const [supplier, setSupplier] = useState('');
+  const [detailFilters, setDetailFilters] = useState<string[]>(Array(12).fill(''));
+  const [exportError, setExportError] = useState('');
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState('');
   const [error, setError] = useState('');
@@ -240,7 +275,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
   const dropPointOptions = useMemo(() => Array.from(new Set(trucks.map(truck => text(truck.dropPoint)).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'th')), [trucks]);
   useEffect(() => () => { generation.current += 1; }, []);
 
-  const openReport = (kind: Kind) => { setSelectedKind(kind); setResult(null); setError(''); setShowDetails(false); };
+  const openReport = (kind: Kind) => { setSelectedKind(kind); setResult(null); setError(''); setShowDetails(false); setDetailFilters(Array(12).fill('')); setExportError(''); };
   const loadReport = async (event: React.FormEvent) => {
     event.preventDefault(); if (!selectedKind || loading) return;
     let days: string[];
@@ -277,7 +312,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
           if (plannedAt !== null && plannedAt >= rangeStart && plannedAt <= rangeEnd) rows.push(reportRow);
         }
       }
-      setResult({ kind: selectedKind, days, rows, start: startDate, end: endDate, startTime: effectiveStartTime, endTime: effectiveEndTime, allDay, toleranceMinutes }); setSupplier(''); setProgress(''); setShowDetails(false);
+      setResult({ kind: selectedKind, days, rows, start: startDate, end: endDate, startTime: effectiveStartTime, endTime: effectiveEndTime, allDay, toleranceMinutes }); setSupplier(''); setProgress(''); setShowDetails(false); setDetailFilters(Array(12).fill('')); setExportError('');
     } catch (loadError) {
       if (token === generation.current) setError(`${loadError instanceof Error ? loadError.message : 'โหลดข้อมูลไม่สำเร็จ'} · ไม่แสดงผลจากข้อมูลที่โหลดไม่ครบ`);
     } finally { if (token === generation.current) setLoading(false); }
@@ -303,6 +338,26 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
     }).filter(item => item.total > 0);
   }, [rows]);
   const summaryDetailRows = useMemo(() => rows.map(row => ({ row, status: summaryStatus(row.truck) })).filter((item): item is { row: ReportRow; status: SummaryStatus } => item.status !== null), [rows]);
+  const visibleDetails = useMemo(() => summaryDetailRows.filter(({ row, status }) => {
+    const cells = detailCells(row, status);
+    return detailFilters.every((value, index) => !value.trim() || cells[index].toLocaleLowerCase('th').includes(value.trim().toLocaleLowerCase('th')));
+  }), [summaryDetailRows, detailFilters]);
+  const exportDetailsExcel = () => {
+    try { setExportError(''); downloadWorkbook([detailColumns, ...visibleDetails.map(({ row, status }) => detailCells(row, status))], `ELIVE-Details-${result?.start}-${result?.end}.xlsx`); }
+    catch { setExportError('ส่งออก Excel ไม่สำเร็จ กรุณาลองอีกครั้ง'); }
+  };
+  const exportDetailsPdf = () => {
+    setExportError('');
+    const popup = window.open('', '_blank', 'width=1200,height=800');
+    if (!popup) { setExportError('กรุณาอนุญาตหน้าต่างป๊อปอัป แล้วกด PDF อีกครั้ง'); return; }
+    const title = 'รายงานรถเข้า-ออกพื้นที่ทั้งหมด';
+    const table = '<table><thead><tr>' + detailColumns.map(value => '<th>' + escapeMarkup(value) + '</th>').join('') + '</tr></thead><tbody>' + visibleDetails.map(({ row, status }) => '<tr>' + detailCells(row, status).map(value => '<td>' + escapeMarkup(value || '-') + '</td>').join('') + '</tr>').join('') + '</tbody></table>';
+    popup.document.open();
+    popup.document.write('<!doctype html><html lang="th"><head><meta charset="utf-8"><title>' + title + '</title><style>@page{size:A3 landscape;margin:10mm}body{font-family:Tahoma,Arial,sans-serif;color:#222;font-size:11px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #bbb;padding:5px;text-align:left}th{background:#eee}thead{display:table-header-group}tr{break-inside:avoid}button{padding:10px 18px;background:#388438;color:white;border:0;cursor:pointer}@media print{.tools{display:none}}</style></head><body><div class="tools"><p>เลือก Save as PDF / บันทึกเป็น PDF ในหน้าต่างพิมพ์</p><button id="print" type="button">พิมพ์ / บันทึก PDF</button></div><h2>' + title + '</h2><p>' + escapeMarkup(`${result?.start} ถึง ${result?.end} · ${visibleDetails.length} เที่ยว`) + '</p>' + table + '</body></html>');
+    popup.document.close();
+    popup.document.getElementById('print')?.addEventListener('click', () => { popup.focus(); popup.print(); });
+    window.setTimeout(() => { if (!popup.closed) { popup.focus(); popup.print(); } }, 500);
+  };
   const summaryStatusCounts = useMemo(() => summaryDetailRows.reduce<Record<SummaryStatus, number>>((counts, item) => { counts[item.status] += 1; return counts; }, { EARLY: 0, ONTIME: 0, LATE: 0, EXCLUDED: 0 }), [summaryDetailRows]);
   const metricRows = useMemo(() => {
     if (!kind) return [];
@@ -410,9 +465,17 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
             })}</div>
           </div>)}</div>}
         </section>
-        <section className="mt-5 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-md">
-          <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-gradient-to-r from-slate-50 to-white px-6 py-5"><h2 className="text-lg font-black text-slate-900">รายละเอียดเที่ยวในกราฟ</h2><span className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-black text-white">{summaryDetailRows.length} เที่ยว</span></div>
-          <div className="max-h-[460px] overflow-auto"><table className="w-full min-w-[1100px] text-left text-xs"><thead className="sticky top-0 bg-slate-100"><tr>{['วันที่','Project','Route','สังกัด','ทะเบียน','จุดลงงาน','Plan ETA','Actual ETA','Plan ETD','Actual ETD','สถานะ','Remark'].map(heading => <th key={heading} className="whitespace-nowrap p-3 font-black text-slate-700">{heading}</th>)}</tr></thead><tbody>{summaryDetailRows.map(({ row, status }) => <tr key={`${row.date}:${row.truck.id}`} className="hover:bg-slate-50">{[row.date,row.truck.project,row.truck.route,row.truck.supplierName,row.truck.licensePlate,row.truck.dropPoint,row.truck.planEta,row.truck.stampEta || row.truck.actualEta,row.truck.planEtd,row.truck.stampEtd || (row.truck as Truck & { actualEtd?: unknown }).actualEtd,summaryStatusLabel(status),timeResultText(row.truck,status)].map((item,index) => <td key={index} className="border-t border-slate-100 p-3">{text(item) || '-'}</td>)}</tr>)}</tbody></table></div>
+        <section className="mt-5 overflow-hidden border border-[#cccccc] bg-white">
+          <div className="flex min-h-[46px] flex-wrap items-center justify-between gap-2 border-b border-[#999999] bg-[#eeeeee] pr-4">
+            <div className="flex min-w-0 items-center"><span aria-hidden="true" className="flex h-[46px] w-11 shrink-0 items-center justify-center border-r border-[#d4d4d4] text-lg text-[#68ace0]">▦</span><h2 className="px-4 text-sm font-bold text-[#555555]">รายละเอียดเที่ยวในกราฟ</h2><span aria-live="polite" className="text-xs text-slate-600">{visibleDetails.length} / {summaryDetailRows.length} เที่ยว</span></div>
+            <div className="flex gap-4 py-1"><button type="button" onClick={exportDetailsPdf} title="พิมพ์หรือบันทึกเป็น PDF" className="min-w-[75px] bg-[#388438] px-4 py-2 text-base font-semibold text-white hover:bg-[#2c6c2c] focus:outline-none focus:ring-2 focus:ring-green-600">PDF</button><button type="button" onClick={exportDetailsExcel} title="ดาวน์โหลด Excel (.xlsx) ตามข้อมูลที่กรอง" className="min-w-[75px] bg-[#388438] px-4 py-2 text-base font-semibold text-white hover:bg-[#2c6c2c] focus:outline-none focus:ring-2 focus:ring-green-600">Excel</button></div>
+          </div>
+          {exportError && <p role="alert" className="bg-red-50 px-3 py-2 text-sm text-red-700">{exportError}</p>}
+          <div className="max-h-[460px] overflow-auto"><table className="w-full min-w-[1400px] border-separate border-spacing-0 text-left text-xs">
+            <thead className="sticky top-0 z-10"><tr>{detailColumns.map(heading => <th key={heading} scope="col" className="whitespace-nowrap border-b border-r border-[#c6c6c6] bg-gradient-to-b from-[#eeeeee] to-[#e3e3e3] px-2 py-2 text-center font-medium text-[#555555]">{heading}</th>)}</tr>
+              <tr>{detailColumns.map((heading, index) => <th key={heading} className="border-b border-r border-[#c6c6c6] bg-[#87cee5] p-1.5"><input type="text" aria-label={`กรอง ${heading}`} value={detailFilters[index]} onChange={event => setDetailFilters(previous => previous.map((value, position) => position === index ? event.target.value : value))} className="block h-6 w-full min-w-[75px] rounded-none border border-[#cbd5df] bg-white px-1.5 text-xs font-normal text-slate-800 outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600" /></th>)}</tr>
+            </thead><tbody>{visibleDetails.map(({ row, status }) => <tr key={`${row.date}:${row.truck.id}`} className="even:bg-[#fafafa] hover:bg-sky-50">{detailCells(row, status).map((value, index) => <td key={index} className="whitespace-nowrap border-b border-r border-dotted border-[#cccccc] px-2 py-2 text-slate-800">{index === 10 ? <span className={`inline-block px-2 py-0.5 font-bold ${status === 'EARLY' ? 'bg-blue-50 text-blue-700' : status === 'ONTIME' ? 'bg-green-50 text-green-700' : status === 'LATE' ? 'bg-red-50 text-red-700' : 'bg-slate-100 text-slate-600'}`}>{value}</span> : value || '-'}</td>)}</tr>)}</tbody>
+          </table>{!visibleDetails.length && <p className="py-10 text-center text-sm text-slate-500">ไม่พบข้อมูลที่ตรงกับตัวกรอง</p>}</div>
         </section>
       </> : <>
       <section className="mt-5 rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex flex-wrap items-center justify-between gap-2"><h2 className="font-black text-slate-900">{reportTitle}</h2><span className="text-xs font-bold text-slate-500">แสดง {metricRows.length} รายการ</span></div>
