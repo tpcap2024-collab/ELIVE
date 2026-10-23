@@ -85,13 +85,13 @@ function summaryDelayMinutes(truck: Truck & { planRemark?: string }): number | n
   if (arrivalDiff === null || plannedWindow === null) return null;
   return Math.max(0, arrivalDiff - plannedWindow);
 }
-function summaryStatus(truck: Truck & { planRemark?: string }, allowance = 0): SummaryStatus | null {
+function summaryStatus(truck: Truck & { planRemark?: string }): SummaryStatus | null {
   if (isCancelled(truck) || isNoWork(truck)) return 'EXCLUDED';
   const difference = etaDifference(truck);
   const delay = summaryDelayMinutes(truck);
   if (difference === null || delay === null) return null;
-  if (difference < -allowance) return 'EARLY';
-  if (delay > allowance) return 'LATE';
+  if (difference < 0) return 'EARLY';
+  if (delay > 0) return 'LATE';
   return 'ONTIME';
 }
 function summaryStatusLabel(status: SummaryStatus): string {
@@ -335,7 +335,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
     let days: string[];
     try { days = datesBetween(startDate, endDate); } catch (loadError) { setError(loadError instanceof Error ? loadError.message : 'ช่วงวันที่ไม่ถูกต้อง'); return; }
     const toleranceMinutes = toleranceMode === 'CUSTOM' ? Number(customTolerance) : presetTolerance;
-    const isTimeReport = ['SUMMARY', 'EARLY', 'ONTIME', 'LATE', 'DWELL'].includes(selectedKind);
+    const isTimeReport = ['EARLY', 'ONTIME', 'LATE', 'DWELL'].includes(selectedKind);
     if (isTimeReport && (!Number.isInteger(toleranceMinutes) || toleranceMinutes < 1 || toleranceMinutes > 720)) { setError('กรุณาระบุเกณฑ์เวลา 1–720 นาที'); return; }
     const effectiveStartTime = startTime;
     const effectiveEndTime = endTime;
@@ -501,11 +501,11 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
     return dates.map(date => {
       const daily = rows.filter(row => row.date === date);
       const counts: Record<SummaryStatus, number> = { EARLY: 0, ONTIME: 0, LATE: 0, EXCLUDED: 0 };
-      daily.forEach(row => { const status = summaryStatus(row.truck, toleranceMinutes); if (status) counts[status] += 1; });
+      daily.forEach(row => { const status = summaryStatus(row.truck); if (status) counts[status] += 1; });
       return { date, total: Object.values(counts).reduce((sum, count) => sum + count, 0), counts };
     }).filter(item => item.total > 0);
-  }, [rows, toleranceMinutes]);
-  const summaryDetailRows = useMemo(() => rows.map(row => ({ row, status: summaryStatus(row.truck, toleranceMinutes) })).filter((item): item is { row: ReportRow; status: SummaryStatus } => item.status !== null), [rows, toleranceMinutes]);
+  }, [rows]);
+  const summaryDetailRows = useMemo(() => rows.map(row => ({ row, status: summaryStatus(row.truck) })).filter((item): item is { row: ReportRow; status: SummaryStatus } => item.status !== null), [rows]);
   const visibleDetails = useMemo(() => summaryDetailRows.filter(({ row, status }) => {
     const cells = detailCells(row, status);
     return detailFilters.every((value, index) => !value.trim() || cells[index].toLocaleLowerCase('th').includes(value.trim().toLocaleLowerCase('th')));
@@ -594,7 +594,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
           <MultiSelectField label="Route" options={routeOptions} values={selectedRoutes} onChange={setSelectedRoutes} />
           <MultiSelectField label="จุดลงงาน" options={dropPointOptions} values={selectedDropPoints} onChange={setSelectedDropPoints} />
         </div>
-        {selectedKind && ['SUMMARY','EARLY','ONTIME','LATE','DWELL'].includes(selectedKind) && <div className="rounded-lg border border-blue-100 bg-blue-50 p-4"><p className="text-sm font-black text-blue-900">{['SUMMARY', 'ONTIME'].includes(selectedKind) ? 'กำหนดเวลาเผื่อ' : 'เงื่อนไขเวลามากกว่า'}</p><div className="mt-3 flex flex-wrap items-center gap-4"><label className="inline-flex items-center gap-2 text-sm"><input type="radio" checked={toleranceMode === 'PRESET'} onChange={() => setToleranceMode('PRESET')} />เลือกนาที</label><select disabled={toleranceMode !== 'PRESET'} value={presetTolerance} onChange={event => setPresetTolerance(Number(event.target.value))} className="rounded-lg border border-slate-300 bg-white px-3 py-2 disabled:bg-slate-100">{TOLERANCE_OPTIONS.map(value => <option key={value} value={value}>{value} นาที</option>)}</select><label className="inline-flex items-center gap-2 text-sm"><input type="radio" checked={toleranceMode === 'CUSTOM'} onChange={() => setToleranceMode('CUSTOM')} />ระบุนาที</label><input type="number" min="1" max="720" step="1" disabled={toleranceMode !== 'CUSTOM'} value={customTolerance} onChange={event => setCustomTolerance(event.target.value)} className="w-28 rounded-lg border border-slate-300 bg-white px-3 py-2 disabled:bg-slate-100" /><span className="text-sm text-slate-600">นาที</span></div></div>}
+        {selectedKind && ['EARLY','ONTIME','LATE','DWELL'].includes(selectedKind) && <div className="rounded-lg border border-blue-100 bg-blue-50 p-4"><p className="text-sm font-black text-blue-900">{selectedKind === 'ONTIME' ? 'กำหนดเวลาเผื่อ' : 'เงื่อนไขเวลามากกว่า'}</p><div className="mt-3 flex flex-wrap items-center gap-4"><label className="inline-flex items-center gap-2 text-sm"><input type="radio" checked={toleranceMode === 'PRESET'} onChange={() => setToleranceMode('PRESET')} />เลือกนาที</label><select disabled={toleranceMode !== 'PRESET'} value={presetTolerance} onChange={event => setPresetTolerance(Number(event.target.value))} className="rounded-lg border border-slate-300 bg-white px-3 py-2 disabled:bg-slate-100">{TOLERANCE_OPTIONS.map(value => <option key={value} value={value}>{value} นาที</option>)}</select><label className="inline-flex items-center gap-2 text-sm"><input type="radio" checked={toleranceMode === 'CUSTOM'} onChange={() => setToleranceMode('CUSTOM')} />ระบุนาที</label><input type="number" min="1" max="720" step="1" disabled={toleranceMode !== 'CUSTOM'} value={customTolerance} onChange={event => setCustomTolerance(event.target.value)} className="w-28 rounded-lg border border-slate-300 bg-white px-3 py-2 disabled:bg-slate-100" /><span className="text-sm text-slate-600">นาที</span></div></div>}
       </fieldset><div role="status" aria-live="polite" className="mt-3 text-sm font-semibold text-blue-700">{progress}</div>{error && <p role="alert" className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</p>}<div className="mt-5 flex justify-end gap-2">{loading && <button type="button" onClick={cancelLoading} className={buttonClass}>ยกเลิก</button>}<button type="submit" disabled={loading} className="rounded-lg bg-blue-600 px-6 py-3 text-sm font-bold text-white disabled:opacity-50">{loading ? 'กำลังสร้างรายงาน...' : 'แสดงรายงาน'}</button></div></form>
     </div> : <div className="mx-auto max-w-7xl">
       <div className="flex flex-wrap items-start justify-between gap-4"><div><button type="button" onClick={() => setResult(null)} className="rounded-lg border border-slate-300 bg-slate-200 px-5 py-2.5 text-base text-slate-900 shadow-sm hover:bg-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-400" style={{ fontWeight: 900 }}>ย้อนกลับ</button>{kind !== 'SUMMARY' && <h1 className="mt-3 text-xl font-black text-slate-900">{reportTitle}</h1>}</div><div className="flex flex-wrap items-end gap-2"><button type="button" onClick={() => kind === 'EARLY' ? earlyExport('csv') : kind === 'LATE' ? lateExport('csv') : kind === 'ONTIME' ? ontimeExport('csv') : exportCsv()} className="rounded-xl border border-teal-500 bg-gradient-to-r from-teal-600 to-cyan-600 px-6 py-3 text-sm font-black tracking-wide text-white shadow-lg shadow-teal-100 transition hover:from-teal-700 hover:to-cyan-700 hover:shadow-xl focus:outline-none focus:ring-4 focus:ring-cyan-200">Export CSV</button></div></div>
@@ -629,7 +629,6 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
               <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-100 px-3 py-1.5"><i className="h-2.5 w-2.5 rounded-full bg-slate-400 shadow-sm" />No Drop / Cancel {summaryStatusCounts.EXCLUDED} เที่ยว</span>
             </div></div>
           </div>
-          <p className="px-6 pt-4 text-xs font-semibold text-slate-500">ช่วง On Plan: Plan ETA ลบ {toleranceMinutes} นาที ถึง Plan ETD บวก {toleranceMinutes} นาที</p>
           {overallSummaryTotal > 0 && <div className="border-b border-slate-200 bg-blue-50/40 px-6 py-6">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3 text-sm">
               <strong className="rounded-md border border-blue-200 bg-blue-100 px-3 py-1.5 font-black text-blue-900">ค่าเฉลี่ยของทุกวัน</strong>
