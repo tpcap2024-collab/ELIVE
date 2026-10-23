@@ -77,9 +77,13 @@ function arrivalClass(truck: Truck & { planRemark?: string }, toleranceMinutes: 
   if (difference > toleranceMinutes) return 'LATE';
   return 'ONTIME';
 }
-function summaryStatus(truck: Truck & { planRemark?: string }, toleranceMinutes: number): SummaryStatus | null {
+function summaryStatus(truck: Truck & { planRemark?: string }): SummaryStatus | null {
   if (isCancelled(truck) || isNoWork(truck)) return 'EXCLUDED';
-  return arrivalClass(truck, toleranceMinutes);
+  const difference = etaDifference(truck);
+  if (difference === null) return null;
+  if (difference < 0) return 'EARLY';
+  if (difference > 0) return 'LATE';
+  return 'ONTIME';
 }
 function summaryStatusLabel(status: SummaryStatus): string {
   if (status === 'EARLY') return 'Early';
@@ -87,11 +91,12 @@ function summaryStatusLabel(status: SummaryStatus): string {
   if (status === 'LATE') return 'Delay';
   return 'No Drop / Cancel';
 }
-function timeResultText(truck: Truck & { planRemark?: string }, toleranceMinutes: number, status: SummaryStatus): string {
+function timeResultText(truck: Truck & { planRemark?: string }, status: SummaryStatus): string {
   if (status === 'EXCLUDED') return isCancelled(truck) ? 'Cancel' : 'No Drop';
   if (status === 'ONTIME') return 'On Plan';
-  const minutes = timeBeyondOnPlan(truck, toleranceMinutes);
-  return `${status === 'EARLY' ? 'ก่อนเวลา' : 'ล่าช้า'} ${Math.round(minutes || 0)} นาที`;
+  const difference = etaDifference(truck);
+  const minutes = difference === null ? 0 : Math.abs(difference);
+  return `${status === 'EARLY' ? 'ก่อนเวลา' : 'ล่าช้า'} ${Math.round(minutes)} นาที`;
 }
 function timeBeyondOnPlan(truck: Truck & { planRemark?: string }, toleranceMinutes: number): number | null {
   const difference = etaDifference(truck);
@@ -293,11 +298,11 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
     return dates.map(date => {
       const daily = rows.filter(row => row.date === date);
       const counts: Record<SummaryStatus, number> = { EARLY: 0, ONTIME: 0, LATE: 0, EXCLUDED: 0 };
-      daily.forEach(row => { const status = summaryStatus(row.truck, toleranceMinutes); if (status) counts[status] += 1; });
+      daily.forEach(row => { const status = summaryStatus(row.truck); if (status) counts[status] += 1; });
       return { date, total: Object.values(counts).reduce((sum, count) => sum + count, 0), counts };
     }).filter(item => item.total > 0);
-  }, [rows, toleranceMinutes]);
-  const summaryDetailRows = useMemo(() => rows.map(row => ({ row, status: summaryStatus(row.truck, toleranceMinutes) })).filter((item): item is { row: ReportRow; status: SummaryStatus } => item.status !== null), [rows, toleranceMinutes]);
+  }, [rows]);
+  const summaryDetailRows = useMemo(() => rows.map(row => ({ row, status: summaryStatus(row.truck) })).filter((item): item is { row: ReportRow; status: SummaryStatus } => item.status !== null), [rows]);
   const summaryStatusCounts = useMemo(() => summaryDetailRows.reduce<Record<SummaryStatus, number>>((counts, item) => { counts[item.status] += 1; return counts; }, { EARLY: 0, ONTIME: 0, LATE: 0, EXCLUDED: 0 }), [summaryDetailRows]);
   const metricRows = useMemo(() => {
     if (!kind) return [];
@@ -400,7 +405,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
         </section>
         <section className="mt-5 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-md">
           <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-gradient-to-r from-slate-50 to-white px-6 py-5"><h2 className="text-lg font-black text-slate-900">รายละเอียดเที่ยวในกราฟ</h2><span className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-black text-white">{summaryDetailRows.length} เที่ยว</span></div>
-          <div className="max-h-[460px] overflow-auto"><table className="w-full min-w-[1100px] text-left text-xs"><thead className="sticky top-0 bg-slate-100"><tr>{['วันที่','Project','Route','สังกัด','ทะเบียน','จุดลงงาน','Plan ETA','Actual ETA','Plan ETD','Actual ETD','สถานะ','Remark'].map(heading => <th key={heading} className="whitespace-nowrap p-3 font-black text-slate-700">{heading}</th>)}</tr></thead><tbody>{summaryDetailRows.map(({ row, status }) => <tr key={`${row.date}:${row.truck.id}`} className="hover:bg-slate-50">{[row.date,row.truck.project,row.truck.route,row.truck.supplierName,row.truck.licensePlate,row.truck.dropPoint,row.truck.planEta,row.truck.stampEta || row.truck.actualEta,row.truck.planEtd,row.truck.stampEtd || (row.truck as Truck & { actualEtd?: unknown }).actualEtd,summaryStatusLabel(status),timeResultText(row.truck,toleranceMinutes,status)].map((item,index) => <td key={index} className="border-t border-slate-100 p-3">{text(item) || '-'}</td>)}</tr>)}</tbody></table></div>
+          <div className="max-h-[460px] overflow-auto"><table className="w-full min-w-[1100px] text-left text-xs"><thead className="sticky top-0 bg-slate-100"><tr>{['วันที่','Project','Route','สังกัด','ทะเบียน','จุดลงงาน','Plan ETA','Actual ETA','Plan ETD','Actual ETD','สถานะ','Remark'].map(heading => <th key={heading} className="whitespace-nowrap p-3 font-black text-slate-700">{heading}</th>)}</tr></thead><tbody>{summaryDetailRows.map(({ row, status }) => <tr key={`${row.date}:${row.truck.id}`} className="hover:bg-slate-50">{[row.date,row.truck.project,row.truck.route,row.truck.supplierName,row.truck.licensePlate,row.truck.dropPoint,row.truck.planEta,row.truck.stampEta || row.truck.actualEta,row.truck.planEtd,row.truck.stampEtd || (row.truck as Truck & { actualEtd?: unknown }).actualEtd,summaryStatusLabel(status),timeResultText(row.truck,status)].map((item,index) => <td key={index} className="border-t border-slate-100 p-3">{text(item) || '-'}</td>)}</tr>)}</tbody></table></div>
         </section>
       </> : <>
       <section className="mt-5 rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex flex-wrap items-center justify-between gap-2"><h2 className="font-black text-slate-900">{reportTitle}</h2><span className="text-xs font-bold text-slate-500">แสดง {metricRows.length} รายการ</span></div>
