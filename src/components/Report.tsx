@@ -969,21 +969,37 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
         </section>)}
         {reportView === 'OVERVIEW' && (<section className="mt-3 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-black text-slate-900">เวลามาตรฐานเทียบเวลาจริงรายเที่ยว</h2><span className="text-xs text-slate-500">{dwellChartTrips.length} เที่ยว · เรียงตามเวลาเกินมาตรฐานมากที่สุด</span></div>
-          <div className="mt-3 flex flex-wrap gap-4 text-xs font-bold"><span className="text-slate-600">■ มาตรฐาน</span><span className="text-orange-700">■ เวลาจริงเกินมาตรฐาน</span><span className="text-emerald-700">■ เวลาจริงไม่เกินมาตรฐาน</span></div>
+          <div className="mt-3 flex flex-wrap gap-4 text-xs font-bold"><span className="inline-flex items-center gap-1 text-slate-700"><span className="inline-block w-6 border-t-2 border-dashed border-slate-700" />เวลามาตรฐาน</span><span className="text-orange-700">■ เวลาจริงเกินมาตรฐาน</span><span className="text-emerald-700">■ เวลาจริงไม่เกินมาตรฐาน</span></div>
           <p className="mt-2 text-xs text-slate-500">กด “ดูรายละเอียด” ที่เที่ยวที่ต้องการ</p>
-          {!dwellChartTrips.length ? <p className="py-8 text-center text-slate-500">ไม่พบเที่ยวตามเงื่อนไข</p> : <div className="mt-3 overflow-x-auto">
-            <div className="min-w-[720px]">
-              <div className="grid grid-cols-[170px_minmax(0,1fr)_80px_80px_88px] items-center gap-3 border-b border-slate-300 pb-2 text-xs font-bold text-slate-600"><span>Route / ทะเบียน</span><span className="flex justify-between font-normal">{[0, 0.5, 1].map(fraction => <span key={fraction}>{Math.round(dwellScale * fraction)} นาที</span>)}</span><span className="text-right">เวลาจริง</span><span className="text-right">เกินมาตรฐาน</span><span className="text-center">รายละเอียด</span></div>
-              {dwellChartTrips.slice(dwellCurrentPage * 10, (dwellCurrentPage + 1) * 10).map(item => <div key={item.key} className="grid grid-cols-[170px_minmax(0,1fr)_80px_80px_88px] items-center gap-3 border-b border-slate-100 py-2 text-left even:bg-slate-50 hover:bg-blue-50">
-                <span className="truncate text-xs font-bold text-slate-800" title={`${text(item.row.truck.route)} · ${text(item.row.truck.licensePlate)} · ${text(item.row.truck.dropPoint)} · ${text(item.row.truck.supplierName)}`}>{text(item.row.truck.route)} · {text(item.row.truck.licensePlate)}<span className="block truncate text-[11px] font-normal text-slate-500">{text(item.row.truck.dropPoint)} · {text(item.row.truck.supplierName)}</span></span>
-                <button type="button" aria-label={`ดูรายละเอียด ${text(item.row.truck.route)} ${text(item.row.truck.licensePlate)}`} title={`มาตรฐาน ${minuteText(item.standard)} · เวลาจริง ${minuteText(item.actual)}`} onClick={() => { setDwellSelectedTrip(item.key); setReportView('DETAILS'); }} className="block w-full space-y-1 border-l border-slate-300 bg-slate-100 py-1 text-left focus:outline-none focus:ring-2 focus:ring-blue-500">
-                  <span className="block h-2 bg-slate-400" style={{ width: `${(item.standard ?? 0) / dwellScale * 100}%` }} />
-                  <span className={`block h-2.5 ${(item.excess ?? 0) > 0 ? 'bg-orange-500' : 'bg-emerald-500'}`} style={{ width: `${(item.actual ?? 0) / dwellScale * 100}%` }} />
-                </button>
-                <span className="text-right text-xs font-bold text-slate-800">{minuteText(item.actual)}<span className="block text-[10px] font-normal text-slate-500">มาตรฐาน {minuteText(item.standard)}</span></span>
-                <span className={`text-right text-xs font-bold ${(item.excess ?? 0) > 0 ? 'text-orange-700' : 'text-emerald-700'}`}>{item.excess === null ? '-' : item.excess > 0 ? `+${Math.round(item.excess)} นาที` : 'ไม่เกิน'}</span>
-                <button type="button" onClick={() => { setDwellSelectedTrip(item.key); setReportView('DETAILS'); }} className="rounded border border-blue-200 bg-white px-2 py-2 text-xs font-bold text-blue-700 hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-blue-500">ดูรายละเอียด</button>
-              </div>)}
+          {!dwellChartTrips.length ? <p className="py-8 text-center text-slate-500">ไม่พบเที่ยวตามเงื่อนไข</p> : <div className="mt-4 overflow-x-auto">
+            <div className="min-w-[960px] pr-2">
+              <div className="relative ml-14 h-[280px] mt-6 border-b border-l border-slate-300">
+                {[0, 0.25, 0.5, 0.75, 1].map(fraction => <div key={fraction} className="pointer-events-none absolute left-0 right-0 border-t border-slate-200" style={{ bottom: `${fraction * 100}%` }}><span className="absolute right-full -translate-y-1/2 whitespace-nowrap pr-2 text-[10px] text-slate-500">{Math.round(dwellScale * fraction)} นาที</span></div>)}
+                <div className="absolute inset-0 grid grid-cols-10 gap-2 px-2">
+                  {dwellChartTrips.slice(dwellCurrentPage * 10, (dwellCurrentPage + 1) * 10).map(item => <button key={item.key} type="button" aria-label={`${text(item.row.truck.route)} ${text(item.row.truck.licensePlate)} มาตรฐาน ${minuteText(item.standard)} เวลาจริง ${minuteText(item.actual)} ดูรายละเอียด`} title={`มาตรฐาน ${minuteText(item.standard)} · เวลาจริง ${minuteText(item.actual)}`} onClick={() => { setDwellSelectedTrip(item.key); setReportView('DETAILS'); }} className="relative flex h-full min-w-0 items-end justify-center gap-1 px-1 hover:bg-blue-50/50 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <span className={`relative block w-8 max-w-[55%] ${(item.excess ?? 0) > 0 ? 'bg-orange-500' : 'bg-emerald-500'}`} style={{ height: `${(item.actual ?? 0) / dwellScale * 100}%` }}><span className={`absolute bottom-full left-1/2 -translate-x-1/2 pb-1 text-[11px] font-bold ${(item.excess ?? 0) > 0 ? 'text-orange-700' : 'text-emerald-700'}`}>{Math.round(item.actual ?? 0)}</span></span>
+                  </button>)}
+                </div>
+                <div className="pointer-events-none absolute inset-0 z-10 grid grid-cols-10 gap-0 px-2" aria-label="เส้นระดับเวลามาตรฐาน">
+                  {dwellChartTrips.slice(dwellCurrentPage * 10, (dwellCurrentPage + 1) * 10).map((item, index, pageTrips) => {
+                    const uniform = pageTrips.every(trip => trip.standard === pageTrips[0].standard);
+                    return <div key={item.key} className="relative h-full min-w-0">
+                      {item.standard !== null && <span className="absolute left-0 right-0 border-t-2 border-dashed border-slate-700" style={{ bottom: `${item.standard / dwellScale * 100}%` }}>
+                        {(!uniform || index === 0) && <span className="absolute bottom-1 left-0 whitespace-nowrap rounded bg-white/90 px-1 text-[10px] font-bold text-slate-700">{uniform ? 'มาตรฐาน ' : ''}{Math.round(item.standard)} นาที</span>}
+                      </span>}
+                    </div>;
+                  })}
+                </div>
+              </div>
+              <div className="ml-14 grid grid-cols-10 gap-2 px-2 pt-2">
+                {dwellChartTrips.slice(dwellCurrentPage * 10, (dwellCurrentPage + 1) * 10).map(item => <div key={item.key} className="min-w-0 text-center">
+                  <p className="truncate text-xs font-bold text-slate-800" title={text(item.row.truck.route)}>{text(item.row.truck.route)}</p>
+                  <p className="truncate text-[10px] text-slate-600" title={text(item.row.truck.licensePlate)}>{text(item.row.truck.licensePlate)}</p>
+                  <p className="truncate text-[10px] text-slate-500" title={`${text(item.row.truck.dropPoint)} · ${text(item.row.truck.supplierName)}`}>{text(item.row.truck.dropPoint)} · {text(item.row.truck.supplierName)}</p>
+                  <p className={`mt-1 text-[11px] font-bold ${(item.excess ?? 0) > 0 ? 'text-orange-700' : 'text-emerald-700'}`}>{item.excess === null ? '-' : item.excess > 0 ? `+${Math.round(item.excess)} นาที` : 'ไม่เกิน'}</p>
+                  <button type="button" onClick={() => { setDwellSelectedTrip(item.key); setReportView('DETAILS'); }} className="mt-1 whitespace-nowrap rounded border border-blue-200 bg-white px-1.5 py-1.5 text-[11px] font-bold text-blue-700 hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-blue-500">ดูรายละเอียด</button>
+                </div>)}
+              </div>
             </div>
           </div>}
           {dwellChartPages > 1 && <div className="mt-4 flex flex-wrap items-center justify-end gap-3 text-sm"><button type="button" disabled={dwellCurrentPage === 0} onClick={() => setDwellChartPage(dwellCurrentPage - 1)} className="rounded border px-3 py-2 disabled:opacity-40">ก่อนหน้า</button><span>หน้า {dwellCurrentPage + 1} / {dwellChartPages}</span><button type="button" disabled={dwellCurrentPage + 1 >= dwellChartPages} onClick={() => setDwellChartPage(dwellCurrentPage + 1)} className="rounded border px-3 py-2 disabled:opacity-40">ถัดไป</button></div>}
