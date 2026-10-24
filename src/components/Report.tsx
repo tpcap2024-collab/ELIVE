@@ -665,7 +665,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
   const [, setReportView] = useState<'OVERVIEW' | 'DETAILS'>('OVERVIEW');
   const [, setChartView] = useState<'PRIMARY' | 'SECONDARY'>('PRIMARY');
   const [reportPage, setReportPage] = useState(1);
-  const [reportPageSize, setReportPageSize] = useState(10);
+  const [reportPageSize, setReportPageSize] = useState(50);
   const [, setReportFiltersOpen] = useState(false);
   useEffect(() => { setReportView('OVERVIEW'); setChartView('PRIMARY'); setReportPage(1); setReportFiltersOpen(false); }, [result]);
   useEffect(() => { setReportPage(1); }, [result, supplier, visibleDetails, earlyDisplayed, lateDisplayed, ontimeDisplayed, dwellVisibleTrips, reportPageSize]);
@@ -679,7 +679,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
     return <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-700">
       <span role="status" aria-live="polite">{total ? (page - 1) * reportPageSize + 1 : 0}–{Math.min(page * reportPageSize, total)} จาก {total} เที่ยว</span>
       <div className="flex flex-wrap items-center gap-2">
-        <label className="flex items-center gap-2">แถวต่อหน้า<select value={reportPageSize} onChange={event => { setReportPageSize(Number(event.target.value) === 20 ? 20 : 10); setReportPage(1); }} className="rounded border border-slate-300 bg-white px-2 py-1.5 text-slate-900"><option value={10}>10</option><option value={20}>20</option></select></label>
+        <label className="flex items-center gap-2">แถวต่อหน้า<select value={reportPageSize} onChange={event => { setReportPageSize([10, 20, 50].includes(Number(event.target.value)) ? Number(event.target.value) : 50); setReportPage(1); }} className="rounded border border-slate-300 bg-white px-2 py-1.5 text-slate-900"><option value={10}>10</option><option value={20}>20</option><option value={50}>50</option></select></label>
         <button type="button" disabled={page <= 1} onClick={() => setReportPage(Math.max(1, page - 1))} className="rounded border border-slate-300 bg-white px-3 py-1.5 font-bold disabled:opacity-40 focus:outline-none focus:ring-2 focus:ring-blue-500">ก่อนหน้า</button>
         <span>หน้า {page}/{pages}</span>
         <button type="button" disabled={page >= pages} onClick={() => setReportPage(Math.min(pages, page + 1))} className="rounded border border-slate-300 bg-white px-3 py-1.5 font-bold disabled:opacity-40 focus:outline-none focus:ring-2 focus:ring-blue-500">ถัดไป</button>
@@ -1014,7 +1014,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
       </section>)}
       </>}
       {kind === 'ROUTE' && <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-xs leading-6 text-amber-900">การจัดอันดับ Route แสดงเฉพาะ Route ที่มีอย่างน้อย 3 เที่ยวในช่วงรายงาน เพื่อป้องกัน Route ที่มีข้อมูลน้อยถูกจัดอันดับสูงเกินจริง</p>}
-      {kind === 'DWELL' && result.dwellOptions && <p className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-4 text-xs leading-6 text-blue-900">มาตรฐาน: {result.dwellOptions.standardMode === 'PLAN' ? 'Plan ETD − Plan ETA' : `${result.dwellOptions.standardMinutes} นาที`} · {result.dwellOptions.scope === 'ALL' ? 'ทุกเที่ยวที่มีเวลาเข้า–ออกครบ' : `เฉพาะเที่ยวที่เกินมาตรฐานตั้งแต่ ${result.dwellOptions.excessMinutes} นาที`} · ระยะเวลาเกินมาตรฐานแสดงเต็มจำนวน ไม่หักเกณฑ์กรองออก · เวลาเข้า–ออกอาจรวมเวลารอ · ไม่รวม No Drop / Cancel และช่วงเวลาที่เกิน 12 ชั่วโมง</p>}
+      
       
       {kind !== 'DWELL' && kind !== 'SUMMARY' && kind !== 'EARLY' && kind !== 'LATE' && kind !== 'ONTIME' && <>{true && <><div className="mt-3 max-h-[430px] overflow-auto rounded-xl border border-slate-200 bg-white"><table className="w-full min-w-[1200px] text-left text-xs"><thead className="sticky top-0 bg-slate-100"><tr>{['วันที่','Route','สังกัด','ทะเบียน','จุดลงงาน','Plan ETA','Actual ETA','Plan ETD','Actual ETD','ผลต่าง ETA','เกินเวลาปฏิบัติงาน','ปัญหา'].map(heading => <th key={heading} className="whitespace-nowrap p-3 font-black">{heading}</th>)}</tr></thead><tbody>{pageItems(rows).map(row => <tr key={`${row.date}:${row.truck.id}`} className="hover:bg-slate-50">{[row.date,row.truck.route,row.truck.supplierName,row.truck.licensePlate,row.truck.dropPoint,row.truck.planEta,row.truck.stampEta || row.truck.actualEta,row.truck.planEtd,row.truck.stampEtd || (row.truck as Truck & { actualEtd?: unknown }).actualEtd,timeBeyondOnPlan(row.truck, toleranceMinutes) === null ? '-' : `${Math.round(timeBeyondOnPlan(row.truck, toleranceMinutes)!)} นาที`,dwellBeyondTolerance(row.truck, toleranceMinutes) === null ? '-' : `${Math.round(dwellBeyondTolerance(row.truck, toleranceMinutes)!)} นาที`,row.truck.actionProblem].map((item,index) => <td key={index} className="border-t border-slate-100 p-3">{text(item) || '-'}</td>)}</tr>)}</tbody></table></div>{renderReportPager(rows.length)}</>}</>}
     </div>}
