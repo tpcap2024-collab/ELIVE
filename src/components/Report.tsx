@@ -328,6 +328,33 @@ function isWithinPlanWindow(truck: Truck & { planRemark?: string }, allowance: n
   const window = duration(truck.planEta, truck.planEtd);
   return difference !== null && window !== null && difference >= -allowance && difference <= window + allowance;
 }
+function downloadDwellWorkbook(data: string[][], filename: string): void {
+  const enc = new TextEncoder();
+  const xml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+  const sheet = xml + '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols><col min="1" max="16" width="22" customWidth="1"/></cols><sheetData>' + data.map((row, r) => '<row r="' + (r + 1) + '">' + row.map((value, c) => '<c r="' + String.fromCharCode(65 + c) + (r + 1) + '" t="inlineStr"><is><t xml:space="preserve">' + escapeMarkup(value) + '</t></is></c>').join('') + '</row>').join('') + '</sheetData><autoFilter ref="A1:P' + Math.max(1, data.length) + '"/></worksheet>';
+  const files: [string, string][] = [
+    ['[Content_Types].xml', xml + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>'],
+    ['_rels/.rels', xml + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'],
+    ['xl/workbook.xml', xml + '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="ELIVE Report" sheetId="1" r:id="rId1"/></sheets></workbook>'],
+    ['xl/_rels/workbook.xml.rels', xml + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>'],
+    ['xl/worksheets/sheet1.xml', sheet]
+  ];
+  const chunks: Uint8Array[] = []; const directory: Uint8Array[] = []; let offset = 0;
+  const crc32 = (bytes: Uint8Array): number => { let crc = 0xffffffff; for (const byte of bytes) { crc ^= byte; for (let i = 0; i < 8; i++) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0); } return (crc ^ 0xffffffff) >>> 0; };
+  for (const [name, content] of files) {
+    const n = enc.encode(name); const b = enc.encode(content); const crc = crc32(b);
+    const local = new Uint8Array(30 + n.length); const lv = new DataView(local.buffer);
+    lv.setUint32(0, 0x04034b50, true); lv.setUint16(4, 20, true); lv.setUint16(12, 33, true); lv.setUint32(14, crc, true); lv.setUint32(18, b.length, true); lv.setUint32(22, b.length, true); lv.setUint16(26, n.length, true); local.set(n, 30);
+    const central = new Uint8Array(46 + n.length); const cv = new DataView(central.buffer);
+    cv.setUint32(0, 0x02014b50, true); cv.setUint16(4, 20, true); cv.setUint16(6, 20, true); cv.setUint16(14, 33, true); cv.setUint32(16, crc, true); cv.setUint32(20, b.length, true); cv.setUint32(24, b.length, true); cv.setUint16(28, n.length, true); cv.setUint32(42, offset, true); central.set(n, 46);
+    chunks.push(local, b); directory.push(central); offset += local.length + b.length;
+  }
+  const end = new Uint8Array(22); const ev = new DataView(end.buffer); ev.setUint32(0, 0x06054b50, true); ev.setUint16(8, files.length, true); ev.setUint16(10, files.length, true); ev.setUint32(12, directory.reduce((sum, item) => sum + item.length, 0), true); ev.setUint32(16, offset, true);
+  const parts = [...chunks, ...directory, end].map(part => new Uint8Array(part).buffer);
+  const url = URL.createObjectURL(new Blob(parts, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+  const anchor = document.createElement('a'); anchor.href = url; anchor.download = filename; document.body.appendChild(anchor); anchor.click(); anchor.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 export default function Report({ trucks, selectedDate = '' }: ReportProps) {
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
   const initial = /^\d{4}-\d{2}-\d{2}$/.test(selectedDate) ? selectedDate : today;
@@ -629,6 +656,23 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
     ? rows.map(row => makeDwellTrip(row, result.dwellOptions!)).sort((a, b) => (b.excess ?? -Infinity) - (a.excess ?? -Infinity) || a.key.localeCompare(b.key)) : [], [rows, result]);
   const dwellChartTrips = useMemo(() => dwellTrips.filter(item => !dwellArrivalSelection || (item.status || 'UNKNOWN') === dwellArrivalSelection), [dwellTrips, dwellArrivalSelection]);
   const dwellVisibleTrips = useMemo(() => dwellChartTrips.filter(item => (!dwellSelectedTrip || item.key === dwellSelectedTrip) && dwellTripCells(item).every((value, index) => !dwellTableFilters[index] || value.toLocaleLowerCase().includes(dwellTableFilters[index].trim().toLocaleLowerCase()))), [dwellChartTrips, dwellSelectedTrip, dwellTableFilters]);
+  const dwellExport = (format: 'pdf' | 'excel') => {
+    if (result?.kind !== 'DWELL') return;
+    try {
+      setExportError('');
+      const data = [DWELL_COLUMNS, ...dwellVisibleTrips.map(dwellTripCells)];
+      const filename = `ELIVE-Dwell-${result.start}-${result.end}`;
+      if (format === 'excel') { downloadDwellWorkbook(data, `${filename}.xlsx`); return; }
+      const popup = window.open('', '_blank', 'width=1200,height=800');
+      if (!popup) { setExportError('กรุณาอนุญาตป๊อปอัปเพื่อบันทึก PDF'); return; }
+      const table = '<table><thead><tr>' + data[0].map(value => '<th>' + escapeMarkup(value) + '</th>').join('') + '</tr></thead><tbody>' + data.slice(1).map(line => '<tr>' + line.map(value => '<td>' + escapeMarkup(value || '-') + '</td>').join('') + '</tr>').join('') + '</tbody></table>';
+      popup.document.open();
+      popup.document.write('<!doctype html><html lang="th"><head><meta charset="utf-8"><title>ELIVE Dwell Report</title><style>@page{size:A3 landscape;margin:10mm}body{font-family:Tahoma,Arial,sans-serif;color:#222;font-size:10px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #bbb;padding:5px;text-align:left;overflow-wrap:anywhere}th{background:#f1f5f9}thead{display:table-header-group}tr{break-inside:avoid}@media print{button{display:none}}</style></head><body><button id="print" type="button">พิมพ์ / บันทึก PDF</button><h2>รายงานระยะเวลาปฏิบัติงาน</h2><p>' + escapeMarkup(`${result.start} ${result.startTime} ถึง ${result.end} ${result.endTime} · ${dwellVisibleTrips.length} เที่ยว`) + '</p>' + table + '</body></html>');
+      popup.document.close();
+      popup.document.getElementById('print')?.addEventListener('click', () => { popup.focus(); popup.print(); });
+      window.setTimeout(() => { if (!popup.closed) { popup.focus(); popup.print(); } }, 500);
+    } catch { setExportError('ส่งออกไฟล์ไม่สำเร็จ กรุณาลองอีกครั้ง'); }
+  };
   const dwellChartPages = Math.max(1, Math.ceil(dwellChartTrips.length / 20));
   const dwellCurrentPage = Math.min(dwellChartPage, dwellChartPages - 1);
   const dwellScale = dwellChartTrips.reduce((maximum, item) => Math.max(maximum, item.actual ?? 0, item.standard ?? 0), 1);
@@ -994,8 +1038,14 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
           {dwellChartPages > 1 && <div className="mt-4 flex flex-wrap items-center justify-end gap-3 text-sm"><button type="button" disabled={dwellCurrentPage === 0} onClick={() => setDwellChartPage(dwellCurrentPage - 1)} className="rounded border px-3 py-2 disabled:opacity-40">ก่อนหน้า</button><span>หน้า {dwellCurrentPage + 1} / {dwellChartPages}</span><button type="button" disabled={dwellCurrentPage + 1 >= dwellChartPages} onClick={() => setDwellChartPage(dwellCurrentPage + 1)} className="rounded border px-3 py-2 disabled:opacity-40">ถัดไป</button></div>}
         </section>)}
         {kind === 'DWELL' && (<section ref={dwellDetailsRef} className="mt-3 scroll-mt-4 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-slate-100 p-4"><div><h2 className="font-black text-slate-900">รายละเอียดในกราฟ</h2><p role="status" className="mt-1 text-xs text-slate-500">{dwellVisibleTrips.length} เที่ยว · CSV ส่งออกตามตัวกรองตาราง</p></div><button type="button" onClick={() => { setDwellSelectedTrip(null); setDwellArrivalSelection(null); setDwellTableFilters(Array(DWELL_COLUMNS.length).fill('')); setDwellChartPage(0); }} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold">ล้างตัวกรองผลลัพธ์</button></div>
-          <div className="max-h-[520px] overflow-auto"><table className="w-full min-w-[1900px] border-separate border-spacing-0 text-left text-xs"><thead className="sticky top-0 z-10"><tr>{DWELL_COLUMNS.map(name => <th key={name} scope="col" className="whitespace-nowrap border-b bg-slate-100 p-3">{name}</th>)}</tr><tr>{DWELL_COLUMNS.map((name,index) => <th key={name} className="border-b bg-sky-100 p-1.5"><input type="text" aria-label={`กรอง ${name}`} value={dwellTableFilters[index]} onChange={event => setDwellTableFilters(previous => previous.map((value,cell) => cell === index ? event.target.value : value))} className="w-full min-w-[80px] rounded border border-slate-300 bg-white p-2 font-normal outline-none focus:border-blue-600" /></th>)}</tr></thead><tbody>{pageItems(dwellVisibleTrips).map(item => <tr key={item.key} className="even:bg-slate-50 hover:bg-blue-50">{dwellTripCells(item).map((value,index) => <td key={index} className={`border-b border-slate-100 p-3 ${index === 14 ? 'min-w-[220px] whitespace-normal' : 'whitespace-nowrap'} ${index === 13 && (item.excess ?? 0) > 0 ? 'font-bold text-orange-700' : ''} ${index === 9 ? item.status === 'EARLY' ? 'font-bold text-blue-700' : item.status === 'LATE' ? 'font-bold text-red-700' : item.status === 'ONTIME' ? 'font-bold text-emerald-700' : '' : ''}`}>{value || '-'}</td>)}</tr>)}</tbody></table>{!dwellVisibleTrips.length && <p className="py-10 text-center text-sm text-slate-500">ไม่พบข้อมูลที่ตรงกับตัวกรอง</p>}</div>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-100 px-4 py-3">
+            <div className="flex flex-wrap items-center gap-3"><h2 className="font-black text-slate-800">รายละเอียดในกราฟ</h2><span role="status" className="text-xs text-slate-600">{dwellVisibleTrips.length} เที่ยว</span>
+              <button type="button" onClick={() => { setDwellSelectedTrip(null); setDwellArrivalSelection(null); setDwellTableFilters(Array(DWELL_COLUMNS.length).fill('')); setDwellChartPage(0); }} className="rounded-lg border border-slate-300 bg-white px-3 py-1 text-xs font-bold">ล้างตัวกรองผลลัพธ์</button>
+            </div>
+            <div className="flex gap-2"><button type="button" onClick={() => dwellExport('pdf')} className="bg-emerald-700 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-600">PDF</button><button type="button" onClick={() => dwellExport('excel')} className="bg-emerald-700 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-600">Excel</button></div>
+          </div>
+          {exportError && <p role="alert" className="bg-red-50 p-3 text-sm text-red-800">{exportError}</p>}
+          <div className="max-h-[360px] overflow-auto"><table className="w-full min-w-[1900px] border-separate border-spacing-0 text-left text-xs"><thead className="sticky top-0 z-10"><tr>{DWELL_COLUMNS.map(name => <th key={name} scope="col" className="whitespace-nowrap border-b border-r border-slate-200 bg-slate-100 p-2 text-center font-bold">{name}</th>)}</tr><tr>{DWELL_COLUMNS.map((name,index) => <th key={name} className="border-r border-sky-200 bg-sky-200 p-1.5"><input type="text" aria-label={`กรอง ${name}`} value={dwellTableFilters[index]} onChange={event => setDwellTableFilters(previous => previous.map((value,cell) => cell === index ? event.target.value : value))} className="w-full min-w-[75px] border border-slate-200 bg-white px-2 py-1.5 font-normal outline-none focus:border-blue-500" /></th>)}</tr></thead><tbody>{pageItems(dwellVisibleTrips).map(item => <tr key={item.key} className="even:bg-slate-50 hover:bg-blue-50">{dwellTripCells(item).map((value,index) => <td key={index} className={`border-b border-r border-slate-100 p-2.5 ${index === 14 ? 'min-w-[220px] whitespace-normal' : 'whitespace-nowrap'} ${index === 13 && (item.excess ?? 0) > 0 ? 'font-bold text-orange-700' : ''} ${index === 9 ? item.status === 'EARLY' ? 'font-bold text-blue-700' : item.status === 'LATE' ? 'font-bold text-red-700' : item.status === 'ONTIME' ? 'font-bold text-emerald-700' : '' : ''}`}>{value || '-'}</td>)}</tr>)}</tbody></table>{!dwellVisibleTrips.length && <p className="py-10 text-center text-sm text-slate-500">ไม่พบข้อมูลที่ตรงกับตัวกรอง</p>}</div>
         {renderReportPager(dwellVisibleTrips.length)}</section>)}
       </> : <>
       {true && (<section className="mt-3 rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex flex-wrap items-center justify-between gap-2"><h2 className="font-black text-slate-900">{reportTitle}</h2><span className="text-xs font-bold text-slate-500">แสดง {metricRows.length} รายการ</span></div>
