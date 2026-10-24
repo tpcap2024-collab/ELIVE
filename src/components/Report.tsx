@@ -983,28 +983,8 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
           <div className="max-h-[360px] overflow-auto"><table className="w-full min-w-[1400px] border-separate border-spacing-0 text-left text-xs"><thead className="sticky top-0 z-10"><tr>{ontimeTableColumns.map(name => <th key={name} className="border-b border-r border-slate-200 bg-slate-100 p-2 text-center font-bold">{name}</th>)}</tr><tr>{ontimeTableColumns.map((name, index) => <th key={name} className="border-r border-sky-200 bg-sky-200 p-1.5"><input aria-label={`กรอง ${name}`} value={ontimeFilters[index]} onChange={event => setOntimeFilters(previous => previous.map((value, cell) => cell === index ? event.target.value : value))} className="w-full min-w-[75px] border border-slate-200 bg-white px-2 py-1.5 outline-none focus:border-emerald-500" /></th>)}</tr></thead><tbody>{pageItems(ontimeDisplayed).map(row => <tr key={`${row.date}:${row.truck.id}`} className="even:bg-slate-50 hover:bg-emerald-50">{ontimeTableCells(row).map((cell, index) => <td key={index} className="whitespace-nowrap border-b border-r border-slate-100 p-2.5">{index === 10 ? <span className="rounded bg-emerald-100 px-2 py-1 font-bold text-emerald-700">{cell}</span> : cell || '-'}</td>)}</tr>)}</tbody></table>{ontimeDisplayed.length === 0 && <p className="p-8 text-center text-sm text-slate-500">ไม่พบข้อมูลตามเงื่อนไข</p>}</div>
         {renderReportPager(ontimeDisplayed.length)}</section>)}
       </> : kind === 'DWELL' ? <>
-        {kind === 'DWELL' && (<section className="mt-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <h2 className="font-black text-slate-900">สถานะการเข้าพื้นที่ของเที่ยวในรายงาน</h2>
-          <p className="mt-1 text-xs text-slate-500">กดชื่อสถานะเพื่อกรองเที่ยว</p>
-          <div className="mt-3 flex h-8 w-full overflow-hidden rounded" role="img" aria-label={`สัดส่วนสถานะการเข้า ${dwellTrips.length} เที่ยว`}>
-            {([['EARLY','ก่อนเวลา','bg-blue-500'],['ONTIME','ตามแผน','bg-emerald-500'],['LATE','ล่าช้า','bg-red-500'],['UNKNOWN','ประเมินไม่ได้','bg-slate-400']] as const).map(([status,label,color]) => {
-              const count = dwellTrips.filter(item => (item.status || 'UNKNOWN') === status).length;
-              const rate = dwellTrips.length ? count / dwellTrips.length * 100 : 0;
-              return count ? <span key={status} title={`${label} ${count} เที่ยว (${rate.toFixed(1)}%)`} className={`flex min-w-0 items-center justify-center overflow-hidden text-xs font-bold text-white ${color}`} style={{ width: `${rate}%`, flexShrink: 0 }}>{rate >= 8 ? `${rate.toFixed(1)}%` : ''}</span> : null;
-            })}
-            {!dwellTrips.length && <span className="w-full bg-slate-100" />}
-          </div>
-          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-2" role="group" aria-label="กรองสถานะการเข้า">
-            {([['EARLY','ก่อนเวลา','bg-blue-500'],['ONTIME','ตามแผน','bg-emerald-500'],['LATE','ล่าช้า','bg-red-500'],['UNKNOWN','ประเมินไม่ได้','bg-slate-400']] as const).map(([status,label,color]) => {
-              const count = dwellTrips.filter(item => (item.status || 'UNKNOWN') === status).length;
-              const rate = dwellTrips.length ? count / dwellTrips.length * 100 : 0;
-              return <button key={status} type="button" aria-pressed={dwellArrivalSelection === status} onClick={() => { setDwellArrivalSelection(current => current === status ? null : status); setDwellSelectedTrip(null); setDwellChartPage(0); }} className={`inline-flex items-center gap-1.5 rounded px-1 py-1 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 ${dwellArrivalSelection === status ? 'bg-blue-50 ring-1 ring-blue-400' : 'hover:bg-slate-50'}`}><span className={`h-2.5 w-2.5 shrink-0 ${color}`} /><span>{label} <strong>{count} เที่ยว</strong> ({rate.toFixed(1)}%)</span></button>;
-            })}
-          </div>
-          {dwellArrivalSelection && <button type="button" onClick={() => { setDwellArrivalSelection(null); setDwellSelectedTrip(null); setDwellChartPage(0); }} className="mt-3 rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold">แสดงทุกสถานะ</button>}
-        </section>)}
         {kind === 'DWELL' && (<section className="mt-3 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-black text-slate-900">เวลามาตรฐานเทียบเวลาจริงรายเที่ยว</h2><span className="text-xs text-slate-500">{dwellChartTrips.length} เที่ยว · เรียงตามเวลาเกินมาตรฐานมากที่สุด</span></div>
+          <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-black text-slate-900">รายงานระยะเวลาปฏิบัติงาน</h2><span className="text-xs text-slate-500">{dwellChartTrips.length} เที่ยว · เรียงตามเวลาเกินมาตรฐานมากที่สุด</span></div>
           <div className="mt-3 flex flex-wrap gap-4 text-xs font-bold"><span className="inline-flex items-center gap-1 text-slate-700"><span className="inline-block w-6 border-t-2 border-dashed border-slate-700" />เวลามาตรฐาน</span><span className="text-orange-700">■ เวลาจริงเกินมาตรฐาน</span><span className="text-emerald-700">■ เวลาจริงไม่เกินมาตรฐาน</span></div>
           <p className="mt-2 text-xs text-slate-500">กดไอคอน i เพื่อดูรายละเอียดเที่ยว</p>
           {!dwellChartTrips.length ? <p className="py-8 text-center text-slate-500">ไม่พบเที่ยวตามเงื่อนไข</p> : <div className="mt-4 overflow-x-auto">
