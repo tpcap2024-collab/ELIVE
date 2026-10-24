@@ -374,7 +374,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState('');
   const [error, setError] = useState('');
-  const [showDetails, setShowDetails] = useState(false);
+  const [, setShowDetails] = useState(false);
   const generation = useRef(0);
   const dwellDetailsRef = useRef<HTMLElement | null>(null);
   const projectOptions = useMemo(() => Array.from(new Set(['INBOUND', ...trucks.map(truck => upper(truck.project)).filter(Boolean)])).sort(), [trucks]);
@@ -662,8 +662,8 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
     const anchor = document.createElement('a'); anchor.href = url; anchor.download = `INBOUND-${kind}-${result.start}-${result.end}.csv`; document.body.appendChild(anchor); anchor.click(); anchor.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
-  const [reportView, setReportView] = useState<'OVERVIEW' | 'DETAILS'>('OVERVIEW');
-  const [chartView, setChartView] = useState<'PRIMARY' | 'SECONDARY'>('PRIMARY');
+  const [, setReportView] = useState<'OVERVIEW' | 'DETAILS'>('OVERVIEW');
+  const [, setChartView] = useState<'PRIMARY' | 'SECONDARY'>('PRIMARY');
   const [reportPage, setReportPage] = useState(1);
   const [reportPageSize, setReportPageSize] = useState(10);
   const [reportFiltersOpen, setReportFiltersOpen] = useState(false);
@@ -739,10 +739,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
         </div>
         {reportFiltersOpen && <div className="mt-3 flex flex-wrap items-end gap-3 border-t border-slate-100 pt-3"><label className="text-xs font-bold text-slate-700">สังกัด<select value={supplier} onChange={event => setSupplier(event.target.value)} className="mt-1 block rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900"><option value="">ทุกสังกัด</option>{suppliers.map(name => <option key={name} value={name}>{name}</option>)}</select></label><button type="button" onClick={() => setResult(null)} className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold text-slate-700">เปลี่ยนช่วงวันที่ / เกณฑ์</button></div>}
       </div>
-      <div role="group" aria-label="มุมมองรายงาน" className="mt-3 flex flex-wrap gap-2">
-        {kind !== 'DWELL' && (['OVERVIEW', 'DETAILS'] as const).map(view => <button key={view} type="button" aria-pressed={reportView === view} onClick={() => { setReportView(view); if (view === 'DETAILS') setShowDetails(true); }} className={reportView === view ? 'rounded-lg bg-slate-900 px-4 py-2 text-sm font-bold text-white focus:outline-none focus:ring-2 focus:ring-blue-500' : 'rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500'}>{view === 'OVERVIEW' ? 'ภาพรวม' : 'รายละเอียดเที่ยว'}</button>)}
-        {reportView === 'OVERVIEW' && ['SUMMARY', 'EARLY', 'LATE', 'ONTIME'].includes(kind || '') && <div role="group" aria-label="รูปแบบกราฟ" className="flex flex-wrap gap-1 rounded-lg bg-slate-100 p-1">{(['PRIMARY', 'SECONDARY'] as const).map(view => <button key={view} type="button" aria-pressed={chartView === view} onClick={() => setChartView(view)} className={chartView === view ? 'rounded-md bg-white px-3 py-1 text-xs font-bold text-blue-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500' : 'rounded-md px-3 py-1 text-xs font-bold text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500'}>{kind === 'SUMMARY' ? view === 'PRIMARY' ? 'ภาพรวมทุกวัน' : 'แยกรายวัน' : view === 'PRIMARY' ? 'ความหนาแน่น' : 'Heatmap'}</button>)}</div>}
-      </div>
+      
       {kind !== 'DWELL' && kind !== 'SUMMARY' && kind !== 'EARLY' && kind !== 'LATE' && kind !== 'ONTIME' && <>
       <div className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-5">{summary.map(([label, item]) => {
         const labelText = String(label);
@@ -764,7 +761,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
       })}</div>
       </>}
       {kind === 'SUMMARY' ? <>
-        {reportView === 'OVERVIEW' && (<section className="mt-3 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-md">
+        {true && (<section className="mt-3 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-md">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white px-4 py-3">
             <div><h2 className="text-lg font-black text-slate-900">{reportTitle}</h2></div>
             <div className="flex flex-wrap items-end gap-3"><div className="flex flex-wrap gap-2 pb-1 text-xs font-black text-slate-700">
@@ -775,7 +772,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
             </div></div>
           </div>
           <p className="px-6 pt-4 text-xs font-semibold text-slate-500">ช่วง On Plan: Plan ETA ลบ {toleranceMinutes} นาที ถึง Plan ETD บวก {toleranceMinutes} นาที</p>
-          {chartView === 'PRIMARY' && overallSummaryTotal > 0 && <div className="border-b border-slate-200 bg-blue-50/40 px-4 py-3">
+          {true && overallSummaryTotal > 0 && <div className="border-b border-slate-200 bg-blue-50/40 px-4 py-3">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3 text-sm">
               <strong className="rounded-md border border-blue-200 bg-blue-100 px-3 py-1.5 font-black text-blue-900">ค่าเฉลี่ยของทุกวัน</strong>
               <span className="font-black text-slate-700">{overallSummaryTotal} เที่ยว · 100.0%</span>
@@ -790,7 +787,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
               })}
               </div>
             </div>}
-            {chartView === 'SECONDARY' && <div className="max-h-[360px] overflow-auto">{!summaryChartRows.length ? <p className="py-20 text-center text-slate-500">ไม่มีเที่ยวที่สามารถแสดงในกราฟได้</p> : <div className="space-y-6 px-4 py-3">{summaryChartRows.map(item => <div key={item.date}>
+            {true && <div className="max-h-[360px] overflow-auto">{!summaryChartRows.length ? <p className="py-20 text-center text-slate-500">ไม่มีเที่ยวที่สามารถแสดงในกราฟได้</p> : <div className="space-y-6 px-4 py-3">{summaryChartRows.map(item => <div key={item.date}>
             <div className="mb-3 flex items-center justify-between gap-3 text-sm"><strong className="rounded-md bg-slate-100 px-2.5 py-1 text-slate-800">{item.date}</strong><span className="font-black text-slate-700">{item.total} เที่ยว · 100.0%</span></div>
             <div className="flex h-12 w-full overflow-hidden rounded-xl bg-slate-100 shadow-inner ring-1 ring-slate-200">{([
               ['EARLY','bg-gradient-to-r from-blue-600 to-blue-400'],['ONTIME','bg-gradient-to-r from-emerald-600 to-emerald-400'],['LATE','bg-gradient-to-r from-red-600 to-red-400'],['EXCLUDED','bg-gradient-to-r from-slate-500 to-slate-400']
@@ -803,7 +800,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
             })}</div>
           </div>)}</div>}</div>}
         </section>)}
-        {reportView === 'DETAILS' && (<section className="mt-3 overflow-hidden border border-[#cccccc] bg-white">
+        {true && (<section className="mt-3 overflow-hidden border border-[#cccccc] bg-white">
           <div className="flex min-h-[46px] flex-wrap items-center justify-between gap-2 border-b border-[#999999] bg-[#eeeeee] pr-4">
             <div className="flex min-w-0 items-center"><span aria-hidden="true" className="flex h-[46px] w-11 shrink-0 items-center justify-center border-r border-[#d4d4d4] text-lg text-[#68ace0]">▦</span><h2 className="px-4 text-sm font-bold text-[#555555]">รายละเอียดในกราฟ</h2></div>
             <div className="flex gap-4 py-1"><button type="button" onClick={exportDetailsPdf} title="พิมพ์หรือบันทึกเป็น PDF" className="min-w-[75px] bg-[#388438] px-4 py-2 text-base font-semibold text-white hover:bg-[#2c6c2c] focus:outline-none focus:ring-2 focus:ring-green-600">PDF</button><button type="button" onClick={exportDetailsExcel} title="ดาวน์โหลด Excel (.xlsx) ตามข้อมูลที่กรอง" className="min-w-[75px] bg-[#388438] px-4 py-2 text-base font-semibold text-white hover:bg-[#2c6c2c] focus:outline-none focus:ring-2 focus:ring-green-600">Excel</button></div>
@@ -824,7 +821,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
             { label: 'ช่วงเวลาที่พบมากที่สุด', value: earlyPeak && earlyPeak.count ? `${earlyPeak.count} เที่ยว` : '0 เที่ยว' },
           ].map(card => <div key={card.label} className="rounded-xl border border-blue-100 border-l-4 border-l-blue-500 bg-white p-4 shadow-sm"><p className="text-xs font-bold text-slate-600">{card.label}</p><p className="mt-2 text-lg font-black text-blue-800">{card.value}</p></div>)}
         </div>
-        {reportView === 'OVERVIEW' && chartView === 'PRIMARY' && (<section className="mt-3 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        {true && true && (<section className="mt-3 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-5 py-4">
             <div><h2 className="font-black text-slate-900">ความหนาแน่นของรถเข้าก่อนเวลา</h2><p className="mt-1 text-xs text-slate-500">จัดกลุ่มตาม Actual ETA · ก่อนเวลาตามเกณฑ์ตั้งแต่ {toleranceMinutes} นาที</p></div>
             <div className="flex items-end gap-3">
@@ -842,7 +839,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
             <p className="mt-2 text-xs text-slate-500">คลิ้กที่แท่งเพื่อดูเฉพาะเที่ยวในช่วงเวลานั้น</p>
           </div>}
         </section>)}
-        {reportView === 'OVERVIEW' && chartView === 'SECONDARY' && (<section className="mt-3 max-h-[380px] overflow-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+        {true && true && (<section className="mt-3 max-h-[380px] overflow-auto rounded-xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-200 bg-slate-50 px-5 py-4"><h2 className="font-black text-slate-900">ความหนาแน่นรายวันและช่วงเวลา</h2></div>
           {earlyHeatDates.length === 0 ? <p className="p-8 text-center text-slate-500">ไม่มีข้อมูล</p> : <div className="overflow-auto p-4"><div className="min-w-[780px]">
             <div className="mb-2 flex gap-1"><span className="w-28 shrink-0" />{earlyHourBins.map(bin => <span key={bin.start} className="flex-1 text-center text-[9px] font-bold text-slate-600">{bin.start % 120 === 0 ? clockLabel(bin.start) : ''}</span>)}</div>
@@ -854,7 +851,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
             })}</div>)}
           </div></div>}
         </section>)}
-        {reportView === 'DETAILS' && (<section className="mt-3 overflow-hidden border border-slate-200 bg-white shadow-sm">
+        {true && (<section className="mt-3 overflow-hidden border border-slate-200 bg-white shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-100 px-4 py-3"><div className="flex flex-wrap items-center gap-3"><h2 className="font-black text-slate-800">รายละเอียดในกราฟ</h2><span className="text-xs text-slate-600">{earlyDisplayed.length} เที่ยว</span>{(earlySelectedBucket !== null || earlySelectedDate !== null) && <button type="button" onClick={() => { setReportView('DETAILS');  setEarlySelectedBucket(null); setEarlySelectedDate(null); }} className="rounded-lg border border-slate-300 bg-white px-3 py-1 text-xs font-bold">ล้างการเลือกช่วงเวลา</button>}</div><div className="flex gap-2"><button type="button" onClick={() => earlyExport('pdf')} className="bg-emerald-700 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-800">PDF</button><button type="button" onClick={() => earlyExport('excel')} className="bg-emerald-700 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-800">Excel</button></div></div>
           {exportError && <p role="alert" className="bg-red-50 p-3 text-sm text-red-800">{exportError}</p>}
           <div className="max-h-[360px] overflow-auto"><table className="w-full min-w-[1400px] border-separate border-spacing-0 text-left text-xs"><thead className="sticky top-0 z-10"><tr>{earlyTableColumns.map(name => <th key={name} className="border-b border-r border-slate-200 bg-slate-100 p-2 text-center font-bold">{name}</th>)}</tr><tr>{earlyTableColumns.map((name, index) => <th key={name} className="border-r border-sky-200 bg-sky-200 p-1.5"><input aria-label={`กรอง ${name}`} value={earlyFilters[index]} onChange={event => setEarlyFilters(previous => previous.map((value, cell) => cell === index ? event.target.value : value))} className="w-full min-w-[75px] border border-slate-200 bg-white px-2 py-1.5 outline-none focus:border-blue-500" /></th>)}</tr></thead><tbody>{pageItems(earlyDisplayed).map(row => <tr key={`${row.date}:${row.truck.id}`} className="even:bg-slate-50 hover:bg-blue-50">{earlyTableCells(row).map((cell, index) => <td key={index} className="whitespace-nowrap border-b border-r border-slate-100 p-2.5">{index === 10 ? <span className="rounded bg-blue-100 px-2 py-1 font-bold text-blue-700">{cell}</span> : cell || '-'}</td>)}</tr>)}</tbody></table>{earlyDisplayed.length === 0 && <p className="p-8 text-center text-sm text-slate-500">ไม่พบข้อมูลตามเงื่อนไข</p>}</div>
@@ -868,7 +865,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
             { label: 'ช่วงเวลาที่พบมากที่สุด', value: latePeak && latePeak.count ? `${latePeak.count} เที่ยว` : '0 เที่ยว' },
           ].map(card => <div key={card.label} className="rounded-xl border border-red-100 border-l-4 border-l-red-500 bg-white p-4 shadow-sm"><p className="text-xs font-bold text-slate-600">{card.label}</p><p className="mt-2 text-lg font-black text-red-800">{card.value}</p></div>)}
         </div>
-        {reportView === 'OVERVIEW' && chartView === 'PRIMARY' && (<section className="mt-3 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        {true && true && (<section className="mt-3 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-5 py-4">
             <div><h2 className="font-black text-slate-900">ความหนาแน่นของรถเข้าล่าช้า</h2><p className="mt-1 text-xs text-slate-500">จัดกลุ่มตาม Actual ETA · ล่าช้าตามเกณฑ์ตั้งแต่ {toleranceMinutes} นาที</p></div>
             <div className="flex items-end gap-3">
@@ -886,7 +883,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
             <p className="mt-2 text-xs text-slate-500">คลิ้กที่แท่งเพื่อดูเฉพาะเที่ยวในช่วงเวลานั้น</p>
           </div>}
         </section>)}
-        {reportView === 'OVERVIEW' && chartView === 'SECONDARY' && (<section className="mt-3 max-h-[380px] overflow-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+        {true && true && (<section className="mt-3 max-h-[380px] overflow-auto rounded-xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-200 bg-slate-50 px-5 py-4"><h2 className="font-black text-slate-900">ความหนาแน่นรายวันและช่วงเวลา</h2></div>
           {lateHeatDates.length === 0 ? <p className="p-8 text-center text-slate-500">ไม่มีข้อมูล</p> : <div className="overflow-auto p-4"><div className="min-w-[780px]">
             <div className="mb-2 flex gap-1"><span className="w-28 shrink-0" />{lateHourBins.map(bin => <span key={bin.start} className="flex-1 text-center text-[9px] font-bold text-slate-600">{bin.start % 120 === 0 ? clockLabel(bin.start) : ''}</span>)}</div>
@@ -898,7 +895,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
             })}</div>)}
           </div></div>}
         </section>)}
-        {reportView === 'DETAILS' && (<section className="mt-3 overflow-hidden border border-slate-200 bg-white shadow-sm">
+        {true && (<section className="mt-3 overflow-hidden border border-slate-200 bg-white shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-100 px-4 py-3"><div className="flex flex-wrap items-center gap-3"><h2 className="font-black text-slate-800">รายละเอียดในกราฟ</h2><span className="text-xs text-slate-600">{lateDisplayed.length} เที่ยว</span>{(lateSelectedBucket !== null || lateSelectedDate !== null) && <button type="button" onClick={() => { setReportView('DETAILS');  setLateSelectedBucket(null); setLateSelectedDate(null); }} className="rounded-lg border border-slate-300 bg-white px-3 py-1 text-xs font-bold">ล้างการเลือกช่วงเวลา</button>}</div><div className="flex gap-2"><button type="button" onClick={() => lateExport('pdf')} className="bg-emerald-700 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-800">PDF</button><button type="button" onClick={() => lateExport('excel')} className="bg-emerald-700 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-800">Excel</button></div></div>
           {exportError && <p role="alert" className="bg-red-50 p-3 text-sm text-red-800">{exportError}</p>}
           <div className="max-h-[360px] overflow-auto"><table className="w-full min-w-[1400px] border-separate border-spacing-0 text-left text-xs"><thead className="sticky top-0 z-10"><tr>{lateTableColumns.map(name => <th key={name} className="border-b border-r border-slate-200 bg-slate-100 p-2 text-center font-bold">{name}</th>)}</tr><tr>{lateTableColumns.map((name, index) => <th key={name} className="border-r border-sky-200 bg-sky-200 p-1.5"><input aria-label={`กรอง ${name}`} value={lateFilters[index]} onChange={event => setLateFilters(previous => previous.map((value, cell) => cell === index ? event.target.value : value))} className="w-full min-w-[75px] border border-slate-200 bg-white px-2 py-1.5 outline-none focus:border-red-500" /></th>)}</tr></thead><tbody>{pageItems(lateDisplayed).map(row => <tr key={`${row.date}:${row.truck.id}`} className="even:bg-slate-50 hover:bg-red-50">{lateTableCells(row).map((cell, index) => <td key={index} className="whitespace-nowrap border-b border-r border-slate-100 p-2.5">{index === 10 ? <span className="rounded bg-red-100 px-2 py-1 font-bold text-red-700">{cell}</span> : cell || '-'}</td>)}</tr>)}</tbody></table>{lateDisplayed.length === 0 && <p className="p-8 text-center text-sm text-slate-500">ไม่พบข้อมูลตามเงื่อนไข</p>}</div>
@@ -912,7 +909,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
             { label: 'ช่วงเวลาที่พบมากที่สุด', value: ontimePeak && ontimePeak.count ? `${ontimePeak.count} เที่ยว` : '0 เที่ยว' },
           ].map(card => <div key={card.label} className="rounded-xl border border-emerald-100 border-l-4 border-l-emerald-500 bg-white p-4 shadow-sm"><p className="text-xs font-bold text-slate-600">{card.label}</p><p className="mt-2 text-lg font-black text-emerald-800">{card.value}</p></div>)}
         </div>
-        {reportView === 'OVERVIEW' && chartView === 'PRIMARY' && (<section className="mt-3 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        {true && true && (<section className="mt-3 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-5 py-4">
             <div><h2 className="font-black text-slate-900">ความหนาแน่นของรถเข้าตามแผน</h2><p className="mt-1 text-xs text-slate-500">จัดกลุ่มตาม Actual ETA · ช่วง Plan ETA − {toleranceMinutes} นาที ถึง Plan ETD + {toleranceMinutes} นาที</p></div>
             <div className="flex items-end gap-3">
@@ -930,7 +927,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
             <p className="mt-2 text-xs text-slate-500">คลิ้กที่แท่งเพื่อดูเฉพาะเที่ยวในช่วงเวลานั้น</p>
           </div>}
         </section>)}
-        {reportView === 'OVERVIEW' && chartView === 'SECONDARY' && (<section className="mt-3 max-h-[380px] overflow-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+        {true && true && (<section className="mt-3 max-h-[380px] overflow-auto rounded-xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-200 bg-slate-50 px-5 py-4"><h2 className="font-black text-slate-900">ความหนาแน่นรายวันและช่วงเวลา</h2></div>
           {ontimeHeatDates.length === 0 ? <p className="p-8 text-center text-slate-500">ไม่มีข้อมูล</p> : <div className="overflow-auto p-4"><div className="min-w-[780px]">
             <div className="mb-2 flex gap-1"><span className="w-28 shrink-0" />{ontimeHourBins.map(bin => <span key={bin.start} className="flex-1 text-center text-[9px] font-bold text-slate-600">{bin.start % 120 === 0 ? clockLabel(bin.start) : ''}</span>)}</div>
@@ -942,7 +939,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
             })}</div>)}
           </div></div>}
         </section>)}
-        {reportView === 'DETAILS' && (<section className="mt-3 overflow-hidden border border-slate-200 bg-white shadow-sm">
+        {true && (<section className="mt-3 overflow-hidden border border-slate-200 bg-white shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-100 px-4 py-3"><div className="flex flex-wrap items-center gap-3"><h2 className="font-black text-slate-800">รายละเอียดในกราฟ</h2><span className="text-xs text-slate-600">{ontimeDisplayed.length} เที่ยว</span>{(ontimeSelectedBucket !== null || ontimeSelectedDate !== null) && <button type="button" onClick={() => { setReportView('DETAILS');  setOntimeSelectedBucket(null); setOntimeSelectedDate(null); }} className="rounded-lg border border-slate-300 bg-white px-3 py-1 text-xs font-bold">ล้างการเลือกช่วงเวลา</button>}</div><div className="flex gap-2"><button type="button" onClick={() => ontimeExport('pdf')} className="bg-emerald-700 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-800">PDF</button><button type="button" onClick={() => ontimeExport('excel')} className="bg-emerald-700 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-800">Excel</button></div></div>
           {exportError && <p role="alert" className="bg-emerald-50 p-3 text-sm text-emerald-800">{exportError}</p>}
           <div className="max-h-[360px] overflow-auto"><table className="w-full min-w-[1400px] border-separate border-spacing-0 text-left text-xs"><thead className="sticky top-0 z-10"><tr>{ontimeTableColumns.map(name => <th key={name} className="border-b border-r border-slate-200 bg-slate-100 p-2 text-center font-bold">{name}</th>)}</tr><tr>{ontimeTableColumns.map((name, index) => <th key={name} className="border-r border-sky-200 bg-sky-200 p-1.5"><input aria-label={`กรอง ${name}`} value={ontimeFilters[index]} onChange={event => setOntimeFilters(previous => previous.map((value, cell) => cell === index ? event.target.value : value))} className="w-full min-w-[75px] border border-slate-200 bg-white px-2 py-1.5 outline-none focus:border-emerald-500" /></th>)}</tr></thead><tbody>{pageItems(ontimeDisplayed).map(row => <tr key={`${row.date}:${row.truck.id}`} className="even:bg-slate-50 hover:bg-emerald-50">{ontimeTableCells(row).map((cell, index) => <td key={index} className="whitespace-nowrap border-b border-r border-slate-100 p-2.5">{index === 10 ? <span className="rounded bg-emerald-100 px-2 py-1 font-bold text-emerald-700">{cell}</span> : cell || '-'}</td>)}</tr>)}</tbody></table>{ontimeDisplayed.length === 0 && <p className="p-8 text-center text-sm text-slate-500">ไม่พบข้อมูลตามเงื่อนไข</p>}</div>
@@ -1007,7 +1004,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
           <div className="max-h-[520px] overflow-auto"><table className="w-full min-w-[1900px] border-separate border-spacing-0 text-left text-xs"><thead className="sticky top-0 z-10"><tr>{DWELL_COLUMNS.map(name => <th key={name} scope="col" className="whitespace-nowrap border-b bg-slate-100 p-3">{name}</th>)}</tr><tr>{DWELL_COLUMNS.map((name,index) => <th key={name} className="border-b bg-sky-100 p-1.5"><input type="text" aria-label={`กรอง ${name}`} value={dwellTableFilters[index]} onChange={event => setDwellTableFilters(previous => previous.map((value,cell) => cell === index ? event.target.value : value))} className="w-full min-w-[80px] rounded border border-slate-300 bg-white p-2 font-normal outline-none focus:border-blue-600" /></th>)}</tr></thead><tbody>{pageItems(dwellVisibleTrips).map(item => <tr key={item.key} className="even:bg-slate-50 hover:bg-blue-50">{dwellTripCells(item).map((value,index) => <td key={index} className={`border-b border-slate-100 p-3 ${index === 14 ? 'min-w-[220px] whitespace-normal' : 'whitespace-nowrap'} ${index === 13 && (item.excess ?? 0) > 0 ? 'font-bold text-orange-700' : ''} ${index === 9 ? item.status === 'EARLY' ? 'font-bold text-blue-700' : item.status === 'LATE' ? 'font-bold text-red-700' : item.status === 'ONTIME' ? 'font-bold text-emerald-700' : '' : ''}`}>{value || '-'}</td>)}</tr>)}</tbody></table>{!dwellVisibleTrips.length && <p className="py-10 text-center text-sm text-slate-500">ไม่พบข้อมูลที่ตรงกับตัวกรอง</p>}</div>
         {renderReportPager(dwellVisibleTrips.length)}</section>)}
       </> : <>
-      {reportView === 'OVERVIEW' && (<section className="mt-3 rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex flex-wrap items-center justify-between gap-2"><h2 className="font-black text-slate-900">{reportTitle}</h2><span className="text-xs font-bold text-slate-500">แสดง {metricRows.length} รายการ</span></div>
+      {true && (<section className="mt-3 rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex flex-wrap items-center justify-between gap-2"><h2 className="font-black text-slate-900">{reportTitle}</h2><span className="text-xs font-bold text-slate-500">แสดง {metricRows.length} รายการ</span></div>
         {!rows.length ? <p className="py-20 text-center text-slate-500">ไม่พบเที่ยวในเงื่อนไขที่เลือก</p> : <div className="mt-6 space-y-4">{metricRows.slice(0, kind === 'ROUTE' ? 15 : 30).map(item => {
           const compactValue = ['POINT','ROUTE','SUPPLIER'].includes(kind || '')
               ? `${item.count} เที่ยว · ${percentage(item.rate)}`
@@ -1024,8 +1021,8 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
       </>}
       {kind === 'ROUTE' && <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-xs leading-6 text-amber-900">การจัดอันดับ Route แสดงเฉพาะ Route ที่มีอย่างน้อย 3 เที่ยวในช่วงรายงาน เพื่อป้องกัน Route ที่มีข้อมูลน้อยถูกจัดอันดับสูงเกินจริง</p>}
       {kind === 'DWELL' && result.dwellOptions && <p className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-4 text-xs leading-6 text-blue-900">มาตรฐาน: {result.dwellOptions.standardMode === 'PLAN' ? 'Plan ETD − Plan ETA' : `${result.dwellOptions.standardMinutes} นาที`} · {result.dwellOptions.scope === 'ALL' ? 'ทุกเที่ยวที่มีเวลาเข้า–ออกครบ' : `เฉพาะเที่ยวที่เกินมาตรฐานตั้งแต่ ${result.dwellOptions.excessMinutes} นาที`} · ระยะเวลาเกินมาตรฐานแสดงเต็มจำนวน ไม่หักเกณฑ์กรองออก · เวลาเข้า–ออกอาจรวมเวลารอ · ไม่รวม No Drop / Cancel และช่วงเวลาที่เกิน 12 ชั่วโมง</p>}
-      {kind !== 'DWELL' && kind !== 'SUMMARY' && kind !== 'EARLY' && kind !== 'LATE' && kind !== 'ONTIME' && <span className="sr-only">รายละเอียดเที่ยวอยู่ในแท็บรายละเอียดเที่ยว</span>}
-      {kind !== 'DWELL' && kind !== 'SUMMARY' && kind !== 'EARLY' && kind !== 'LATE' && kind !== 'ONTIME' && showDetails && <>{reportView === 'DETAILS' && <><div className="mt-3 max-h-[430px] overflow-auto rounded-xl border border-slate-200 bg-white"><table className="w-full min-w-[1200px] text-left text-xs"><thead className="sticky top-0 bg-slate-100"><tr>{['วันที่','Route','สังกัด','ทะเบียน','จุดลงงาน','Plan ETA','Actual ETA','Plan ETD','Actual ETD','ผลต่าง ETA','เกินเวลาปฏิบัติงาน','ปัญหา'].map(heading => <th key={heading} className="whitespace-nowrap p-3 font-black">{heading}</th>)}</tr></thead><tbody>{pageItems(rows).map(row => <tr key={`${row.date}:${row.truck.id}`} className="hover:bg-slate-50">{[row.date,row.truck.route,row.truck.supplierName,row.truck.licensePlate,row.truck.dropPoint,row.truck.planEta,row.truck.stampEta || row.truck.actualEta,row.truck.planEtd,row.truck.stampEtd || (row.truck as Truck & { actualEtd?: unknown }).actualEtd,timeBeyondOnPlan(row.truck, toleranceMinutes) === null ? '-' : `${Math.round(timeBeyondOnPlan(row.truck, toleranceMinutes)!)} นาที`,dwellBeyondTolerance(row.truck, toleranceMinutes) === null ? '-' : `${Math.round(dwellBeyondTolerance(row.truck, toleranceMinutes)!)} นาที`,row.truck.actionProblem].map((item,index) => <td key={index} className="border-t border-slate-100 p-3">{text(item) || '-'}</td>)}</tr>)}</tbody></table></div>{renderReportPager(rows.length)}</>}</>}
+      
+      {kind !== 'DWELL' && kind !== 'SUMMARY' && kind !== 'EARLY' && kind !== 'LATE' && kind !== 'ONTIME' && <>{true && <><div className="mt-3 max-h-[430px] overflow-auto rounded-xl border border-slate-200 bg-white"><table className="w-full min-w-[1200px] text-left text-xs"><thead className="sticky top-0 bg-slate-100"><tr>{['วันที่','Route','สังกัด','ทะเบียน','จุดลงงาน','Plan ETA','Actual ETA','Plan ETD','Actual ETD','ผลต่าง ETA','เกินเวลาปฏิบัติงาน','ปัญหา'].map(heading => <th key={heading} className="whitespace-nowrap p-3 font-black">{heading}</th>)}</tr></thead><tbody>{pageItems(rows).map(row => <tr key={`${row.date}:${row.truck.id}`} className="hover:bg-slate-50">{[row.date,row.truck.route,row.truck.supplierName,row.truck.licensePlate,row.truck.dropPoint,row.truck.planEta,row.truck.stampEta || row.truck.actualEta,row.truck.planEtd,row.truck.stampEtd || (row.truck as Truck & { actualEtd?: unknown }).actualEtd,timeBeyondOnPlan(row.truck, toleranceMinutes) === null ? '-' : `${Math.round(timeBeyondOnPlan(row.truck, toleranceMinutes)!)} นาที`,dwellBeyondTolerance(row.truck, toleranceMinutes) === null ? '-' : `${Math.round(dwellBeyondTolerance(row.truck, toleranceMinutes)!)} นาที`,row.truck.actionProblem].map((item,index) => <td key={index} className="border-t border-slate-100 p-3">{text(item) || '-'}</td>)}</tr>)}</tbody></table></div>{renderReportPager(rows.length)}</>}</>}
     </div>}
   </div>;
 }
