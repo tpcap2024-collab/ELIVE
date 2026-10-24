@@ -716,8 +716,8 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
               </div>
               <label className="block text-sm font-bold text-slate-700">แสดงเที่ยว<select value={dwellScope} onChange={event => setDwellScope(event.target.value as 'ALL' | 'EXCEEDED')} className="mt-2 block w-full rounded-lg border border-slate-300 bg-white p-3"><option value="ALL">ทุกเที่ยวที่มีเวลาเข้า–ออกครบ</option><option value="EXCEEDED">เฉพาะเที่ยวที่เกินมาตรฐาน</option></select></label>
               {dwellScope === 'EXCEEDED' && <label className="flex flex-wrap items-center gap-3 text-sm font-bold text-slate-700">เกินมาตรฐานตั้งแต่<input type="number" required min="0" max="720" step="1" list="dwell-thresholds" value={dwellThreshold} onChange={event => setDwellThreshold(event.target.value)} className="w-28 rounded-lg border border-slate-300 bg-white p-3" /><datalist id="dwell-thresholds">{TOLERANCE_OPTIONS.map(value => <option key={value} value={value} />)}</datalist>นาที</label>}
-              <p className="text-xs leading-6 text-slate-600">เวลาจริง = Actual ETD − Actual ETA · เกินมาตรฐาน = เวลาจริง − มาตรฐาน · เกณฑ์ 0 นาทีแสดงเฉพาะเที่ยวที่เกินจริง ไม่รวมเที่ยวที่เท่ามาตรฐาน</p>
-              <p className="text-xs leading-6 text-slate-600">คำนวณจากเวลาเข้า–ออกพื้นที่ ซึ่งอาจรวมเวลารอ ไม่ใช่เวลาเริ่ม–จบลงงานโดยตรง · ไม่รวม No Drop / Cancel และช่วงเวลาที่เกิน 12 ชั่วโมงตามกติกาเดิม</p>
+              
+              
             </section>
             <details className="rounded-lg border border-slate-200 bg-white p-4">
               <summary className="cursor-pointer text-sm font-bold text-slate-800">ตัวกรองเพิ่มเติม</summary>
@@ -725,7 +725,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
                 <label className="text-sm font-bold text-slate-700">สถานะการเข้าพื้นที่<select value={dwellArrival} onChange={event => setDwellArrival(event.target.value as DwellOptions['arrival'])} className="mt-2 block w-full rounded-lg border border-slate-300 bg-white p-3"><option value="ALL">ทั้งหมด</option><option value="EARLY">ก่อนเวลา</option><option value="ONTIME">ตามแผน</option><option value="LATE">ล่าช้า</option></select></label>
                 <label className="text-sm font-bold text-slate-700">ข้อมูลปัญหา<select value={dwellProblem} onChange={event => setDwellProblem(event.target.value as DwellOptions['problem'])} className="mt-2 block w-full rounded-lg border border-slate-300 bg-white p-3"><option value="ALL">ทั้งหมด</option><option value="RECORDED">มีการบันทึกปัญหา</option><option value="UNRECORDED">ยังไม่มีการบันทึกปัญหา</option></select></label>
               </div>
-              <p className="mt-3 text-xs text-slate-500">สถานะการเข้าใช้ช่วง Plan ETA ถึง Plan ETD โดยไม่เพิ่มเวลาเผื่อ และแยกจากเกณฑ์ระยะเวลาเกินมาตรฐาน</p>
+              
             </details>
           </>}
         </fieldset><div role="status" aria-live="polite" className="mt-3 text-sm font-semibold text-blue-700">{progress}</div>{error && <p role="alert" className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</p>}<div className="mt-5 flex justify-end gap-2">{loading && <button type="button" onClick={cancelLoading} className={buttonClass}>ยกเลิก</button>}<button type="submit" disabled={loading} className="rounded-lg bg-blue-600 px-6 py-3 text-sm font-bold text-white disabled:opacity-50">{loading ? 'กำลังสร้างรายงาน...' : 'แสดงรายงาน'}</button></div></form>
