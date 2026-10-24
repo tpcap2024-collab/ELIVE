@@ -376,6 +376,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
   const [error, setError] = useState('');
   const [showDetails, setShowDetails] = useState(false);
   const generation = useRef(0);
+  const dwellDetailsRef = useRef<HTMLElement | null>(null);
   const projectOptions = useMemo(() => Array.from(new Set(['INBOUND', ...trucks.map(truck => upper(truck.project)).filter(Boolean)])).sort(), [trucks]);
   const routeOptions = useMemo(() => Array.from(new Set(trucks.map(truck => text(truck.route)).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'th')), [trucks]);
   const dropPointOptions = useMemo(() => Array.from(new Set(trucks.map(truck => text(truck.dropPoint)).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'th')), [trucks]);
@@ -628,7 +629,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
     ? rows.map(row => makeDwellTrip(row, result.dwellOptions!)).sort((a, b) => (b.excess ?? -Infinity) - (a.excess ?? -Infinity) || a.key.localeCompare(b.key)) : [], [rows, result]);
   const dwellChartTrips = useMemo(() => dwellTrips.filter(item => !dwellArrivalSelection || (item.status || 'UNKNOWN') === dwellArrivalSelection), [dwellTrips, dwellArrivalSelection]);
   const dwellVisibleTrips = useMemo(() => dwellChartTrips.filter(item => (!dwellSelectedTrip || item.key === dwellSelectedTrip) && dwellTripCells(item).every((value, index) => !dwellTableFilters[index] || value.toLocaleLowerCase().includes(dwellTableFilters[index].trim().toLocaleLowerCase()))), [dwellChartTrips, dwellSelectedTrip, dwellTableFilters]);
-  const dwellChartPages = Math.max(1, Math.ceil(dwellChartTrips.length / 10));
+  const dwellChartPages = Math.max(1, Math.ceil(dwellChartTrips.length / 20));
   const dwellCurrentPage = Math.min(dwellChartPage, dwellChartPages - 1);
   const dwellScale = dwellChartTrips.reduce((maximum, item) => Math.max(maximum, item.actual ?? 0, item.standard ?? 0), 1);
   useEffect(() => { setDwellSelectedTrip(null); setDwellChartPage(0); }, [supplier]);
@@ -739,7 +740,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
         {reportFiltersOpen && <div className="mt-3 flex flex-wrap items-end gap-3 border-t border-slate-100 pt-3"><label className="text-xs font-bold text-slate-700">สังกัด<select value={supplier} onChange={event => setSupplier(event.target.value)} className="mt-1 block rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900"><option value="">ทุกสังกัด</option>{suppliers.map(name => <option key={name} value={name}>{name}</option>)}</select></label><button type="button" onClick={() => setResult(null)} className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold text-slate-700">เปลี่ยนช่วงวันที่ / เกณฑ์</button></div>}
       </div>
       <div role="group" aria-label="มุมมองรายงาน" className="mt-3 flex flex-wrap gap-2">
-        {(['OVERVIEW', 'DETAILS'] as const).map(view => <button key={view} type="button" aria-pressed={reportView === view} onClick={() => { setReportView(view); if (view === 'DETAILS') setShowDetails(true); }} className={reportView === view ? 'rounded-lg bg-slate-900 px-4 py-2 text-sm font-bold text-white focus:outline-none focus:ring-2 focus:ring-blue-500' : 'rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500'}>{view === 'OVERVIEW' ? 'ภาพรวม' : 'รายละเอียดเที่ยว'}</button>)}
+        {kind !== 'DWELL' && (['OVERVIEW', 'DETAILS'] as const).map(view => <button key={view} type="button" aria-pressed={reportView === view} onClick={() => { setReportView(view); if (view === 'DETAILS') setShowDetails(true); }} className={reportView === view ? 'rounded-lg bg-slate-900 px-4 py-2 text-sm font-bold text-white focus:outline-none focus:ring-2 focus:ring-blue-500' : 'rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500'}>{view === 'OVERVIEW' ? 'ภาพรวม' : 'รายละเอียดเที่ยว'}</button>)}
         {reportView === 'OVERVIEW' && ['SUMMARY', 'EARLY', 'LATE', 'ONTIME'].includes(kind || '') && <div role="group" aria-label="รูปแบบกราฟ" className="flex flex-wrap gap-1 rounded-lg bg-slate-100 p-1">{(['PRIMARY', 'SECONDARY'] as const).map(view => <button key={view} type="button" aria-pressed={chartView === view} onClick={() => setChartView(view)} className={chartView === view ? 'rounded-md bg-white px-3 py-1 text-xs font-bold text-blue-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500' : 'rounded-md px-3 py-1 text-xs font-bold text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500'}>{kind === 'SUMMARY' ? view === 'PRIMARY' ? 'ภาพรวมทุกวัน' : 'แยกรายวัน' : view === 'PRIMARY' ? 'ความหนาแน่น' : 'Heatmap'}</button>)}</div>}
       </div>
       {kind !== 'DWELL' && kind !== 'SUMMARY' && kind !== 'EARLY' && kind !== 'LATE' && kind !== 'ONTIME' && <>
@@ -947,7 +948,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
           <div className="max-h-[360px] overflow-auto"><table className="w-full min-w-[1400px] border-separate border-spacing-0 text-left text-xs"><thead className="sticky top-0 z-10"><tr>{ontimeTableColumns.map(name => <th key={name} className="border-b border-r border-slate-200 bg-slate-100 p-2 text-center font-bold">{name}</th>)}</tr><tr>{ontimeTableColumns.map((name, index) => <th key={name} className="border-r border-sky-200 bg-sky-200 p-1.5"><input aria-label={`กรอง ${name}`} value={ontimeFilters[index]} onChange={event => setOntimeFilters(previous => previous.map((value, cell) => cell === index ? event.target.value : value))} className="w-full min-w-[75px] border border-slate-200 bg-white px-2 py-1.5 outline-none focus:border-emerald-500" /></th>)}</tr></thead><tbody>{pageItems(ontimeDisplayed).map(row => <tr key={`${row.date}:${row.truck.id}`} className="even:bg-slate-50 hover:bg-emerald-50">{ontimeTableCells(row).map((cell, index) => <td key={index} className="whitespace-nowrap border-b border-r border-slate-100 p-2.5">{index === 10 ? <span className="rounded bg-emerald-100 px-2 py-1 font-bold text-emerald-700">{cell}</span> : cell || '-'}</td>)}</tr>)}</tbody></table>{ontimeDisplayed.length === 0 && <p className="p-8 text-center text-sm text-slate-500">ไม่พบข้อมูลตามเงื่อนไข</p>}</div>
         {renderReportPager(ontimeDisplayed.length)}</section>)}
       </> : kind === 'DWELL' ? <>
-        {reportView === 'OVERVIEW' && (<section className="mt-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        {kind === 'DWELL' && (<section className="mt-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <h2 className="font-black text-slate-900">สถานะการเข้าพื้นที่ของเที่ยวในรายงาน</h2>
           <p className="mt-1 text-xs text-slate-500">กดชื่อสถานะเพื่อกรองเที่ยว</p>
           <div className="mt-3 flex h-8 w-full overflow-hidden rounded" role="img" aria-label={`สัดส่วนสถานะการเข้า ${dwellTrips.length} เที่ยว`}>
@@ -967,21 +968,21 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
           </div>
           {dwellArrivalSelection && <button type="button" onClick={() => { setDwellArrivalSelection(null); setDwellSelectedTrip(null); setDwellChartPage(0); }} className="mt-3 rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold">แสดงทุกสถานะ</button>}
         </section>)}
-        {reportView === 'OVERVIEW' && (<section className="mt-3 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        {kind === 'DWELL' && (<section className="mt-3 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-black text-slate-900">เวลามาตรฐานเทียบเวลาจริงรายเที่ยว</h2><span className="text-xs text-slate-500">{dwellChartTrips.length} เที่ยว · เรียงตามเวลาเกินมาตรฐานมากที่สุด</span></div>
           <div className="mt-3 flex flex-wrap gap-4 text-xs font-bold"><span className="inline-flex items-center gap-1 text-slate-700"><span className="inline-block w-6 border-t-2 border-dashed border-slate-700" />เวลามาตรฐาน</span><span className="text-orange-700">■ เวลาจริงเกินมาตรฐาน</span><span className="text-emerald-700">■ เวลาจริงไม่เกินมาตรฐาน</span></div>
-          <p className="mt-2 text-xs text-slate-500">กด “ดูรายละเอียด” ที่เที่ยวที่ต้องการ</p>
+          <p className="mt-2 text-xs text-slate-500">กดไอคอน i เพื่อดูรายละเอียดเที่ยว</p>
           {!dwellChartTrips.length ? <p className="py-8 text-center text-slate-500">ไม่พบเที่ยวตามเงื่อนไข</p> : <div className="mt-4 overflow-x-auto">
-            <div className="min-w-[960px] pr-2">
+            <div className="min-w-[1200px] pr-2">
               <div className="relative ml-14 h-[280px] mt-6 border-b border-l border-slate-300">
                 {[0, 0.25, 0.5, 0.75, 1].map(fraction => <div key={fraction} className="pointer-events-none absolute left-0 right-0 border-t border-slate-200" style={{ bottom: `${fraction * 100}%` }}><span className="absolute right-full -translate-y-1/2 whitespace-nowrap pr-2 text-[10px] text-slate-500">{Math.round(dwellScale * fraction)} นาที</span></div>)}
-                <div className="absolute inset-0 grid grid-cols-10 gap-2 px-2">
-                  {dwellChartTrips.slice(dwellCurrentPage * 10, (dwellCurrentPage + 1) * 10).map(item => <button key={item.key} type="button" aria-label={`${text(item.row.truck.route)} ${text(item.row.truck.licensePlate)} มาตรฐาน ${minuteText(item.standard)} เวลาจริง ${minuteText(item.actual)} ดูรายละเอียด`} title={`มาตรฐาน ${minuteText(item.standard)} · เวลาจริง ${minuteText(item.actual)}`} onClick={() => { setDwellSelectedTrip(item.key); setReportView('DETAILS'); }} className="relative flex h-full min-w-0 items-end justify-center gap-1 px-1 hover:bg-blue-50/50 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <div className="absolute inset-0 grid grid-cols-[repeat(20,minmax(0,1fr))] gap-2 px-2">
+                  {dwellChartTrips.slice(dwellCurrentPage * 20, (dwellCurrentPage + 1) * 20).map(item => <button key={item.key} type="button" aria-label={`${text(item.row.truck.route)} ${text(item.row.truck.licensePlate)} มาตรฐาน ${minuteText(item.standard)} เวลาจริง ${minuteText(item.actual)} ดูรายละเอียด`} title={`มาตรฐาน ${minuteText(item.standard)} · เวลาจริง ${minuteText(item.actual)}`} onClick={() => { setDwellSelectedTrip(item.key); setReportPage(1); dwellDetailsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }} className="relative flex h-full min-w-0 items-end justify-center gap-1 px-1 hover:bg-blue-50/50 focus:outline-none focus:ring-2 focus:ring-blue-500">
                     <span className={`relative block w-8 max-w-[55%] ${(item.excess ?? 0) > 0 ? 'bg-orange-500' : 'bg-emerald-500'}`} style={{ height: `${(item.actual ?? 0) / dwellScale * 100}%` }}><span className={`absolute bottom-full left-1/2 -translate-x-1/2 pb-1 text-[11px] font-bold ${(item.excess ?? 0) > 0 ? 'text-orange-700' : 'text-emerald-700'}`}>{Math.round(item.actual ?? 0)}</span></span>
                   </button>)}
                 </div>
-                <div className="pointer-events-none absolute inset-0 z-10 grid grid-cols-10 gap-0 px-2" aria-label="เส้นระดับเวลามาตรฐาน">
-                  {dwellChartTrips.slice(dwellCurrentPage * 10, (dwellCurrentPage + 1) * 10).map((item, index, pageTrips) => {
+                <div className="pointer-events-none absolute inset-0 z-10 grid grid-cols-[repeat(20,minmax(0,1fr))] gap-0 px-2" aria-label="เส้นระดับเวลามาตรฐาน">
+                  {dwellChartTrips.slice(dwellCurrentPage * 20, (dwellCurrentPage + 1) * 20).map((item, index, pageTrips) => {
                     const uniform = pageTrips.every(trip => trip.standard === pageTrips[0].standard);
                     return <div key={item.key} className="relative h-full min-w-0">
                       {item.standard !== null && <span className="absolute left-0 right-0 border-t-2 border-dashed border-slate-700" style={{ bottom: `${item.standard / dwellScale * 100}%` }}>
@@ -991,20 +992,17 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
                   })}
                 </div>
               </div>
-              <div className="ml-14 grid grid-cols-10 gap-2 px-2 pt-2">
-                {dwellChartTrips.slice(dwellCurrentPage * 10, (dwellCurrentPage + 1) * 10).map(item => <div key={item.key} className="min-w-0 text-center">
+              <div className="ml-14 grid grid-cols-[repeat(20,minmax(0,1fr))] gap-2 px-2 pt-2">
+                {dwellChartTrips.slice(dwellCurrentPage * 20, (dwellCurrentPage + 1) * 20).map(item => <div key={item.key} className="min-w-0 text-center">
                   <p className="truncate text-xs font-bold text-slate-800" title={text(item.row.truck.route)}>{text(item.row.truck.route)}</p>
-                  <p className="truncate text-[10px] text-slate-600" title={text(item.row.truck.licensePlate)}>{text(item.row.truck.licensePlate)}</p>
-                  <p className="truncate text-[10px] text-slate-500" title={`${text(item.row.truck.dropPoint)} · ${text(item.row.truck.supplierName)}`}>{text(item.row.truck.dropPoint)} · {text(item.row.truck.supplierName)}</p>
-                  <p className={`mt-1 text-[11px] font-bold ${(item.excess ?? 0) > 0 ? 'text-orange-700' : 'text-emerald-700'}`}>{item.excess === null ? '-' : item.excess > 0 ? `+${Math.round(item.excess)} นาที` : 'ไม่เกิน'}</p>
-                  <button type="button" onClick={() => { setDwellSelectedTrip(item.key); setReportView('DETAILS'); }} className="mt-1 whitespace-nowrap rounded border border-blue-200 bg-white px-1.5 py-1.5 text-[11px] font-bold text-blue-700 hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-blue-500">ดูรายละเอียด</button>
+                  <button type="button" aria-label={`ดูรายละเอียด ${text(item.row.truck.route)}`} title="ดูรายละเอียดเที่ยว" onClick={() => { setDwellSelectedTrip(item.key); setReportPage(1); dwellDetailsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }} className="mt-2 inline-flex h-7 w-7 items-center justify-center rounded-full border border-blue-300 bg-white text-sm font-bold text-blue-700 hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-blue-500"><span aria-hidden="true" className="font-serif">i</span></button>
                 </div>)}
               </div>
             </div>
           </div>}
           {dwellChartPages > 1 && <div className="mt-4 flex flex-wrap items-center justify-end gap-3 text-sm"><button type="button" disabled={dwellCurrentPage === 0} onClick={() => setDwellChartPage(dwellCurrentPage - 1)} className="rounded border px-3 py-2 disabled:opacity-40">ก่อนหน้า</button><span>หน้า {dwellCurrentPage + 1} / {dwellChartPages}</span><button type="button" disabled={dwellCurrentPage + 1 >= dwellChartPages} onClick={() => setDwellChartPage(dwellCurrentPage + 1)} className="rounded border px-3 py-2 disabled:opacity-40">ถัดไป</button></div>}
         </section>)}
-        {reportView === 'DETAILS' && (<section className="mt-3 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        {kind === 'DWELL' && (<section ref={dwellDetailsRef} className="mt-3 scroll-mt-4 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-slate-100 p-4"><div><h2 className="font-black text-slate-900">รายละเอียดในกราฟ</h2><p role="status" className="mt-1 text-xs text-slate-500">{dwellVisibleTrips.length} เที่ยว · CSV ส่งออกตามตัวกรองตาราง</p></div><button type="button" onClick={() => { setDwellSelectedTrip(null); setDwellArrivalSelection(null); setDwellTableFilters(Array(DWELL_COLUMNS.length).fill('')); setDwellChartPage(0); }} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold">ล้างตัวกรองผลลัพธ์</button></div>
           <div className="max-h-[520px] overflow-auto"><table className="w-full min-w-[1900px] border-separate border-spacing-0 text-left text-xs"><thead className="sticky top-0 z-10"><tr>{DWELL_COLUMNS.map(name => <th key={name} scope="col" className="whitespace-nowrap border-b bg-slate-100 p-3">{name}</th>)}</tr><tr>{DWELL_COLUMNS.map((name,index) => <th key={name} className="border-b bg-sky-100 p-1.5"><input type="text" aria-label={`กรอง ${name}`} value={dwellTableFilters[index]} onChange={event => setDwellTableFilters(previous => previous.map((value,cell) => cell === index ? event.target.value : value))} className="w-full min-w-[80px] rounded border border-slate-300 bg-white p-2 font-normal outline-none focus:border-blue-600" /></th>)}</tr></thead><tbody>{pageItems(dwellVisibleTrips).map(item => <tr key={item.key} className="even:bg-slate-50 hover:bg-blue-50">{dwellTripCells(item).map((value,index) => <td key={index} className={`border-b border-slate-100 p-3 ${index === 14 ? 'min-w-[220px] whitespace-normal' : 'whitespace-nowrap'} ${index === 13 && (item.excess ?? 0) > 0 ? 'font-bold text-orange-700' : ''} ${index === 9 ? item.status === 'EARLY' ? 'font-bold text-blue-700' : item.status === 'LATE' ? 'font-bold text-red-700' : item.status === 'ONTIME' ? 'font-bold text-emerald-700' : '' : ''}`}>{value || '-'}</td>)}</tr>)}</tbody></table>{!dwellVisibleTrips.length && <p className="py-10 text-center text-sm text-slate-500">ไม่พบข้อมูลที่ตรงกับตัวกรอง</p>}</div>
         {renderReportPager(dwellVisibleTrips.length)}</section>)}
