@@ -1631,7 +1631,7 @@ async function resolveVehicleTrip(input, isInside, dataOverride = null, detected
   const trips = buildTripsForPlate(truckResult.data, input.licensePlate, dateText);
   const storedCycle = await readVehicleCycleState(input.licensePlate);
   const previousCycle = storedCycle?.date === dateText ? storedCycle : null;
-  const nowMinutes = getBangkokMinuteOfDay(new Date());
+  const nowMinutes = getBangkokMinuteOfDay(input.gpsTime);
   let siteGroupState = await readGpsSiteGroupState(input.licensePlate, dateText);
   const groups = buildGpsPlanGroups(trips);
   const closedGroupIds = Array.isArray(siteGroupState?.closedGroupIds)
@@ -1726,7 +1726,7 @@ async function resolveVehicleTrip(input, isInside, dataOverride = null, detected
   const selectableTrips = activeGroup
     ? activeGroup.trips
     : trips;
-  const selected = selectTripForVehicle(selectableTrips, nowMinutes, previousCycle, detectedGeofenceId);
+  let selected = selectTripForVehicle(selectableTrips, nowMinutes, previousCycle, detectedGeofenceId);
   const completedTrips = trips.filter(trip => trip.completed).sort(compareTripsByPlanTime);
   const latestCompletedTrip = completedTrips.length
     ? completedTrips[completedTrips.length - 1]
@@ -1764,7 +1764,7 @@ async function resolveVehicleTrip(input, isInside, dataOverride = null, detected
 
   if (waitingForExit && (!isInside || movedToDifferentGeofence)) {
     waitingForExit = false;
-    exitConfirmedAt = new Date().toISOString();
+    exitConfirmedAt = input.gpsTime.toISOString();
     exitConfirmationMode = movedToDifferentGeofence
       ? 'GEOFENCE_TRANSITION'
       : 'OUTSIDE_ALL_DETECTED_GEOFENCES';
@@ -1778,6 +1778,15 @@ async function resolveVehicleTrip(input, isInside, dataOverride = null, detected
       exitConfirmationMode,
       exitConfirmedAt,
     }));
+    if (movedToDifferentGeofence) {
+      const transitionSelection = selectTripForVehicle(selectableTrips, nowMinutes, null, detectedGeofenceId);
+      if (transitionSelection.activeTrip) {
+        selected = { ...transitionSelection, selectionReason: 'GEOFENCE_TRANSITION_TO_NEXT_ELIGIBLE_TRIP' };
+        console.log(JSON.stringify({ logType: 'ELIVE_GPS_VEHICLE_CYCLE', event: 'NEXT_TRIP_SELECTED_AFTER_GEOFENCE_TRANSITION', licensePlate: input.licensePlate, completedCodeRun: latestCompletedTrip?.codeRun || previousCycle?.lastCompletedCodeRun || null, completedTripGeofenceId, detectedGeofenceId, activeCodeRun: transitionSelection.activeTrip.codeRun, activePlanEta: transitionSelection.activeTrip.planEta, activeDropPoint: transitionSelection.activeTrip.dropPoint, gpsTime: input.gpsTime.toISOString() }));
+      } else {
+        console.warn(JSON.stringify({ logType: 'ELIVE_GPS_VEHICLE_CYCLE', event: 'NO_ELIGIBLE_TRIP_AFTER_GEOFENCE_TRANSITION', licensePlate: input.licensePlate, completedCodeRun: latestCompletedTrip?.codeRun || previousCycle?.lastCompletedCodeRun || null, completedTripGeofenceId, detectedGeofenceId, gpsTime: input.gpsTime.toISOString() }));
+      }
+    }
   }
   const activeTrip = waitingForExit ? null : selected.activeTrip;
   const nextPendingTrip = trips
@@ -5170,6 +5179,8 @@ app.get(['/health', '/api/health'], (req, res) => {
       blockedGpsEntryRecoveryTtlSeconds: GPS_BLOCKED_ENTRY_TTL_SECONDS,
       blockedGpsEntryRecoveryTrigger: 'PREVIOUS_SAME_GEOFENCE_TRIP_BECOMES_NO_WORK_OR_ACTIVE_TRIP_ETD_APPEARS',
       geofenceTransitionRecoveryEnabled: true,
+      geofenceTransitionSameCycleReselectionEnabled: true,
+      geofenceTransitionUsesGpsEventTime: true,
       geofenceTransitionNoWorkDeferralEnabled: true,
       pendingStampRetryQueueEnabled: true,
       pendingStampScheduleSelfHealingEnabled: true,
