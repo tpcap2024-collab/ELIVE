@@ -1410,11 +1410,29 @@ function findBlockedEtaCandidate(trips, geofenceId, eventMinutes) {
   }
   return null;
 }
+function findGeofenceTransitionEtaCandidate(trips, activeTrip, geofenceId, eventMinutes) {
+  if (!activeTrip?.stampEta || activeTrip.stampEtd || !geofenceId || !Number.isFinite(eventMinutes)) return null;
+  const activeGeofenceId = getGeofenceIdForDropPoint(activeTrip.dropPoint);
+  if (!activeGeofenceId || activeGeofenceId === geofenceId) return null;
+  const candidate = [...trips]
+    .sort(compareTripsByPlanTime)
+    .find(trip =>
+      trip.codeRun !== activeTrip.codeRun &&
+      !trip.stampEta &&
+      !trip.stampEtd &&
+      !trip.noWorkAction &&
+      Number.isFinite(trip.planEtaMinutes) &&
+      isPlanAllowedForGpsEtaShift(trip.planEtaMinutes, eventMinutes) &&
+      eventMinutes >= trip.planEtaMinutes - GPS_NEXT_TRIP_EARLY_WINDOW_MINUTES &&
+      getGeofenceIdForDropPoint(trip.dropPoint) === geofenceId
+    ) || null;
+  return candidate ? { candidate, blocker: activeTrip } : null;
+}
 function getGpsBlockedEntryKey(operationDate, licensePlate, geofenceId) {
   const identity = `${operationDate}|${normalizeLicensePlate(licensePlate)}|${cleanText(geofenceId).toUpperCase()}`;
   return `${GPS_BLOCKED_ENTRY_KEY_PREFIX}${createHash('sha256').update(identity).digest('hex')}`;
 }
-async function storeGpsBlockedEntry(input, geofence, candidate, blocker) {
+async function storeGpsBlockedEntry(input, geofence, candidate, blocker, blockedReason = 'PREVIOUS_SAME_GEOFENCE_TRIP_UNFINISHED') {
   const operationDate = getBangkokDateText(input.gpsTime);
   const key = getGpsBlockedEntryKey(operationDate, input.licensePlate, geofence.id);
   const existingRaw = await requireRedisClient().get(key);
@@ -1441,7 +1459,7 @@ async function storeGpsBlockedEntry(input, geofence, candidate, blocker) {
     candidateDropPoint: candidate.dropPoint,
     blockerCodeRun: blocker.codeRun,
     blockerPlanEta: blocker.planEta,
-    blockedReason: 'PREVIOUS_SAME_GEOFENCE_TRIP_UNFINISHED',
+    blockedReason,
     createdAt: existing?.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
@@ -1459,6 +1477,14 @@ async function storeGpsBlockedEntry(input, geofence, candidate, blocker) {
     reason: record.blockedReason,
   }));
   return record;
+}
+async function readGpsBlockedEntry(operationDate, licensePlate, geofenceId) {
+  if (!operationDate || !licensePlate || !geofenceId) return null;
+  const raw = await requireRedisClient().get(
+    getGpsBlockedEntryKey(operationDate, licensePlate, geofenceId)
+  );
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch { return null; }
 }
 async function recoverGpsBlockedEntries(data, operationDate) {
   const client = requireRedisClient();
@@ -1489,7 +1515,8 @@ async function recoverGpsBlockedEntries(data, operationDate) {
         summary.alreadyFinal += 1;
         continue;
       }
-      if (!blocker?.noWorkAction) {
+      const blockerResolved = Boolean(blocker?.noWorkAction || blocker?.stampEtd);
+      if (!blockerResolved) {
         summary.waiting += 1;
         continue;
       }
@@ -1528,7 +1555,9 @@ async function recoverGpsBlockedEntries(data, operationDate) {
         summary.recovered += 1;
         console.log(JSON.stringify({
           logType: 'ELIVE_GPS_BLOCKED_ENTRY',
-          event: 'GPS_BLOCKED_ENTRY_RECOVERED_NO_WORK',
+          event: record.blockedReason === 'ACTIVE_TRIP_LOCK_GEOFENCE_TRANSITION'
+            ? 'GPS_BLOCKED_ENTRY_RECOVERED_GEOFENCE_TRANSITION'
+            : 'GPS_BLOCKED_ENTRY_RECOVERED_NO_WORK',
           licensePlate: record.licensePlate,
           gpsTime: record.gpsTime,
           geofenceId: record.geofenceId,
@@ -2759,6 +2788,26 @@ async function reconcileSkippedRDockAfterLsp(input, data, noWorkCollector = null
   const results = [];
   for (const trip of activeGroup.trips) {
     if (trip.stampEta || trip.stampEtd || trip.noWorkAction) continue;
+    const tripGeofenceId = getGeofenceIdForDropPoint(trip.dropPoint);
+    const blockedEntry = await readGpsBlockedEntry(
+      operationDate,
+      input.licensePlate,
+      tripGeofenceId
+    );
+    if (blockedEntry?.candidateCodeRun === trip.codeRun) {
+      console.warn(JSON.stringify({
+        logType: 'ELIVE_GPS_SITE_GROUP',
+        event: 'TPCAP_SITE_GROUP_NO_WORK_DEFERRED_BLOCKED_GPS_ENTRY',
+        licensePlate: input.licensePlate,
+        operationDate,
+        groupId: activeGroup.id,
+        codeRun: trip.codeRun,
+        geofenceId: tripGeofenceId,
+        gpsTime: blockedEntry.gpsTime,
+        blockedReason: blockedEntry.blockedReason,
+      }));
+      continue;
+    }
     const pendingEta = await readPendingStamp(getPendingStampId('ETA', trip.codeRun));
     if (isActivePendingStamp(pendingEta)) {
       await closePendingStamp(pendingEta, 'BLOCKED_NO_WORK', {
@@ -3066,17 +3115,27 @@ async function evaluateGpsDock(payload, dataOverride = null, noWorkCollector = n
     tripResolution.trips, activeTrip, detectedGeofenceId, gpsEventMinutes
   );
   if (nearestIsInside && detectedGeofenceId && eligibleEtaTrips.length === 0) {
-    const blocked = findBlockedEtaCandidate(
+    const sameGeofenceBlocked = findBlockedEtaCandidate(
       tripResolution.trips,
       detectedGeofenceId,
       gpsEventMinutes
     );
+    const transitionBlocked = findGeofenceTransitionEtaCandidate(
+      tripResolution.trips,
+      activeTrip,
+      detectedGeofenceId,
+      gpsEventMinutes
+    );
+    const blocked = sameGeofenceBlocked || transitionBlocked;
     if (blocked) {
       await storeGpsBlockedEntry(
         input,
         nearestGeofence,
         blocked.candidate,
-        blocked.blocker
+        blocked.blocker,
+        transitionBlocked === blocked
+          ? 'ACTIVE_TRIP_LOCK_GEOFENCE_TRANSITION'
+          : 'PREVIOUS_SAME_GEOFENCE_TRIP_UNFINISHED'
       );
     }
   }
@@ -5109,7 +5168,9 @@ app.get(['/health', '/api/health'], (req, res) => {
       dropPointGeofenceMapping: { L1: 'TPCAP-LSP', L2: 'TPCAP-LSP', L3: 'TPCAP-LSP', M1: 'TPCAP-LSP', R1: 'TPCAP-R1', R2: 'TPCAP-R2' },
       blockedGpsEntryRecoveryEnabled: true,
       blockedGpsEntryRecoveryTtlSeconds: GPS_BLOCKED_ENTRY_TTL_SECONDS,
-      blockedGpsEntryRecoveryTrigger: 'PREVIOUS_SAME_GEOFENCE_TRIP_BECOMES_NO_WORK',
+      blockedGpsEntryRecoveryTrigger: 'PREVIOUS_SAME_GEOFENCE_TRIP_BECOMES_NO_WORK_OR_ACTIVE_TRIP_ETD_APPEARS',
+      geofenceTransitionRecoveryEnabled: true,
+      geofenceTransitionNoWorkDeferralEnabled: true,
       pendingStampRetryQueueEnabled: true,
       pendingStampScheduleSelfHealingEnabled: true,
       pendingStampMaintenanceIntervalSeconds: Math.floor(GPS_PENDING_STAMP_MAINTENANCE_INTERVAL_MS / 1000),
