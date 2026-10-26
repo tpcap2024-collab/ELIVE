@@ -83,6 +83,8 @@ const GPS_AUTO_STAMP_FRESH_THRESHOLD_MS = Math.max(30000, Number(process.env.GPS
 const GPS_VEHICLE_CYCLE_KEY_PREFIX = 'elive:gps-vehicle-cycle:';
 const GPS_VEHICLE_CYCLE_TTL_SECONDS = 36 * 60 * 60;
 const GPS_PENDING_STAMP_KEY_PREFIX = 'elive:gps-pending-stamp:';
+const GPS_BLOCKED_ENTRY_KEY_PREFIX = 'elive:gps-blocked-entry:';
+const GPS_BLOCKED_ENTRY_TTL_SECONDS = 4 * 60 * 60;
 const GPS_PENDING_STAMP_LOCK_PREFIX = 'elive:gps-pending-stamp-lock:';
 const GPS_PENDING_STAMP_SCHEDULE_KEY = 'elive:gps-pending-stamp:schedule';
 const GPS_PENDING_STAMP_TTL_SECONDS = 7 * 24 * 60 * 60;
@@ -1384,6 +1386,172 @@ function getEligibleEtaTripsForVehicle(trips, geofenceId, nowMinutes) {
     return !previousSameGeofenceTripUnfinished;
   });
 }
+function findBlockedEtaCandidate(trips, geofenceId, eventMinutes) {
+  if (!geofenceId || !Number.isFinite(eventMinutes)) return null;
+  const sortedTrips = [...trips].sort(compareTripsByPlanTime);
+  for (let tripIndex = 0; tripIndex < sortedTrips.length; tripIndex += 1) {
+    const trip = sortedTrips[tripIndex];
+    if (
+      trip.stampEta ||
+      trip.stampEtd ||
+      trip.noWorkAction ||
+      !Number.isFinite(trip.planEtaMinutes) ||
+      !isPlanAllowedForGpsEtaShift(trip.planEtaMinutes, eventMinutes) ||
+      eventMinutes < trip.planEtaMinutes - GPS_NEXT_TRIP_EARLY_WINDOW_MINUTES ||
+      getGeofenceIdForDropPoint(trip.dropPoint) !== geofenceId
+    ) continue;
+    const blocker = sortedTrips.slice(0, tripIndex).find(previousTrip =>
+      !previousTrip.noWorkAction &&
+      getGeofenceIdForDropPoint(previousTrip.dropPoint) === geofenceId &&
+      previousTrip.planEtaMinutes <= trip.planEtaMinutes &&
+      !previousTrip.stampEtd
+    );
+    if (blocker) return { candidate: trip, blocker };
+  }
+  return null;
+}
+function getGpsBlockedEntryKey(operationDate, licensePlate, geofenceId) {
+  const identity = `${operationDate}|${normalizeLicensePlate(licensePlate)}|${cleanText(geofenceId).toUpperCase()}`;
+  return `${GPS_BLOCKED_ENTRY_KEY_PREFIX}${createHash('sha256').update(identity).digest('hex')}`;
+}
+async function storeGpsBlockedEntry(input, geofence, candidate, blocker) {
+  const operationDate = getBangkokDateText(input.gpsTime);
+  const key = getGpsBlockedEntryKey(operationDate, input.licensePlate, geofence.id);
+  const existingRaw = await requireRedisClient().get(key);
+  let existing = null;
+  try { existing = existingRaw ? JSON.parse(existingRaw) : null; } catch { existing = null; }
+  const gpsTime = input.gpsTime.toISOString();
+  if (existing?.gpsTime && Date.parse(existing.gpsTime) <= Date.parse(gpsTime)) return existing;
+  const record = {
+    schemaVersion: 1,
+    operationDate,
+    licensePlate: input.licensePlate,
+    normalizedLicensePlate: normalizeLicensePlate(input.licensePlate),
+    gpsId: input.gpsId,
+    gpsTime,
+    receivedAt: input.receivedAt.toISOString(),
+    latitude: input.latitude,
+    longitude: input.longitude,
+    speedKmh: input.speedKmh,
+    geofenceId: geofence.id,
+    geofenceName: geofence.name,
+    candidateCodeRun: candidate.codeRun,
+    candidatePlanDate: candidate.planDate,
+    candidatePlanEta: candidate.planEta,
+    candidateDropPoint: candidate.dropPoint,
+    blockerCodeRun: blocker.codeRun,
+    blockerPlanEta: blocker.planEta,
+    blockedReason: 'PREVIOUS_SAME_GEOFENCE_TRIP_UNFINISHED',
+    createdAt: existing?.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  await requireRedisClient().set(key, JSON.stringify(record), {
+    EX: Math.min(GPS_BLOCKED_ENTRY_TTL_SECONDS, getGpsOperationStateTtlSeconds(operationDate)),
+  });
+  console.warn(JSON.stringify({
+    logType: 'ELIVE_GPS_BLOCKED_ENTRY',
+    event: 'GPS_BLOCKED_ENTRY_STORED',
+    licensePlate: record.licensePlate,
+    gpsTime: record.gpsTime,
+    geofenceId: record.geofenceId,
+    candidateCodeRun: record.candidateCodeRun,
+    blockerCodeRun: record.blockerCodeRun,
+    reason: record.blockedReason,
+  }));
+  return record;
+}
+async function recoverGpsBlockedEntries(data, operationDate) {
+  const client = requireRedisClient();
+  let cursor = '0';
+  const keys = [];
+  do {
+    const result = await client.scan(cursor, { MATCH: `${GPS_BLOCKED_ENTRY_KEY_PREFIX}*`, COUNT: 100 });
+    cursor = String(result.cursor);
+    keys.push(...result.keys);
+  } while (cursor !== '0');
+  const summary = { inspected: 0, recovered: 0, alreadyFinal: 0, waiting: 0, expired: 0, failed: 0 };
+  for (const key of keys) {
+    summary.inspected += 1;
+    try {
+      const raw = await client.get(key);
+      if (!raw) continue;
+      const record = JSON.parse(raw);
+      if (record.operationDate !== operationDate) {
+        await client.del(key);
+        summary.expired += 1;
+        continue;
+      }
+      const trips = buildTripsForPlate(data, record.licensePlate, operationDate);
+      const candidate = trips.find(trip => trip.codeRun === record.candidateCodeRun) || null;
+      const blocker = trips.find(trip => trip.codeRun === record.blockerCodeRun) || null;
+      if (!candidate || candidate.stampEta || candidate.stampEtd || candidate.noWorkAction) {
+        await client.del(key);
+        summary.alreadyFinal += 1;
+        continue;
+      }
+      if (!blocker?.noWorkAction) {
+        summary.waiting += 1;
+        continue;
+      }
+      const eventTime = parseBangkokDateTime(record.gpsTime, 'gpsTime');
+      const eventMinutes = getBangkokMinuteOfDay(eventTime);
+      const eligible = getEligibleEtaTripsForVehicle(trips, record.geofenceId, eventMinutes)
+        .find(trip => trip.codeRun === candidate.codeRun);
+      if (!eligible) {
+        summary.waiting += 1;
+        continue;
+      }
+      const pending = await createPendingGpsStamp('ETA', {
+        operationDate,
+        codeRun: candidate.codeRun,
+        activeCodeRun: candidate.codeRun,
+        activePlanDate: candidate.planDate,
+        activePlanEta: candidate.planEta,
+        activeTripSequence: candidate.tripSequence,
+        licensePlate: record.licensePlate,
+        planLicensePlate: candidate.planLicensePlate,
+        gpsId: record.gpsId,
+        gpsTime: record.gpsTime,
+        receivedAt: record.receivedAt,
+        latitude: record.latitude,
+        longitude: record.longitude,
+        speedKmh: record.speedKmh,
+        geofenceId: record.geofenceId,
+        geofenceName: record.geofenceName,
+        isInside: true,
+        readyForGpsStampEta: true,
+        waitingForExit: false,
+        noWorkAction: false,
+      });
+      if (isActivePendingStamp(pending) || ['STAMPED', 'ALREADY_STAMPED'].includes(pending?.status)) {
+        await client.del(key);
+        summary.recovered += 1;
+        console.log(JSON.stringify({
+          logType: 'ELIVE_GPS_BLOCKED_ENTRY',
+          event: 'GPS_BLOCKED_ENTRY_RECOVERED_NO_WORK',
+          licensePlate: record.licensePlate,
+          gpsTime: record.gpsTime,
+          geofenceId: record.geofenceId,
+          candidateCodeRun: candidate.codeRun,
+          blockerCodeRun: blocker.codeRun,
+          pendingStatus: pending?.status || null,
+        }));
+      } else {
+        summary.waiting += 1;
+      }
+    } catch (error) {
+      summary.failed += 1;
+      console.error(JSON.stringify({
+        logType: 'ELIVE_GPS_BLOCKED_ENTRY',
+        event: 'GPS_BLOCKED_ENTRY_RECOVERY_FAILED',
+        keyHash: hashAuditValue(key),
+        error: getErrorMessage(error),
+      }));
+    }
+  }
+  return summary;
+}
+
 function selectGpsEtaArrivalGroup(trips, activeTrip, geofenceId, nowMinutes) {
   const eligibleTrips = getEligibleEtaTripsForVehicle(trips, geofenceId, nowMinutes);
   if (!eligibleTrips.length) return [];
@@ -2893,9 +3061,25 @@ async function evaluateGpsDock(payload, dataOverride = null, noWorkCollector = n
     throw new Error('TARGET_GEOFENCE_NOT_FOUND');
   }
 
+  const gpsEventMinutes = getBangkokMinuteOfDay(input.gpsTime);
   const eligibleEtaTrips = selectGpsEtaArrivalGroup(
-    tripResolution.trips, activeTrip, detectedGeofenceId, getBangkokMinuteOfDay(new Date())
+    tripResolution.trips, activeTrip, detectedGeofenceId, gpsEventMinutes
   );
+  if (nearestIsInside && detectedGeofenceId && eligibleEtaTrips.length === 0) {
+    const blocked = findBlockedEtaCandidate(
+      tripResolution.trips,
+      detectedGeofenceId,
+      gpsEventMinutes
+    );
+    if (blocked) {
+      await storeGpsBlockedEntry(
+        input,
+        nearestGeofence,
+        blocked.candidate,
+        blocked.blocker
+      );
+    }
+  }
   const effectiveCodeRun = activeTrip?.codeRun || input.codeRun;
   const platesMatch = activeTrip
     ? normalizeLicensePlate(input.licensePlate) === normalizeLicensePlate(activeTrip.planLicensePlate)
@@ -3296,6 +3480,7 @@ async function runGpsBackgroundCycle() {
       summary.postNoWorkRealtimeSource = refreshedRealtime.source;
       summary.postNoWorkRealtimeSynchronized = refreshedRealtime.synchronized;
     }
+    summary.blockedEntryRecovery = await recoverGpsBlockedEntries(workerData, workerDate);
     const postEvaluationPendingRetry = await processDuePendingGpsStamps();
     summary.postEvaluationPendingRetry = postEvaluationPendingRetry;
     const status = { enabled: true, running: true, lastCycleStartedAt: new Date(startedAt).toISOString(), lastCycleCompletedAt: new Date().toISOString(), durationMs: Date.now() - startedAt, ...summary };
@@ -4922,6 +5107,9 @@ app.get(['/health', '/api/health'], (req, res) => {
       multiDropSameGeofenceEtaEnabled: false,
       lspArrivalGroupWindowMinutes: GPS_LSP_ARRIVAL_GROUP_WINDOW_MINUTES,
       dropPointGeofenceMapping: { L1: 'TPCAP-LSP', L2: 'TPCAP-LSP', L3: 'TPCAP-LSP', M1: 'TPCAP-LSP', R1: 'TPCAP-R1', R2: 'TPCAP-R2' },
+      blockedGpsEntryRecoveryEnabled: true,
+      blockedGpsEntryRecoveryTtlSeconds: GPS_BLOCKED_ENTRY_TTL_SECONDS,
+      blockedGpsEntryRecoveryTrigger: 'PREVIOUS_SAME_GEOFENCE_TRIP_BECOMES_NO_WORK',
       pendingStampRetryQueueEnabled: true,
       pendingStampScheduleSelfHealingEnabled: true,
       pendingStampMaintenanceIntervalSeconds: Math.floor(GPS_PENDING_STAMP_MAINTENANCE_INTERVAL_MS / 1000),
