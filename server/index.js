@@ -84,7 +84,7 @@ const GPS_VEHICLE_CYCLE_KEY_PREFIX = 'elive:gps-vehicle-cycle:';
 const GPS_VEHICLE_CYCLE_TTL_SECONDS = 36 * 60 * 60;
 const GPS_PENDING_STAMP_KEY_PREFIX = 'elive:gps-pending-stamp:';
 const GPS_BLOCKED_ENTRY_KEY_PREFIX = 'elive:gps-blocked-entry:';
-const GPS_BLOCKED_ENTRY_TTL_SECONDS = 4 * 60 * 60;
+const GPS_BLOCKED_ENTRY_TTL_SECONDS = 8 * 60 * 60;
 const GPS_PENDING_STAMP_LOCK_PREFIX = 'elive:gps-pending-stamp-lock:';
 const GPS_PENDING_STAMP_SCHEDULE_KEY = 'elive:gps-pending-stamp:schedule';
 const GPS_PENDING_STAMP_TTL_SECONDS = 7 * 24 * 60 * 60;
@@ -1292,6 +1292,12 @@ function compareTripsByPlanTime(first, second) {
 function findPlanColumnIndex(h,a,f){const n=(h||[]).map(v=>cleanText(v).toLowerCase().replace(/\s+/g,''));for(const x of a){const i=n.indexOf(cleanText(x).toLowerCase().replace(/\s+/g,''));if(i>=0)return i;}return f;}
 function getPlanColumnIndexes(rows){const h=Array.isArray(rows?.[0])?rows[0]:[];return {code:findPlanColumnIndex(h,['Code run','CodeRun'],0),date:findPlanColumnIndex(h,['Date'],1),route:findPlanColumnIndex(h,['Route'],2),plate:findPlanColumnIndex(h,['Truck Name','ทะเบียนรถ'],4),drop:findPlanColumnIndex(h,['Doc','Drop Point'],9),eta:findPlanColumnIndex(h,['Plan ETA'],10),remark:findPlanColumnIndex(h,['Remark'],12),group:findPlanColumnIndex(h,['Group Code','GroupCode'],15)};}
 function parseActualStampTimeMs(date,value){const m=cleanText(value).match(/^(\d{1,2}):(\d{2})/);if(!m)return null;return parseBangkokDateTime(`${date}T${m[1].padStart(2,'0')}:${m[2]}:00+07:00`,'actualStampTime').getTime();}
+function isNoWorkActualState(...values) {
+  return values.some(value => {
+    const normalized = cleanText(value).normalize('NFKC').toUpperCase().replace(/[\s_-]+/g, '');
+    return normalized.includes('NOWORK') || normalized.includes('NODROP') || normalized.includes('ไม่มีงานลง') || normalized.includes('ไม่มีงาน');
+  });
+}
 function buildTripsForPlate(data, licensePlate, dateText) {
   const targetPlate = normalizeLicensePlate(licensePlate);
   const planRows = Array.isArray(data?.plan) ? data.plan : [];
@@ -1326,8 +1332,10 @@ function buildTripsForPlate(data, licensePlate, dateText) {
       stampEta: cleanText(actual[4]),
       stampEtd: cleanText(actual[5]),
       stampEtdTimeMs: parseActualStampTimeMs(planDate,actual[5]),
+      actionStatus: cleanText(actual[1]),
+      performanceStatus: cleanText(actual[2]),
       actionProblem: cleanText(actual[6]),
-      noWorkAction: cleanText(actual[6]).includes('ไม่มีงาน'),
+      noWorkAction: isNoWorkActualState(actual[1], actual[2], actual[6]),
       completed: Boolean(cleanText(actual[5])),
     });
   }
@@ -1515,7 +1523,8 @@ async function recoverGpsBlockedEntries(data, operationDate) {
         summary.alreadyFinal += 1;
         continue;
       }
-      const blockerResolved = Boolean(blocker?.noWorkAction || blocker?.stampEtd);
+      const blockerNoWorkConfirmed = Boolean(blocker?.noWorkAction || isNoWorkActualState(blocker?.actionStatus, blocker?.performanceStatus, blocker?.actionProblem));
+      const blockerResolved = Boolean(blockerNoWorkConfirmed || blocker?.stampEtd);
       if (!blockerResolved) {
         summary.waiting += 1;
         continue;
@@ -1989,8 +1998,10 @@ function findTripByCodeRun(data, codeRun) {
     planEtaMinutes: parsePlanMinutes(planRow[10]),
     stampEta: cleanText(actualRow[4]),
     stampEtd: cleanText(actualRow[5]),
+    actionStatus: cleanText(actualRow[1]),
+    performanceStatus: cleanText(actualRow[2]),
     actionProblem,
-    noWorkAction: actionProblem.includes('ไม่มีงานลง') || actionProblem.includes('ไม่มีงาน'),
+    noWorkAction: isNoWorkActualState(actualRow[1], actualRow[2], actionProblem),
   };
 }
 function getEtaWindowDecision(planDate, planEta, eventTime) {
@@ -3547,6 +3558,10 @@ async function runGpsBackgroundCycle() {
       const refreshedRealtime = await synchronizeGpsWorkerRealtime();
       summary.postNoWorkRealtimeSource = refreshedRealtime.source;
       summary.postNoWorkRealtimeSynchronized = refreshedRealtime.synchronized;
+      if (refreshedRealtime.synchronized && refreshedRealtime.realtime) {
+        workerData.actual = Array.isArray(refreshedRealtime.realtime.actual) ? refreshedRealtime.realtime.actual : workerData.actual;
+        workerData.gps = Array.isArray(refreshedRealtime.realtime.gps) ? refreshedRealtime.realtime.gps : workerData.gps;
+      }
     }
     summary.blockedEntryRecovery = await recoverGpsBlockedEntries(workerData, workerDate);
     const postEvaluationPendingRetry = await processDuePendingGpsStamps();
