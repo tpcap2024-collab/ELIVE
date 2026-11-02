@@ -26,6 +26,7 @@ import * as XLSX from 'xlsx';
 import {
   cancelDailyPlan,
   createExtraPlan,
+  createDailyPlansBatch,
   createMasterPlanRow,
   createMasterPlanRows,
   createPlanPeriod,
@@ -61,6 +62,8 @@ type DailyFilter = 'ALL' | PlanRemark;
 type PlanDialogMode = 'extra' | 'edit';
 type MasterDialogMode = 'create' | 'edit';
 type MasterImportMode = 'append' | 'replace';
+type DailyPlanImportRow = EditablePlan & { sourceRow:number };
+type DailyPlanImportError = { sourceRow:number; errors:string[] };
 
 type NoticeState = {
   type: 'success' | 'error' | 'info';
@@ -337,6 +340,10 @@ async function readPlanFile(file: File): Promise<unknown[][]> {
   });
 }
 
+
+const DAILY_UPLOAD_ALIASES={date:['date','วันที่'],route:['route','เส้นทาง'],company:['company','supplier','บริษัท'],truckName:['truckname','licenseplate','ทะเบียนรถ'],truckType:['trucktype','ประเภทรถ'],driverName:['drivername','driver','ชื่อคนขับ'],telDriver:['teldriver','phone','เบอร์โทร'],project:['project','โครงการ'],dropPoint:['droppoint','dock','จุดลงงาน'],planEta:['planeta','eta','เวลาเข้า'],planEtd:['planetd','etd','เวลาออก'],groupCode:['groupcode','group','กลุ่มงาน'],remark:['remark','ประเภทแผน','ประเภท'],workDetail:['workdetail','รายละเอียดงาน','งาน']} as const;
+function parseDailyUploadDate(v:unknown){if(typeof v==='number'){const p=XLSX.SSF.parse_date_code(v);if(p)return `${p.y}-${String(p.m).padStart(2,'0')}-${String(p.d).padStart(2,'0')}`;}const t=cleanCell(v);const a=t.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);if(a)return `${a[1]}-${a[2].padStart(2,'0')}-${a[3].padStart(2,'0')}`;const b=t.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);return b?`${b[3]}-${b[2].padStart(2,'0')}-${b[1].padStart(2,'0')}`:'';}
+function parseDailyUpload(raw:unknown[][]):{rows:DailyPlanImportRow[];errors:DailyPlanImportError[]}{if(raw.length<2)throw new Error('ไฟล์ต้องมีหัวตารางและข้อมูล');const h=raw[0].map(cleanHeader);const ix=Object.fromEntries(Object.entries(DAILY_UPLOAD_ALIASES).map(([k,a])=>[k,findColumn(h,[...a])])) as Record<keyof typeof DAILY_UPLOAD_ALIASES,number>;const required=['date','route','company','truckName','truckType','project','dropPoint','planEta','planEtd'] as const;const missing=required.filter(k=>ix[k]<0);if(missing.length)throw new Error(`ไม่พบคอลัมน์: ${missing.join(', ')}`);const rows:DailyPlanImportRow[]=[];const errors:DailyPlanImportError[]=[];const seen=new Set<string>();raw.slice(1,501).forEach((r,i)=>{if(r.every(v=>cleanCell(v)===''))return;const sourceRow=i+2;const remarkText=ix.remark>=0?cleanCell(r[ix.remark]).toUpperCase():'';const row:DailyPlanImportRow={sourceRow,date:parseDailyUploadDate(r[ix.date]),route:cleanCell(r[ix.route]),company:cleanCell(r[ix.company]),truckName:cleanCell(r[ix.truckName]),truckType:cleanCell(r[ix.truckType]),driverName:ix.driverName>=0?cleanCell(r[ix.driverName]):'',telDriver:ix.telDriver>=0?cleanCell(r[ix.telDriver]):'',project:cleanCell(r[ix.project]),dropPoint:cleanCell(r[ix.dropPoint]),planEta:normalizeTime(r[ix.planEta]),planEtd:normalizeTime(r[ix.planEtd]),groupCode:ix.groupCode>=0?cleanCell(r[ix.groupCode]).toUpperCase():'',remark:(['REGULAR','EXTRA','CANCEL'].includes(remarkText)?remarkText:'REGULAR') as PlanRemark,workDetail:ix.workDetail>=0?cleanCell(r[ix.workDetail]):''};const e:string[]=[];if(!row.date)e.push('Date');if(!row.route)e.push('Route');if(!row.company)e.push('Company');if(!row.truckName)e.push('Truck Name');if(!row.truckType)e.push('Truck Type');if(!row.project)e.push('Project');if(!row.dropPoint)e.push('Drop Point');if(!row.planEta)e.push('Plan ETA');if(!row.planEtd)e.push('Plan ETD');if(remarkText&&!['REGULAR','EXTRA','CANCEL'].includes(remarkText))e.push('Remark');const key=[row.date,row.route,row.truckName,row.dropPoint,row.planEta].join('|').toUpperCase();if(seen.has(key))e.push('รายการซ้ำ');else seen.add(key);if(e.length)errors.push({sourceRow,errors:e});rows.push(row);});if(!rows.length)throw new Error('ไม่พบข้อมูลแผน');return{rows,errors};}
 function buildMasterWorkbook(rows: MasterPlanRow[]) {
   const headers=['Route','Company','Truck Name','Truck type','Driver name','Tel driver','Project','Doc','Plan ETA','Plan ETD','Group Code'];
   const body=rows.map(row=>[row.route,row.company,row.truckName,row.truckType,row.driverName,row.telDriver,row.project,row.dropPoint,row.planEta,row.planEtd,String(row.groupCode||'')]);
@@ -411,6 +418,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
   const today = useMemo(getBangkokDate, []);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const masterImportInputRef = useRef<HTMLInputElement>(null);
+  const dailyImportInputRef = useRef<HTMLInputElement>(null);
   const batchDeleteRunningRef = useRef(false);
 
   const [tab, setTab] = useState<MainTab>('create');
@@ -448,6 +456,11 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
   const [deletePlanTarget, setDeletePlanTarget] = useState<DailyPlan | null>(null);
   const [selectedPlanCodes, setSelectedPlanCodes] = useState<string[]>([]);
   const [showBatchDeleteConfirmation, setShowBatchDeleteConfirmation] = useState(false);
+  const [showDailyImport,setShowDailyImport]=useState(false);
+  const [showDailyImportConfirm,setShowDailyImportConfirm]=useState(false);
+  const [dailyImportRows,setDailyImportRows]=useState<DailyPlanImportRow[]>([]);
+  const [dailyImportErrors,setDailyImportErrors]=useState<DailyPlanImportError[]>([]);
+  const [isImportingDaily,setIsImportingDaily]=useState(false);
   const [showBatchCancelConfirmation,setShowBatchCancelConfirmation]=useState(false);
   const [restoreTarget, setRestoreTarget] = useState<DailyPlan | null>(null);
 
@@ -509,6 +522,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
     );
   }, [templateRows, templateSearch]);
 
+  const dailyImportSummary=useMemo(()=>({regular:dailyImportRows.filter(r=>r.remark==='REGULAR').length,extra:dailyImportRows.filter(r=>r.remark==='EXTRA').length,cancel:dailyImportRows.filter(r=>r.remark==='CANCEL').length}),[dailyImportRows]);
   const filteredDailyRows = useMemo(() => {
     const query = dailySearch.trim().toLowerCase();
     return (dailyResult?.rows || []).filter(row => {
@@ -870,6 +884,9 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
       setIsLoadingDaily(false);
     }
   };
+  const openDailyImport=()=>{setDailyImportRows([]);setDailyImportErrors([]);setShowDailyImportConfirm(false);setShowDailyImport(true);if(dailyImportInputRef.current)dailyImportInputRef.current.value='';};
+  const readDailyImport=async(file:File)=>{try{const x=parseDailyUpload(await readPlanFile(file));setDailyImportRows(x.rows);setDailyImportErrors(x.errors);}catch(error){setNotice({type:'error',message:getErrorMessage(error)});}};
+  const saveDailyImport=async()=>{if(!dailyImportRows.length||dailyImportErrors.length||isImportingDaily)return;setShowDailyImportConfirm(false);setIsImportingDaily(true);try{const result=await createDailyPlansBatch(dailyImportRows.map(({sourceRow,...row})=>row));if(Number(result?.failedCount||0))throw new Error(`นำเข้าไม่สำเร็จ ${result.failedCount} รายการ`);setShowDailyImport(false);setNotice({type:'success',message:`นำเข้าแผนประจำวันสำเร็จ ${Number(result?.createdCount??dailyImportRows.length)} รายการ`});}catch(error){setNotice({type:'error',message:getErrorMessage(error)});}finally{setIsImportingDaily(false);}};
   const openExtraDialog = () => {
     if (isSavingPlan) return;
     setEditingCodeRun('');
@@ -1547,7 +1564,8 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
 
                   <div className="flex shrink-0 flex-col gap-2 sm:flex-row xl:border-l xl:border-slate-200 xl:pl-4">
                     
-                    <button
+                    <button type="button" onClick={openDailyImport} disabled={isSavingPlan||isImportingDaily} className="inline-flex h-11 min-w-[150px] items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white"><Upload className="h-4 w-4"/>อัปโหลดแผน</button>
+                      <button
                       type="button"
                       onClick={openExtraDialog}
                       disabled={isSavingPlan}
