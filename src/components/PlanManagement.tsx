@@ -466,6 +466,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
   const [masterImportMode,setMasterImportMode]=useState<MasterImportMode>('append');
   const [masterImportRows,setMasterImportRows]=useState<MasterPlanRow[]>([]);
   const [masterImportErrors,setMasterImportErrors]=useState<MasterPlanValidationError[]>([]);
+  const [masterImportSearch,setMasterImportSearch]=useState('');
   const [isImportingMaster,setIsImportingMaster]=useState(false);
 
   const selectedWorkingDays = useMemo(
