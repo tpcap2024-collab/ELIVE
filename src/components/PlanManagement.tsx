@@ -1504,7 +1504,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
             <div className="space-y-3 p-3 sm:p-4">
 
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                <div className="flex flex-col gap-3 min-[1760px]:flex-row min-[1760px]:items-center">
+                <div className="grid gap-4 xl:grid-cols-[auto_minmax(0,1fr)] xl:items-center">
                   <button
                     type="button"
                     onClick={() => {
@@ -1526,7 +1526,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                   <div className="min-w-[82px] rounded-lg border border-red-200 bg-red-50 px-2.5 py-1 text-red-800"><p className="text-[9px] font-bold uppercase tracking-wide opacity-70">ยกเลิก</p><p className="text-sm font-bold leading-tight tabular-nums">{dailyResult?.cancelCount ?? 0}</p></div>
                   </div>
 
-                  <div className="grid min-w-0 gap-2 sm:grid-cols-2 lg:grid-cols-[170px_170px_130px] lg:items-end min-[1760px]:flex-1">
+                  <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(170px,1fr)_minmax(170px,1fr)_130px] lg:items-end">
                     <label className="block text-sm font-medium text-slate-700">
                       วันที่เริ่มต้น
                       <input
@@ -1555,21 +1555,21 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                       type="button"
                       onClick={() => void loadDailyPlans(dailyDate, dailyEndDate, { showMessage: true, clearResultOnError: true })}
                       disabled={isLoadingDaily}
-                      className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-60 sm:col-span-2 lg:col-span-1 lg:w-[130px]"
+                      className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-60 lg:w-[130px]"
                     >
                       {isLoadingDaily ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                       โหลดแผน
                     </button>
                   </div>
 
-                  <div className="flex w-full shrink-0 flex-col gap-2 sm:flex-row sm:justify-end min-[1760px]:w-auto min-[1760px]:border-l min-[1760px]:border-slate-200 min-[1760px]:pl-4">
+                  <div className="col-span-full flex w-full flex-col gap-2 border-t border-slate-200 pt-3 sm:flex-row sm:justify-end">
                     
-                    <button type="button" onClick={openDailyImport} disabled={isSavingPlan||isImportingDaily} className="relative z-10 inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-60 sm:w-[170px]"><Upload className="h-4 w-4"/>อัปโหลดแผน</button>
+                    <button type="button" onClick={openDailyImport} disabled={isImportingDaily} className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 sm:w-[180px]"><Upload className="h-4 w-4"/>อัปโหลดแผน</button>
                       <button
                       type="button"
                       onClick={openExtraDialog}
                       disabled={isSavingPlan}
-                      className="relative z-10 inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60 sm:w-[130px]"
+                      className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 sm:w-[140px]"
                     >
                       <Plus className="h-4 w-4" />
                       EXTRA
