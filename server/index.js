@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '77';
+const API_VERSION = '78';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -64,6 +64,8 @@ const APPS_SCRIPT_MAX_ATTEMPTS = 3;
 const APPS_SCRIPT_SIGNATURE_MAX_AGE_MS = 5 * 60 * 1000;
 const APPS_SCRIPT_SHARED_SECRET = String(process.env.APPS_SCRIPT_SHARED_SECRET || '').trim();
 const MAX_UPLOAD_ROWS = 500;
+const MASTER_PLAN_DELETE_BATCH_MAX_ROWS = 500;
+const MASTER_PLAN_DELETE_BATCH_TIMEOUT_MS = 120000;
 const GPS_PARKING_SPEED_THRESHOLD_KMH = 0;
 const GPS_DWELL_THRESHOLD_MS = 3 * 60 * 1000;
 const GPS_STALE_THRESHOLD_MS = 5 * 60 * 1000;
@@ -495,6 +497,10 @@ function getAuditDescriptor(req) {
       targetType: 'MASTER_PLAN_ROW',
       targetIdHash: hashAuditValue(path.split('/').pop()),
     };
+  }
+  if (method === 'DELETE' && path === '/api/master-plan/rows') {
+    const sheetRows = Array.isArray(req.body?.sheetRows) ? req.body.sheetRows : [];
+    return { action: 'MASTER_PLAN_BATCH_DELETE', targetType: 'MASTER_PLAN_ROWS', targetIdHash: hashAuditValue(sheetRows.join('|')) };
   }
   if (method === 'DELETE' && /^\/api\/master-plan\/rows\/\d+$/.test(path)) {
     return {
@@ -4766,6 +4772,17 @@ function normalizeMasterPlanSheetRow(value) {
 
   return sheetRow;
 }
+function normalizeMasterPlanSheetRows(value) {
+  if (!Array.isArray(value)) throw new Error('sheetRows must be an array.');
+  const sheetRows = [...new Set(value.map(normalizeMasterPlanSheetRow))]
+    .sort((first, second) => second - first);
+  if (!sheetRows.length) throw new Error('At least one sheetRow is required.');
+  if (sheetRows.length > MASTER_PLAN_DELETE_BATCH_MAX_ROWS) {
+    throw new Error(`เลือกได้สูงสุด ${MASTER_PLAN_DELETE_BATCH_MAX_ROWS} รายการต่อครั้ง`);
+  }
+  return sheetRows;
+}
+
 
 async function getTruckDataWithCache(forceRefresh = false) {
   if (!forceRefresh && hasFreshTruckCache()) {
@@ -5024,6 +5041,7 @@ app.get(['/health', '/api/health'], (req, res) => {
       '/api/gps/worker-status',
       '/api/master-plan',
       '/api/master-plan/rows',
+      'DELETE /api/master-plan/rows',
       '/api/master-plan/rows/:sheetRow',
       '/api/plans/preview',
       '/api/plans/create',
@@ -5472,6 +5490,23 @@ app.put('/api/master-plan/rows/:sheetRow', requireAuthentication, requirePermiss
   }
 });
 
+app.delete('/api/master-plan/rows', requireAuthentication, requirePermission('MANAGE_PLAN'), async (req, res) => {
+  try {
+    const sheetRows = normalizeMasterPlanSheetRows(req.body?.sheetRows);
+    const result = await requestAppsScriptPost('deleteMasterPlanRows', { sheetRows }, MASTER_PLAN_DELETE_BATCH_TIMEOUT_MS);
+    clearMasterPlanCache();
+    req.auditDetails = {
+      requestedCount: sheetRows.length,
+      deletedCount: Number(result?.result?.deletedCount ?? result?.deletedCount ?? 0),
+      failedCount: Number(result?.result?.failedCount ?? result?.failedCount ?? 0),
+      deletionOrder: 'SHEET_ROW_DESCENDING',
+      mutationLockUsed: true,
+    };
+    return res.status(200).json(result);
+  } catch (error) {
+    return sendRouteError(res, error, 'Unable to delete selected Master Plan rows.');
+  }
+});
 app.delete('/api/master-plan/rows/:sheetRow', requireAuthentication, requirePermission('MANAGE_PLAN'), async (req, res) => {
   try {
     const sheetRow = normalizeMasterPlanSheetRow(req.params.sheetRow);
