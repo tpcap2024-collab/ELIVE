@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '79';
+const API_VERSION = '80';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -68,6 +68,8 @@ const MASTER_PLAN_DELETE_BATCH_MAX_ROWS = 500;
 const MASTER_PLAN_DELETE_BATCH_TIMEOUT_MS = 120000;
 const MASTER_PLAN_CREATE_BATCH_MAX_ROWS = 500;
 const MASTER_PLAN_CREATE_BATCH_TIMEOUT_MS = 120000;
+const DAILY_PLAN_CREATE_BATCH_MAX_ROWS = 500;
+const DAILY_PLAN_CREATE_BATCH_TIMEOUT_MS = 120000;
 const GPS_PARKING_SPEED_THRESHOLD_KMH = 0;
 const GPS_DWELL_THRESHOLD_MS = 3 * 60 * 1000;
 const GPS_STALE_THRESHOLD_MS = 5 * 60 * 1000;
@@ -516,6 +518,10 @@ function getAuditDescriptor(req) {
   }
   if (method === 'POST' && path === '/api/plans/create') {
     return { action: 'PLAN_PERIOD_CREATE', targetType: 'PLAN_PERIOD', targetIdHash: null };
+  }
+  if (method === 'POST' && path === '/api/plans/daily/batch') {
+    const plans = Array.isArray(req.body?.plans) ? req.body.plans : [];
+    return { action: 'DAILY_PLAN_BATCH_CREATE', targetType: 'PLAN_BATCH', targetIdHash: hashAuditValue(String(plans.length)) };
   }
   if (method === 'POST' && path === '/api/plans/extra') {
     return { action: 'PLAN_EXTRA_CREATE', targetType: 'PLAN', targetIdHash: null };
@@ -4707,6 +4713,7 @@ function normalizeEditablePlan(body) {
     dropPoint: cleanText(source.dropPoint),
     planEta: normalizeTimeText(source.planEta, 'Plan ETA'),
     planEtd: normalizeTimeText(source.planEtd, 'Plan ETD'),
+    groupCode: cleanText(source.groupCode || source.GroupCode || source.group_code).toUpperCase(),
     remark:
       source.remark === undefined
         ? undefined
@@ -4722,6 +4729,21 @@ function normalizeEditablePlan(body) {
   if (!plan.dropPoint) throw new Error('Drop Point is required.');
 
   return plan;
+}
+
+function normalizeDailyPlans(value) {
+  if (!Array.isArray(value) || !value.length) throw new Error('At least one Daily Plan is required.');
+  if (value.length > DAILY_PLAN_CREATE_BATCH_MAX_ROWS) throw new Error(`เลือกได้สูงสุด ${DAILY_PLAN_CREATE_BATCH_MAX_ROWS} รายการต่อครั้ง`);
+  const duplicateKeys = new Set();
+  return value.map((plan,index) => {
+    let normalized;
+    try { normalized = normalizeEditablePlan({ ...plan, remark: plan?.remark === undefined ? 'REGULAR' : plan.remark }); }
+    catch (error) { throw new Error(`Daily Plan row ${index + 1}: ${getErrorMessage(error)}`); }
+    const key=[normalized.date,normalized.route,normalized.truckName,normalized.dropPoint,normalized.planEta].join('|').toUpperCase();
+    if (duplicateKeys.has(key)) throw new Error(`Daily Plan row ${index + 1}: duplicate item in request.`);
+    duplicateKeys.add(key);
+    return normalized;
+  });
 }
 
 function normalizeCodeRun(value) {
@@ -5061,6 +5083,7 @@ app.get(['/health', '/api/health'], (req, res) => {
       '/api/plans/preview',
       '/api/plans/create',
       '/api/plans/daily',
+      'POST /api/plans/daily/batch',
       '/api/plans/extra',
       '/api/plans/:codeRun',
       '/api/plans/:codeRun/stamp',
@@ -5263,6 +5286,10 @@ app.get(['/health', '/api/health'], (req, res) => {
       masterPlanBatchCreateMaximumRows: MASTER_PLAN_CREATE_BATCH_MAX_ROWS,
       masterPlanBatchCreateAction: 'createMasterPlanRows',
       masterPlanBatchCreateRequestStrategy: 'ONE_APPS_SCRIPT_REQUEST',
+      dailyPlanBatchCreateEnabled: true,
+      dailyPlanBatchCreateMaximumRows: DAILY_PLAN_CREATE_BATCH_MAX_ROWS,
+      dailyPlanBatchCreateAction: 'createDailyPlansBatch',
+      dailyPlanBatchCreateRequestStrategy: 'ONE_APPS_SCRIPT_REQUEST',
       mutationLockTtlSeconds: APPS_SCRIPT_MUTATION_LOCK_SECONDS,
       serializedGetQueueEnabled: true,
       serializedGetLockTtlSeconds: APPS_SCRIPT_GET_LOCK_SECONDS,
@@ -5619,6 +5646,21 @@ app.get('/api/plans/daily', requireAuthentication, requirePermission('VIEW_DASHB
   }
 });
 
+app.post('/api/plans/daily/batch', requireAuthentication, requirePermission('MANAGE_PLAN'), async (req, res) => {
+  try {
+    const plans = normalizeDailyPlans(req.body?.plans);
+    const affectedDates = [...new Set(plans.map(plan => plan.date))].sort();
+    await waitForExistingAppsScriptReads();
+    const result = await requestAppsScriptPost('createDailyPlansBatch', { plans }, DAILY_PLAN_CREATE_BATCH_TIMEOUT_MS);
+    clearTruckCache();
+    const dailyPlanCacheRefreshes = [];
+    for (const date of affectedDates) dailyPlanCacheRefreshes.push(await refreshGpsWorkerDailyPlanCache(date));
+    req.auditDetails = { requestedCount: plans.length, createdCount: Number(result?.result?.createdCount ?? result?.createdCount ?? 0), duplicateCount: Number(result?.result?.duplicateCount ?? result?.duplicateCount ?? 0), failedCount: Number(result?.result?.failedCount ?? result?.failedCount ?? 0), affectedDates, requestStrategy: 'ONE_APPS_SCRIPT_REQUEST', mutationLockUsed: true, dailyPlanCacheRefreshes };
+    return res.status(201).json(result);
+  } catch (error) {
+    return sendRouteError(res, error, 'Unable to create Daily Plans batch.');
+  }
+});
 app.post('/api/plans/extra', requireAuthentication, requirePermission('MANAGE_PLAN'), async (req, res) => {
   try {
     const plan = normalizeEditablePlan(req.body);
