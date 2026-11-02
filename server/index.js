@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '78';
+const API_VERSION = '79';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -66,6 +66,8 @@ const APPS_SCRIPT_SHARED_SECRET = String(process.env.APPS_SCRIPT_SHARED_SECRET |
 const MAX_UPLOAD_ROWS = 500;
 const MASTER_PLAN_DELETE_BATCH_MAX_ROWS = 500;
 const MASTER_PLAN_DELETE_BATCH_TIMEOUT_MS = 120000;
+const MASTER_PLAN_CREATE_BATCH_MAX_ROWS = 500;
+const MASTER_PLAN_CREATE_BATCH_TIMEOUT_MS = 120000;
 const GPS_PARKING_SPEED_THRESHOLD_KMH = 0;
 const GPS_DWELL_THRESHOLD_MS = 3 * 60 * 1000;
 const GPS_STALE_THRESHOLD_MS = 5 * 60 * 1000;
@@ -489,7 +491,10 @@ function getAuditDescriptor(req) {
     };
   }
   if (method === 'POST' && path === '/api/master-plan/rows') {
-    return { action: 'MASTER_PLAN_CREATE', targetType: 'MASTER_PLAN_ROW', targetIdHash: null };
+    const rows = Array.isArray(req.body?.rows) ? req.body.rows : null;
+    return rows
+      ? { action: 'MASTER_PLAN_BATCH_CREATE', targetType: 'MASTER_PLAN_ROWS', targetIdHash: hashAuditValue(String(rows.length)) }
+      : { action: 'MASTER_PLAN_CREATE', targetType: 'MASTER_PLAN_ROW', targetIdHash: null };
   }
   if (method === 'PUT' && /^\/api\/master-plan\/rows\/\d+$/.test(path)) {
     return {
@@ -4761,6 +4766,16 @@ function normalizeMasterPlanRow(body) {
   return row;
 }
 
+function normalizeMasterPlanRows(value) {
+  if (!Array.isArray(value)) throw new Error('rows must be an array.');
+  if (!value.length) throw new Error('At least one Master Plan row is required.');
+  if (value.length > MASTER_PLAN_CREATE_BATCH_MAX_ROWS) throw new Error(`เลือกได้สูงสุด ${MASTER_PLAN_CREATE_BATCH_MAX_ROWS} รายการต่อครั้ง`);
+  return value.map((row, index) => {
+    try { return normalizeMasterPlanRow(row); }
+    catch (error) { throw new Error(`Master Plan row ${index + 1}: ${getErrorMessage(error)}`); }
+  });
+}
+
 function normalizeMasterPlanSheetRow(value) {
   const sheetRow = Number(value);
 
@@ -5244,6 +5259,10 @@ app.get(['/health', '/api/health'], (req, res) => {
       getTrucksMaximumAttempts: APPS_SCRIPT_GET_TRUCKS_MAX_ATTEMPTS,
       planCreateTimeoutSeconds: Math.floor(APPS_SCRIPT_PLAN_CREATE_TIMEOUT_MS / 1000),
       mutationLockEnabled: true,
+      masterPlanBatchCreateEnabled: true,
+      masterPlanBatchCreateMaximumRows: MASTER_PLAN_CREATE_BATCH_MAX_ROWS,
+      masterPlanBatchCreateAction: 'createMasterPlanRows',
+      masterPlanBatchCreateRequestStrategy: 'ONE_APPS_SCRIPT_REQUEST',
       mutationLockTtlSeconds: APPS_SCRIPT_MUTATION_LOCK_SECONDS,
       serializedGetQueueEnabled: true,
       serializedGetLockTtlSeconds: APPS_SCRIPT_GET_LOCK_SECONDS,
@@ -5462,11 +5481,17 @@ app.get('/api/master-plan', requireAuthentication, requirePermission('MANAGE_PLA
 
 app.post('/api/master-plan/rows', requireAuthentication, requirePermission('MANAGE_PLAN'), async (req, res) => {
   try {
+    if (Array.isArray(req.body?.rows)) {
+      const rows = normalizeMasterPlanRows(req.body.rows);
+      const result = await requestAppsScriptPost('createMasterPlanRows', { rows }, MASTER_PLAN_CREATE_BATCH_TIMEOUT_MS);
+      clearMasterPlanCache();
+      req.auditDetails = { requestedCount: rows.length, createdCount: Number(result?.result?.createdCount ?? result?.createdCount ?? 0), failedCount: Number(result?.result?.failedCount ?? result?.failedCount ?? 0), requestStrategy: 'ONE_APPS_SCRIPT_REQUEST', mutationLockUsed: true };
+      return res.status(201).json(result);
+    }
     const row = normalizeMasterPlanRow(req.body);
     const result = await requestAppsScriptPost('createMasterPlanRow', { row });
-
     clearMasterPlanCache();
-
+    req.auditDetails = { requestedCount: 1, createdCount: 1, failedCount: 0, requestStrategy: 'SINGLE_ROW_COMPATIBILITY', mutationLockUsed: true };
     return res.status(201).json(result);
   } catch (error) {
     return sendRouteError(res, error, 'Unable to create Master Plan row.');
