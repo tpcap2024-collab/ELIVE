@@ -209,13 +209,26 @@ export interface MasterPlanMutationResult {
   message: string;
   action:
     | 'createMasterPlanRow'
+    | 'createMasterPlanRows'
     | 'updateMasterPlanRow'
-    | 'deleteMasterPlanRow';
+    | 'deleteMasterPlanRow'
+    | 'deleteMasterPlanRows';
   sheetRow?: number;
   row?: MasterPlanRow;
   previousRow?: MasterPlanRow;
   deletedRow?: MasterPlanRow;
   rowCount?: number;
+}
+
+export interface MasterPlanBatchMutationResult {
+  success: boolean;
+  action: 'createMasterPlanRows' | 'deleteMasterPlanRows';
+  requestedCount: number;
+  createdCount?: number;
+  deletedCount?: number;
+  failedCount: number;
+  failedRows?: Array<{ index?: number; sheetRow?: number; error: string }>;
+  message: string;
 }
 
 export type PlanSource = 'master-plan' | 'uploaded-file';
@@ -941,6 +954,17 @@ export async function createMasterPlanRow(
   };
 }
 
+export async function createMasterPlanRows(rows: EditableMasterPlanRow[]): Promise<MasterPlanBatchMutationResult> {
+  if (!Array.isArray(rows) || !rows.length) throw new Error('Select at least one Master Plan row.');
+  if (rows.length > 500) throw new Error('เลือกได้สูงสุด 500 รายการต่อครั้ง');
+  const validRows = rows.map(validateMasterPlanRow);
+  const data: PlanApiResponse<any> = await fetchApiRequest('/api/master-plan/rows', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rows: validRows }) });
+  if (data.success !== true || !data.result) throw new Error(data.error || 'Batch Master Plan creation failed.');
+  const result = data.result.result && typeof data.result.result === 'object' ? data.result.result : data.result;
+  const failedRows = Array.isArray(result.failedRows) ? result.failedRows.map((item: any) => ({ index: Number.isFinite(Number(item.index)) ? Number(item.index) : undefined, sheetRow: Number.isFinite(Number(item.sheetRow)) ? Number(item.sheetRow) : undefined, error: String(item.error || 'Unknown error') })) : [];
+  return { success: Number(result.failedCount || 0) === 0, action: 'createMasterPlanRows', requestedCount: Number(result.requestedCount ?? validRows.length), createdCount: Number(result.createdCount ?? 0), failedCount: Number(result.failedCount ?? failedRows.length), failedRows, message: String(result.message || `นำเข้า Master Plan สำเร็จ ${Number(result.createdCount ?? 0)} รายการ`) };
+}
+
 export async function updateMasterPlanRow(
   sheetRow: number,
   row: EditableMasterPlanRow
@@ -1013,6 +1037,17 @@ export async function deleteMasterPlanRow(
       ? Number(result.rowCount)
       : undefined,
   };
+}
+
+export async function deleteMasterPlanRows(sheetRows: number[]): Promise<MasterPlanBatchMutationResult> {
+  const validSheetRows = [...new Set((Array.isArray(sheetRows) ? sheetRows : []).map(validateMasterPlanSheetRow))].sort((a,b) => b-a);
+  if (!validSheetRows.length) throw new Error('Select at least one Master Plan row.');
+  if (validSheetRows.length > 500) throw new Error('เลือกได้สูงสุด 500 รายการต่อครั้ง');
+  const data: PlanApiResponse<any> = await fetchApiRequest('/api/master-plan/rows', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sheetRows: validSheetRows }) });
+  if (data.success !== true || !data.result) throw new Error(data.error || 'Batch Master Plan deletion failed.');
+  const result = data.result.result && typeof data.result.result === 'object' ? data.result.result : data.result;
+  const failedRows = Array.isArray(result.failedRows) ? result.failedRows.map((item: any) => ({ sheetRow: Number.isFinite(Number(item.sheetRow)) ? Number(item.sheetRow) : undefined, error: String(item.error || 'Unknown error') })) : [];
+  return { success: Number(result.failedCount || 0) === 0, action: 'deleteMasterPlanRows', requestedCount: Number(result.requestedCount ?? validSheetRows.length), deletedCount: Number(result.deletedCount ?? 0), failedCount: Number(result.failedCount ?? failedRows.length), failedRows, message: String(result.message || `ลบ Master Plan สำเร็จ ${Number(result.deletedCount ?? 0)} รายการ`) };
 }
 
 export async function previewPlanPeriod(
