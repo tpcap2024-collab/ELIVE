@@ -335,6 +335,18 @@ export interface DailyPlanMutationResult {
   remark?: PlanRemark;
   plan?: DailyPlan;
 }
+export interface DailyPlansBatchCreateResult {
+  success: boolean;
+  message: string;
+  requestedCount: number;
+  createdCount: number;
+  duplicateCount: number;
+  failedCount: number;
+  failedRows?: Array<{ index?: number; error: string }>;
+  startCodeRun?: string;
+  endCodeRun?: string;
+  durationMs?: number;
+}
 
 interface PlanApiResponse<T> {
   success: boolean;
@@ -1213,6 +1225,66 @@ export async function createExtraPlan(
       : undefined,
     remark: 'EXTRA',
     plan: data.result.plan ? mapDailyPlan(data.result.plan) : undefined,
+  };
+}
+
+export async function createDailyPlansBatch(
+  plans: EditablePlan[]
+): Promise<DailyPlansBatchCreateResult> {
+  if (!Array.isArray(plans) || !plans.length) {
+    throw new Error('Select at least one Daily Plan.');
+  }
+  if (plans.length > 500) {
+    throw new Error('เลือกได้สูงสุด 500 รายการต่อครั้ง');
+  }
+  const validPlans = plans.map((plan, index) => {
+    try {
+      return validateEditablePlan({
+        ...plan,
+        remark: plan.remark ? normalizePlanRemark(plan.remark) : 'REGULAR',
+      });
+    } catch (error) {
+      throw new Error(
+        `Daily Plan row ${index + 1}: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  });
+  const data: PlanApiResponse<any> = await fetchApiRequest(
+    '/api/plans/daily/batch',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plans: validPlans }),
+    }
+  );
+  if (data.success !== true || !data.result) {
+    throw new Error(data.error || 'Batch Daily Plan creation failed.');
+  }
+  const result =
+    data.result.result && typeof data.result.result === 'object'
+      ? data.result.result
+      : data.result;
+  const failedRows = Array.isArray(result.failedRows)
+    ? result.failedRows.map((item: any) => ({
+        index: Number.isFinite(Number(item.index)) ? Number(item.index) : undefined,
+        error: String(item.error || 'Unknown error'),
+      }))
+    : [];
+  return {
+    success: Number(result.failedCount || 0) === 0,
+    message: String(
+      result.message || `นำเข้าแผนประจำวันสำเร็จ ${Number(result.createdCount || 0)} รายการ`
+    ),
+    requestedCount: Number(result.requestedCount ?? validPlans.length),
+    createdCount: Number(result.createdCount ?? 0),
+    duplicateCount: Number(result.duplicateCount ?? 0),
+    failedCount: Number(result.failedCount ?? failedRows.length),
+    failedRows,
+    startCodeRun: result.startCodeRun ? String(result.startCodeRun) : undefined,
+    endCodeRun: result.endCodeRun ? String(result.endCodeRun) : undefined,
+    durationMs: Number.isFinite(Number(result.durationMs))
+      ? Number(result.durationMs)
+      : undefined,
   };
 }
 
