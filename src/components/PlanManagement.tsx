@@ -884,7 +884,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
       setIsLoadingDaily(false);
     }
   };
-  const openDailyImport=()=>{setDailyImportRows([]);setDailyImportErrors([]);setShowDailyImportConfirm(false);setShowDailyImport(true);if(dailyImportInputRef.current)dailyImportInputRef.current.value='';};
+  const openDailyImport=()=>{setDailyImportRows([]);setDailyImportErrors([]);setShowDailyImportConfirm(false);if(dailyImportInputRef.current){dailyImportInputRef.current.value='';dailyImportInputRef.current.click();}};
   const readDailyImport=async(file:File)=>{try{const x=parseDailyUpload(await readPlanFile(file));setDailyImportRows(x.rows);setDailyImportErrors(x.errors);}catch(error){setNotice({type:'error',message:getErrorMessage(error)});}};
   const saveDailyImport=async()=>{if(!dailyImportRows.length||dailyImportErrors.length||isImportingDaily)return;setShowDailyImportConfirm(false);setIsImportingDaily(true);try{const result=await createDailyPlansBatch(dailyImportRows.map(({sourceRow,...row})=>row));if(Number(result?.failedCount||0))throw new Error(`นำเข้าไม่สำเร็จ ${result.failedCount} รายการ`);setShowDailyImport(false);setNotice({type:'success',message:`นำเข้าแผนประจำวันสำเร็จ ${Number(result?.createdCount??dailyImportRows.length)} รายการ`});}catch(error){setNotice({type:'error',message:getErrorMessage(error)});}finally{setIsImportingDaily(false);}};
   const openExtraDialog = () => {
@@ -1564,7 +1564,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
 
                   <div className="col-span-full flex w-full flex-col gap-2 border-t border-slate-200 pt-3 sm:flex-row sm:justify-end">
                     
-                    <button type="button" onClick={openDailyImport} disabled={isImportingDaily} className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 sm:w-[180px]"><Upload className="h-4 w-4"/>อัปโหลดแผน</button>
+                    <input ref={dailyImportInputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={event=>{const file=event.target.files?.[0];if(file){setShowDailyImport(true);void readDailyImport(file);}}}/><button type="button" onClick={openDailyImport} disabled={isImportingDaily} className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 sm:w-[180px]"><Upload className="h-4 w-4"/>อัปโหลดแผน</button>
                       <button
                       type="button"
                       onClick={openExtraDialog}
