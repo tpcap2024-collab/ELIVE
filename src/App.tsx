@@ -209,6 +209,29 @@ function getPlanEtaSortValue(value?: string): number {
   }
   return hour * 60 + minute;
 }
+function getGpsLocationEventTime(location: GpsLocation): Date | null {
+  const source = location as GpsLocation & {
+    gpsTime?: string;
+    timestamp?: string;
+    dateTime?: string;
+    updatedAt?: string;
+  };
+  const value = String(
+    source.gpsTime || source.timestamp || source.dateTime || source.updatedAt || ''
+  ).trim();
+  if (!value) return null;
+  const parsed = new Date(value.includes('T') ? value : value.replace(' ', 'T'));
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+function getBangkokDateFromDate(value: Date): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Bangkok',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(value);
+}
+const GPS_LOST_DISPLAY_GRACE_MINUTES = 30;
 
 export default function App() {
   const [trucks, setTrucks] = useState<Truck[]>(mockTrucks);
@@ -755,6 +778,35 @@ export default function App() {
       return normalizedPlate !== '' && planLicensePlates.has(normalizedPlate);
     });
   }, [inboundTrucks, gpsLocations]);
+
+  const latestGpsTimeByPlate = useMemo(() => {
+    const latest = new Map<string, Date>();
+    for (const location of gpsLocations) {
+      const plate = normalizeLicensePlate(location.licensePlate);
+      const eventTime = getGpsLocationEventTime(location);
+      if (!plate || !eventTime) continue;
+      const current = latest.get(plate);
+      if (!current || eventTime.getTime() > current.getTime()) latest.set(plate, eventTime);
+    }
+    return latest;
+  }, [gpsLocations]);
+
+  const isFrontendGpsLost = useCallback((truck: Truck): boolean => {
+    if (isFrontendGpsLost(truck)) return true;
+    if (hasNoWorkAction(truck)) return false;
+    if (truck.status === 'COMPLETED' || truck.status === 'TRUCK_OUT') return false;
+    if (truck.stampEta || truck.actualEta || truck.stampEtd) return false;
+    const planDate = String(truck.planDate || '').trim().slice(0, 10);
+    const planEta = String(truck.planEta || '').trim().slice(0, 5);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(planDate) || !/^\d{1,2}:\d{2}$/.test(planEta)) return false;
+    const plannedEta = new Date(`${planDate}T${planEta}:00+07:00`);
+    if (Number.isNaN(plannedEta.getTime())) return false;
+    const graceDeadline = plannedEta.getTime() + GPS_LOST_DISPLAY_GRACE_MINUTES * 60 * 1000;
+    if (Date.now() < graceDeadline) return false;
+    const plate = normalizeLicensePlate(truck.licensePlate);
+    const latestGpsTime = plate ? latestGpsTimeByPlate.get(plate) : undefined;
+    return !latestGpsTime || getBangkokDateFromDate(latestGpsTime) !== planDate;
+  }, [latestGpsTimeByPlate]);
 
   const kpiTrucks = useMemo(
     () =>
@@ -1485,14 +1537,14 @@ export default function App() {
                             <td className="whitespace-nowrap px-3 py-1.5 font-mono text-slate-600">{truck.stampEtd || '-'}</td>
                             <td className="whitespace-nowrap px-3 py-1.5">
                               {getPerformanceBadge(
-                                hasGpsLostAction(truck) ? 'GPS_LOST' : hasNoWorkAction(truck) ? 'NO_DROP' : truck.performanceStatus
+                                isFrontendGpsLost(truck) ? 'GPS_LOST' : hasNoWorkAction(truck) ? 'NO_DROP' : truck.performanceStatus
                               )}
                             </td>
                             <td className="whitespace-nowrap px-3 py-1.5">
-                              {hasGpsLostAction(truck) ? (
+                              {isFrontendGpsLost(truck) ? (
                                 <span
                                   className="inline-flex rounded-md border border-orange-300 bg-slate-700 px-2 py-1 text-[10px] font-black text-orange-400"
-                                  title={truck.actionProblem || 'GPS มีปัญหา'}
+                                  title={truck.actionProblem || 'ไม่พบ GPS ของวันที่วิ่ง หลัง Plan ETA 30 นาที'}
                                 >
                                   GPS LOST
                                 </span>
