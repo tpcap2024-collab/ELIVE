@@ -1521,80 +1521,38 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
             <div className="space-y-3 p-3 sm:p-4">
 
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                <div className="grid gap-4 xl:grid-cols-[auto_minmax(0,1fr)] xl:items-center">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setTab('create');
-                      setCreateView('source');
-                      setNotice(null);
-                    }}
-                    className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-100"
-                  >
-                    <ArrowLeft className="h-4 w-4" />
-                    ย้อนกลับ
-                  </button>
-
-                  <div className="flex shrink-0 items-center gap-1.5">
-                    <div className="min-w-[82px] rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-slate-800"><p className="text-[9px] font-bold uppercase tracking-wide text-slate-500">ทั้งหมด</p><p className="text-sm font-bold leading-tight tabular-nums">{dailyResult?.rowCount ?? 0}</p></div>
-                  <div className="min-w-[82px] rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-emerald-800"><p className="text-[9px] font-bold uppercase tracking-wide opacity-70">ใช้งาน</p><p className="text-sm font-bold leading-tight tabular-nums">{dailyResult?.activeCount ?? 0}</p></div>
-                  <div className="min-w-[82px] rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1 text-blue-800"><p className="text-[9px] font-bold uppercase tracking-wide opacity-70">แผนปกติ</p><p className="text-sm font-bold leading-tight tabular-nums">{dailyResult?.regularCount ?? 0}</p></div>
-                  <div className="min-w-[82px] rounded-lg border border-purple-200 bg-purple-50 px-2.5 py-1 text-purple-800"><p className="text-[9px] font-bold uppercase tracking-wide opacity-70">แผนพิเศษ</p><p className="text-sm font-bold leading-tight tabular-nums">{dailyResult?.extraCount ?? 0}</p></div>
-                  <div className="min-w-[82px] rounded-lg border border-red-200 bg-red-50 px-2.5 py-1 text-red-800"><p className="text-[9px] font-bold uppercase tracking-wide opacity-70">ยกเลิก</p><p className="text-sm font-bold leading-tight tabular-nums">{dailyResult?.cancelCount ?? 0}</p></div>
-                  </div>
-
-                  <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(170px,1fr)_minmax(170px,1fr)_130px] lg:items-end">
-                    <label className="block text-sm font-medium text-slate-700">
-                      วันที่เริ่มต้น
-                      <input
-                        type="date"
-                        value={dailyDate}
-                        onChange={event => {
-                          const nextStart = event.target.value;
-                          setDailyDate(nextStart);
-                          setDailyEndDate(current => clampDailyEndDate(nextStart, current));
-                        }}
-                        className="mt-1 h-10 w-full rounded-lg border border-slate-300 bg-white px-2.5 text-sm"
-                      />
-                    </label>
-                    <label className="block text-sm font-medium text-slate-700">
-                      วันที่สิ้นสุด
-                      <input
-                        type="date"
-                        value={dailyEndDate}
-                        min={dailyDate}
-                        max={addCalendarDays(dailyDate, MAX_DAILY_VIEW_DAYS - 1)}
-                        onChange={event => setDailyEndDate(clampDailyEndDate(dailyDate, event.target.value))}
-                        className="mt-1 h-10 w-full rounded-lg border border-slate-300 bg-white px-2.5 text-sm"
-                      />
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => void loadDailyPlans(dailyDate, dailyEndDate, { showMessage: true, clearResultOnError: true })}
-                      disabled={isLoadingDaily}
-                      className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-60 lg:w-[130px]"
-                    >
-                      {isLoadingDaily ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                      โหลดแผน
+                <div className="space-y-3">
+                <div className="grid gap-3 xl:grid-cols-[minmax(300px,1fr)_auto_auto] xl:items-center">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <button type="button" onClick={()=>{setTab('create');setCreateView('source');setNotice(null);}} className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-300 px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                      <ArrowLeft className="h-4 w-4"/>ย้อนกลับ
                     </button>
+                    <div className="min-w-0">
+                      <h2 className="truncate text-xl font-bold text-slate-900">จัดการแผนประจำวัน</h2>
+                      <p className="truncate text-sm text-slate-500">ค้นหา อัปโหลด เพิ่ม หรือแก้ไข Daily Plan</p>
+                    </div>
                   </div>
-
-                  <div className="col-span-full flex w-full flex-col gap-2 border-t border-slate-200 pt-3 sm:flex-row sm:justify-end">
-                    
-                    <button type="button" onClick={downloadDailyPlanTemplate} className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-blue-300 bg-white px-5 text-sm font-semibold text-blue-700 shadow-sm hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 sm:w-[180px]"><Download className="h-4 w-4"/>Export Template</button>
-                      <input ref={dailyImportInputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={event=>{const file=event.target.files?.[0];if(file){setShowDailyImport(true);void readDailyImport(file);}}}/><button type="button" onClick={openDailyImport} disabled={isImportingDaily} className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 sm:w-[180px]"><Upload className="h-4 w-4"/>อัปโหลดแผน</button>
-                      <button
-                      type="button"
-                      onClick={openExtraDialog}
-                      disabled={isSavingPlan}
-                      className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 sm:w-[140px]"
-                    >
-                      <Plus className="h-4 w-4" />
-                      EXTRA
-                    </button>
+                  <div className="grid grid-cols-5 gap-2">
+                    <div className="min-w-[82px] rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-amber-800"><p className="text-[9px] font-bold uppercase">ทั้งหมด</p><p className="text-base font-bold tabular-nums">{dailyResult?.rowCount??0}</p></div>
+                    <div className="min-w-[82px] rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-emerald-800"><p className="text-[9px] font-bold uppercase">ใช้งาน</p><p className="text-base font-bold tabular-nums">{dailyResult?.activeCount??0}</p></div>
+                    <div className="min-w-[82px] rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-blue-800"><p className="text-[9px] font-bold uppercase">แผนปกติ</p><p className="text-base font-bold tabular-nums">{dailyResult?.regularCount??0}</p></div>
+                    <div className="min-w-[82px] rounded-lg border border-purple-200 bg-purple-50 px-3 py-1.5 text-purple-800"><p className="text-[9px] font-bold uppercase">แผนพิเศษ</p><p className="text-base font-bold tabular-nums">{dailyResult?.extraCount??0}</p></div>
+                    <div className="min-w-[82px] rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-red-800"><p className="text-[9px] font-bold uppercase">ยกเลิก</p><p className="text-base font-bold tabular-nums">{dailyResult?.cancelCount??0}</p></div>
+                  </div>
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <button type="button" onClick={downloadDailyPlanTemplate} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"><Download className="h-4 w-4"/>Template</button>
+                    <input ref={dailyImportInputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={event=>{const file=event.target.files?.[0];if(file){setShowDailyImport(true);void readDailyImport(file);}}}/>
+                    <button type="button" onClick={openDailyImport} disabled={isImportingDaily} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-60"><Upload className="h-4 w-4"/>อัปโหลดไฟล์</button>
+                    <button type="button" onClick={openExtraDialog} disabled={isSavingPlan} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-orange-500 px-5 text-sm font-semibold text-white shadow-sm hover:bg-orange-600 disabled:opacity-60"><Plus className="h-4 w-4"/>เพิ่มรายการ</button>
                   </div>
                 </div>
+                <div className="grid gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 sm:grid-cols-2 lg:grid-cols-[190px_190px_140px_1fr] lg:items-end">
+                  <label className="text-sm font-semibold text-slate-700">วันที่เริ่มต้น<input type="date" value={dailyDate} onChange={event=>setDailyDate(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm"/></label>
+                  <label className="text-sm font-semibold text-slate-700">วันที่สิ้นสุด<input type="date" value={dailyEndDate} onChange={event=>setDailyEndDate(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm"/></label>
+                  <button type="button" onClick={()=>void loadDailyPlans(dailyDate,dailyEndDate,{showMessage:true,clearResultOnError:true})} disabled={isLoadingDaily} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-60">{isLoadingDaily?<Loader2 className="h-4 w-4 animate-spin"/>:<RefreshCw className="h-4 w-4"/>}โหลดแผน</button>
+                </div>
               </div>
+            </div>
 
               {dailyResult && (
                 <>
