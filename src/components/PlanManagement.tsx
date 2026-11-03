@@ -347,19 +347,38 @@ function parseDailyUpload(raw:unknown[][]):{rows:DailyPlanImportRow[];errors:Dai
 function buildDailyPlanUploadTemplate() {
   const headers = ['Date','Route','Company','Truck Name','Truck Type','Driver Name','Tel Driver','Project','Drop Point','Plan ETA','Plan ETD','Group Code','Remark','Work Detail'];
   const examples = [
-    ['03/11/2026','TB08-B','CTS','71-6137','6W','ตัวอย่าง คนขับ','081-234-5678','Inbound','R1-1','11:30','11:45','G02','REGULAR',''],
-    ['03/11/2026','GW01-D','CTS','71-6472','6W','','','Inbound','L1-1','13:00','13:15','G02','EXTRA','งานเสริม'],
+    ['03/11/2026','TB08-B','CTS','71-6137','6W','ตัวอย่าง คนขับ','081-234-5678','Inbound','R1-1','11:30','11:45','G02','REGULAR','ตัวอย่าง - ลบแถวนี้ก่อนอัปโหลด'],
+    ['03/11/2026','GW01-D','CTS','71-6472','6W','','','Inbound','L1-1','13:00','13:15','G02','EXTRA','ตัวอย่าง - ลบแถวนี้ก่อนอัปโหลด'],
   ];
   const workbook = XLSX.utils.book_new();
   const worksheet = XLSX.utils.aoa_to_sheet([headers, ...examples]);
   worksheet['!cols'] = [
     {wch:14},{wch:16},{wch:16},{wch:16},{wch:14},{wch:22},{wch:18},
-    {wch:14},{wch:15},{wch:11},{wch:11},{wch:13},{wch:12},{wch:24},
+    {wch:14},{wch:15},{wch:11},{wch:11},{wch:13},{wch:12},{wch:34},
   ];
   worksheet['!freeze'] = { xSplit: 0, ySplit: 1 };
+  const headerStyle = {
+    fill: { patternType: 'solid', fgColor: { rgb: '1D4ED8' } },
+    font: { bold: true, color: { rgb: 'FFFFFF' } },
+    alignment: { horizontal: 'center', vertical: 'center' },
+  };
+  const exampleStyle = {
+    fill: { patternType: 'solid', fgColor: { rgb: 'FFF2CC' } },
+    font: { color: { rgb: '9C5700' } },
+  };
+  headers.forEach((_,columnIndex) => {
+    const headerCell = worksheet[XLSX.utils.encode_cell({ r: 0, c: columnIndex })];
+    if (headerCell) headerCell.s = headerStyle;
+    for (let rowIndex = 1; rowIndex <= examples.length; rowIndex += 1) {
+      const exampleCell = worksheet[XLSX.utils.encode_cell({ r: rowIndex, c: columnIndex })];
+      if (exampleCell) exampleCell.s = exampleStyle;
+    }
+  });
+  worksheet['!autofilter'] = { ref: `A1:N${examples.length + 1}` };
   XLSX.utils.book_append_sheet(workbook, worksheet, 'Daily Plan Upload');
   return workbook;
 }
+
 function buildMasterWorkbook(rows: MasterPlanRow[]) {
   const headers=['Route','Company','Truck Name','Truck type','Driver name','Tel driver','Project','Doc','Plan ETA','Plan ETD','Group Code'];
   const body=rows.map(row=>[row.route,row.company,row.truckName,row.truckType,row.driverName,row.telDriver,row.project,row.dropPoint,row.planEta,row.planEtd,String(row.groupCode||'')]);
@@ -983,7 +1002,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
 
   const handleBatchCancelPlans=async()=>{const items=[...selectedPlanCodes];setShowBatchCancelConfirmation(false);setIsSavingPlan(true);try{await runInBatches(items,c=>cancelDailyPlan(c));setSelectedPlanCodes([]);await loadDailyPlans(dailyDate,dailyEndDate,{showMessage:false,clearResultOnError:false});setNotice({type:'success',message:`ยกเลิกแผนสำเร็จ ${items.length} รายการ`});}catch(error){setNotice({type:'error',message:getErrorMessage(error)});}finally{setIsSavingPlan(false);}};
   const downloadEmptyTemplate=()=>XLSX.writeFile(buildMasterWorkbook([]),'ELIVE_Master_Plan_Template.xlsx');
-  const downloadDailyPlanTemplate=()=>XLSX.writeFile(buildDailyPlanUploadTemplate(),`ELIVE_Daily_Plan_Upload_Template_${getBangkokDate()}.xlsx`);
+  const downloadDailyPlanTemplate=()=>XLSX.writeFile(buildDailyPlanUploadTemplate(),`ELIVE_Daily_Plan_Upload_Template_${getBangkokDate()}.xlsx`,{cellStyles:true});
   const downloadCurrentMasterPlan=async()=>{const rows=masterRows.length?masterRows:(await loadMasterRows(false)).rows;XLSX.writeFile(buildMasterWorkbook(rows),`ELIVE_Master_Plan_${getBangkokDate()}.xlsx`);};
   const handleMasterImportFile=async(file:File)=>{try{const result=parseTemplateRows(await readPlanFile(file));setMasterImportRows(result.rows);setMasterImportErrors(result.validationErrors);}catch(error){setNotice({type:'error',message:getErrorMessage(error)});}};
   const handleImportMasterPlan=async()=>{if(!masterImportRows.length||masterImportErrors.length)return;setShowMasterImportConfirmation(false);setIsImportingMaster(true);setNotice({type:'info',message:`กำลังนำเข้า Master Plan ${masterImportRows.length} รายการ กรุณาอย่าปิดหน้านี้`});try{if(masterImportMode==='replace'){const currentRows=masterRows.length?masterRows:(await loadMasterRows(false)).rows;const sheetRows=currentRows.map(row=>Number(row.sheetRow)).filter(row=>Number.isInteger(row)&&row>=2);if(sheetRows.length){const deleted=await deleteMasterPlanRows(sheetRows);if(deleted.failedCount)throw new Error(`ลบข้อมูลเดิมไม่สำเร็จ ${deleted.failedCount} รายการ`);}}const created=await createMasterPlanRows(masterImportRows.map(({sheetRow,...row})=>row as EditableMasterPlanRow));if(created.failedCount)throw new Error(`นำเข้าไม่สำเร็จ ${created.failedCount} รายการ`);await loadMasterRows(false);setShowMasterImport(false);setMasterImportRows([]);setMasterImportErrors([]);setMasterImportSearch('');setNotice({type:'success',message:`นำเข้า Master Plan สำเร็จ ${created.createdCount??masterImportRows.length} รายการ`});}catch(error){setNotice({type:'error',message:getErrorMessage(error)});}finally{setIsImportingMaster(false);}};
