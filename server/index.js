@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '81';
+const API_VERSION = '82';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -1910,6 +1910,9 @@ function validateGpsDockPayload(body) {
   const longitude = Number(body.longitude);
   const speedKmh = Number(body.speedKmh ?? body.speed);
   const gpsStatus = cleanText(body.gpsStatus);
+  const providerStationName = cleanText(
+    body.providerStationName || body.stationName || body.gpsStationName
+  );
   const gpsTime = parseBangkokDateTime(body.gpsTime, 'gpsTime');
   const receivedAt = parseBangkokDateTime(body.receivedAt, 'receivedAt');
   if (!gpsId) throw new Error('gpsId is required.');
@@ -1917,16 +1920,38 @@ function validateGpsDockPayload(body) {
   if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) throw new Error('latitude is invalid.');
   if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) throw new Error('longitude is invalid.');
   if (!Number.isFinite(speedKmh) || speedKmh < 0 || speedKmh > 300) throw new Error('speed is invalid.');
-  return { codeRun, gpsId, licensePlate, planLicensePlate, latitude, longitude, speedKmh, gpsStatus, gpsTime, receivedAt };
+  return { codeRun, gpsId, licensePlate, planLicensePlate, latitude, longitude, speedKmh, gpsStatus, providerStationName, gpsTime, receivedAt };
+}
+function evaluateRawGpsCoordinatesAgainstEliveGeofences(latitude, longitude) {
+  const evaluations = GPS_GEOFENCES
+    .map(geofence => {
+      const distanceMeters = calculateDistanceMeters(
+        latitude,
+        longitude,
+        geofence.latitude,
+        geofence.longitude
+      );
+      return {
+        ...geofence,
+        distanceMeters,
+        inside: distanceMeters <= geofence.radiusMeters,
+        marginMeters: geofence.radiusMeters - distanceMeters,
+      };
+    })
+    .sort((first, second) => first.distanceMeters - second.distanceMeters);
+  return {
+    evaluations,
+    nearest: evaluations[0] || null,
+    insideGeofences: evaluations.filter(item => item.inside),
+  };
 }
 function findNearestGpsGeofence(latitude, longitude) {
-  return GPS_GEOFENCES
-    .map(geofence => ({
-      ...geofence,
-      distanceMeters: calculateDistanceMeters(latitude, longitude, geofence.latitude, geofence.longitude),
-    }))
-    .sort((first, second) => first.distanceMeters - second.distanceMeters)[0];
+  return evaluateRawGpsCoordinatesAgainstEliveGeofences(
+    latitude,
+    longitude
+  ).nearest;
 }
+
 function findGpsGeofenceById(geofenceId, latitude, longitude) {
   const geofence = GPS_GEOFENCES.find(item => item.id === geofenceId);
   if (!geofence) return null;
@@ -3239,7 +3264,12 @@ async function evaluateGpsDock(payload, dataOverride = null, noWorkCollector = n
   const currentOperationDate = getBangkokDateText(new Date(nowMs));
   const gpsOperationDate = getBangkokDateText(input.gpsTime);
   const isCurrentGpsOperationDate = gpsOperationDate === currentOperationDate;
-  const nearestGeofence = findNearestGpsGeofence(input.latitude, input.longitude);
+  const rawGeofenceEvaluation = evaluateRawGpsCoordinatesAgainstEliveGeofences(
+    input.latitude,
+    input.longitude
+  );
+  const nearestGeofence = rawGeofenceEvaluation.nearest;
+  if (!nearestGeofence) throw new Error('ELIVE_GEOFENCE_CONFIGURATION_EMPTY');
   const nearestIsInside = nearestGeofence.distanceMeters <= nearestGeofence.radiusMeters;
   const detectedGeofenceId = nearestIsInside ? nearestGeofence.id : null;
   const isParked = input.speedKmh === GPS_PARKING_SPEED_THRESHOLD_KMH;
@@ -3251,6 +3281,31 @@ async function evaluateGpsDock(payload, dataOverride = null, noWorkCollector = n
   const activeTrip = tripResolution.activeTrip;
   const targetGeofenceId = activeTrip ? getGeofenceIdForDropPoint(activeTrip.dropPoint) : detectedGeofenceId;
   const evaluatedGeofence = targetGeofenceId ? findGpsGeofenceById(targetGeofenceId, input.latitude, input.longitude) : nearestGeofence;
+  console.log(JSON.stringify({
+    logType: 'ELIVE_GPS_GEOFENCE',
+    event: 'RAW_COORDINATE_GEOFENCE_EVALUATED',
+    geofenceDecisionSource: 'ELIVE_RAW_LATITUDE_LONGITUDE_ONLY',
+    providerStationName: input.providerStationName || null,
+    providerStationUsedForDecision: false,
+    licensePlate: input.licensePlate,
+    codeRun: activeTrip?.codeRun || input.codeRun || null,
+    gpsId: input.gpsId,
+    gpsTime: input.gpsTime.toISOString(),
+    latitude: input.latitude,
+    longitude: input.longitude,
+    targetDropPoint: activeTrip?.dropPoint || null,
+    targetGeofenceId: targetGeofenceId || null,
+    detectedGeofenceId: detectedGeofenceId || null,
+    nearestGeofenceId: nearestGeofence.id,
+    nearestDistanceMeters: Number(nearestGeofence.distanceMeters.toFixed(2)),
+    configuredGeofences: rawGeofenceEvaluation.evaluations.map(item => ({
+      geofenceId: item.id,
+      distanceMeters: Number(item.distanceMeters.toFixed(2)),
+      radiusMeters: item.radiusMeters,
+      inside: item.inside,
+      marginMeters: Number(item.marginMeters.toFixed(2)),
+    })),
+  }));
   const isInside = Boolean(detectedGeofenceId && evaluatedGeofence && evaluatedGeofence.id === detectedGeofenceId && evaluatedGeofence.distanceMeters <= evaluatedGeofence.radiusMeters);
   if (!evaluatedGeofence) {
     throw new Error('TARGET_GEOFENCE_NOT_FOUND');
@@ -3387,6 +3442,9 @@ async function evaluateGpsDock(payload, dataOverride = null, noWorkCollector = n
     isParked,
     speedKmh: input.speedKmh,
     gpsStatus: input.gpsStatus,
+    providerStationName: input.providerStationName || null,
+    providerStationUsedForDecision: false,
+    geofenceDecisionSource: 'ELIVE_RAW_LATITUDE_LONGITUDE_ONLY',
     gpsTime: input.gpsTime.toISOString(),
     receivedAt: input.receivedAt.toISOString(),
     evaluatedAt: new Date(nowMs).toISOString(),
@@ -5388,7 +5446,12 @@ app.get(['/health', '/api/health'], (req, res) => {
       pendingStampRetryBaseSeconds: Math.floor(GPS_PENDING_STAMP_BASE_RETRY_MS / 1000),
       pendingStampRetryMaximumSeconds: Math.floor(GPS_PENDING_STAMP_MAX_RETRY_MS / 1000),
       etdRule: 'NORMAL_EXIT_AFTER_INSIDE_OR_OPEN_ETA_RECONCILIATION_ON_ANY_SAME_DAY_GPS_OUTSIDE_TARGET_GEOFENCE',
-      geofenceSelectionPolicy: 'ACTIVE_TRIP_DROP_POINT_TARGET_WITH_NEAREST_DEBUG_ONLY',
+      geofenceSelectionPolicy: 'ACTIVE_TRIP_DROP_POINT_TARGET_WITH_ELIVE_RAW_COORDINATE_DISTANCE',
+      geofenceDecisionSource: 'RAW_GPS_LATITUDE_LONGITUDE',
+      providerStationNameUsedForDecision: false,
+      providerStationNameRole: 'DEBUG_ONLY',
+      rawCoordinateGeofenceDistanceLoggingEnabled: true,
+      rawCoordinateGeofenceDistanceLogEvent: 'RAW_COORDINATE_GEOFENCE_EVALUATED',
       forbiddenRoutePointEnabled: true,
       forbiddenRoutePointRadiusMeters: TPCAP_FORBIDDEN_ROUTE_RADIUS_METERS,
       forbiddenRoutePoint: {
