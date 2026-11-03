@@ -792,7 +792,7 @@ export default function App() {
   }, [gpsLocations]);
 
   const isFrontendGpsLost = useCallback((truck: Truck): boolean => {
-    if (isFrontendGpsLost(truck)) return true;
+    if (hasGpsLostAction(truck)) return true;
     if (hasNoWorkAction(truck)) return false;
     if (truck.status === 'COMPLETED' || truck.status === 'TRUCK_OUT') return false;
     if (truck.stampEta || truck.actualEta || truck.stampEtd) return false;
@@ -875,11 +875,11 @@ export default function App() {
     if (isUnloading) {
       return 'bg-yellow-100 hover:bg-yellow-200 transition-colors';
     }
+    if (isFrontendGpsLost(truck)) {
+      return 'bg-slate-200 hover:bg-slate-300 transition-colors';
+    }
     if (isDelayedNoStamp(truck)) {
       return 'animate-pulse bg-red-200 hover:bg-red-300 transition-colors';
-    }
-    if (hasGpsLostAction(truck)) {
-      return 'bg-orange-100 hover:bg-orange-200 transition-colors';
     }
     if (truck.performanceStatus === 'WARNING') {
       return 'bg-amber-100 hover:bg-amber-200 transition-colors';
@@ -920,7 +920,7 @@ export default function App() {
     if (hasNoWorkAction(truck)) return false;
 
     // GPS LOST remains visible because the issue still requires follow-up.
-    if (hasGpsLostAction(truck)) return true;
+    if (isFrontendGpsLost(truck)) return true;
 
     if (truck.status !== 'COMPLETED' && truck.status !== 'TRUCK_OUT') return true;
     if (!truck.stampEtd) return true;
@@ -961,7 +961,7 @@ export default function App() {
         if (timeDifference !== 0) return timeDifference;
         return String(first.route || '').localeCompare(String(second.route || ''), 'en');
       });
-  }, [inboundTrucks, showHiddenRows, selectedDockFilters, dashboardSearch]);
+  }, [inboundTrucks, showHiddenRows, selectedDockFilters, dashboardSearch, isFrontendGpsLost]);
 
   const totalPages = Math.max(1, Math.ceil(visibleTrucks.length / ROWS_PER_PAGE));
   const pageStartIndex = (currentPage - 1) * ROWS_PER_PAGE;
