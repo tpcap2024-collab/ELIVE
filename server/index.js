@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '80';
+const API_VERSION = '81';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -85,6 +85,8 @@ const GPS_AUTO_STAMP_FRESH_THRESHOLD_MS = Math.max(30000, Number(process.env.GPS
 const GPS_VEHICLE_CYCLE_KEY_PREFIX = 'elive:gps-vehicle-cycle:';
 const GPS_VEHICLE_CYCLE_TTL_SECONDS = 36 * 60 * 60;
 const GPS_PENDING_STAMP_KEY_PREFIX = 'elive:gps-pending-stamp:';
+const GPS_EVENT_USAGE_KEY_PREFIX = 'elive:gps-event-usage:';
+const GPS_EVENT_USAGE_TTL_SECONDS = 36 * 60 * 60;
 const GPS_BLOCKED_ENTRY_KEY_PREFIX = 'elive:gps-blocked-entry:';
 const GPS_BLOCKED_ENTRY_TTL_SECONDS = 8 * 60 * 60;
 const GPS_PENDING_STAMP_LOCK_PREFIX = 'elive:gps-pending-stamp-lock:';
@@ -2046,6 +2048,111 @@ async function stampActualData(payload) {
   clearTruckCache();
   return result;
 }
+function getGpsEventUsageIdentity(stampType, state) {
+  const normalizedStampType = normalizeStampType(stampType);
+  const gpsTime = parseBangkokDateTime(state?.gpsTime, 'gpsTime').toISOString();
+  const operationDate = getBangkokDateText(new Date(gpsTime));
+  const normalizedLicensePlate = normalizeLicensePlate(state?.licensePlate);
+  const gpsId = cleanText(state?.gpsId).toUpperCase();
+  const geofence = cleanText(
+    state?.geofenceId ||
+    state?.geofenceName ||
+    state?.lastInsideGeofenceName ||
+    state?.geofence
+  ).toUpperCase();
+  if (!normalizedLicensePlate) throw new Error('licensePlate is required for GPS Event usage.');
+  const identity = [
+    normalizedStampType,
+    operationDate,
+    normalizedLicensePlate,
+    gpsId,
+    gpsTime,
+    geofence,
+  ].join('|');
+  return {
+    identity,
+    key: `${GPS_EVENT_USAGE_KEY_PREFIX}${createHash('sha256').update(identity).digest('hex')}`,
+    stampType: normalizedStampType,
+    operationDate,
+    normalizedLicensePlate,
+    gpsId,
+    gpsTime,
+    geofence,
+  };
+}
+async function reserveGpsEventForCodeRun(stampType, state, codeRun) {
+  const normalizedCodeRun = normalizeCodeRun(codeRun);
+  const usage = getGpsEventUsageIdentity(stampType, state);
+  const client = requireRedisClient();
+  const now = new Date().toISOString();
+  const record = {
+    schemaVersion: 1,
+    ...usage,
+    key: undefined,
+    codeRun: normalizedCodeRun,
+    status: 'RESERVED',
+    reservedAt: now,
+    updatedAt: now,
+  };
+  const ttlSeconds = Math.min(
+    GPS_EVENT_USAGE_TTL_SECONDS,
+    getGpsOperationStateTtlSeconds(usage.operationDate)
+  );
+  const reserved = await client.set(usage.key, JSON.stringify(record), {
+    NX: true,
+    EX: ttlSeconds,
+  });
+  if (reserved) return { allowed: true, usageKey: usage.key, record, newlyReserved: true };
+  const existingRaw = await client.get(usage.key);
+  let existing = null;
+  try { existing = existingRaw ? JSON.parse(existingRaw) : null; } catch { existing = null; }
+  if (existing?.codeRun === normalizedCodeRun) {
+    return { allowed: true, usageKey: usage.key, record: existing, newlyReserved: false };
+  }
+  console.warn(JSON.stringify({
+    logType: 'ELIVE_GPS_STAMP',
+    event: 'GPS_EVENT_ALREADY_USED_BY_OTHER_CODE_RUN',
+    stampType: usage.stampType,
+    gpsTime: usage.gpsTime,
+    gpsId: usage.gpsId || null,
+    geofence: usage.geofence || null,
+    requestedCodeRun: normalizedCodeRun,
+    ownerCodeRun: existing?.codeRun || null,
+    ownerStatus: existing?.status || null,
+  }));
+  return { allowed: false, usageKey: usage.key, record: existing, newlyReserved: false };
+}
+async function assertGpsEventReservedForPending(record) {
+  if (!record?.gpsEventUsageKey) throw new Error('GPS_EVENT_USAGE_RESERVATION_MISSING');
+  const raw = await requireRedisClient().get(record.gpsEventUsageKey);
+  if (!raw) throw new Error('GPS_EVENT_USAGE_RESERVATION_EXPIRED');
+  let usage;
+  try { usage = JSON.parse(raw); } catch { throw new Error('GPS_EVENT_USAGE_RESERVATION_INVALID'); }
+  if (usage.codeRun !== record.codeRun || usage.stampType !== record.stampType) {
+    const error = new Error('GPS_EVENT_ALREADY_USED_BY_OTHER_CODE_RUN');
+    error.ownerCodeRun = usage.codeRun || null;
+    throw error;
+  }
+  return usage;
+}
+async function markGpsEventUsageStamped(record, stampResult) {
+  if (!record?.gpsEventUsageKey) return null;
+  const usage = await assertGpsEventReservedForPending(record);
+  const completed = {
+    ...usage,
+    status: 'STAMPED',
+    written: stampResult?.written !== false,
+    stampedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  await requireRedisClient().set(record.gpsEventUsageKey, JSON.stringify(completed), {
+    EX: Math.min(
+      GPS_EVENT_USAGE_TTL_SECONDS,
+      getGpsOperationStateTtlSeconds(record.operationDate)
+    ),
+  });
+  return completed;
+}
 function getPendingStampId(stampType, codeRun) {
   return `${normalizeStampType(stampType)}:${normalizeCodeRun(codeRun)}`;
 }
@@ -2068,6 +2175,8 @@ function getTerminalPendingStampErrorReason(error) {
   const terminalReasons = [
     'IS CANCELLED',
     'CANNOT STAMP ETA BECAUSE THIS TRIP ALREADY HAS STAMP ETD',
+    'GPS_EVENT_ALREADY_USED_BY_OTHER_CODE_RUN',
+    'GPS_EVENT_USAGE_RESERVATION_',
   ];
   return terminalReasons.find(reason => message.includes(reason)) || null;
 }
@@ -2213,6 +2322,23 @@ async function createPendingGpsStamp(stampType, state) {
   const normalizedStampType = normalizeStampType(stampType);
   const codeRun = normalizeCodeRun(state.activeCodeRun || state.codeRun);
   const pendingId = getPendingStampId(normalizedStampType, codeRun);
+  const gpsEventReservation = await reserveGpsEventForCodeRun(
+    normalizedStampType,
+    state,
+    codeRun
+  );
+  if (!gpsEventReservation.allowed) {
+    return {
+      pendingId,
+      codeRun,
+      stampType: normalizedStampType,
+      status: 'SUPERSEDED',
+      queued: false,
+      lastError: 'GPS_EVENT_ALREADY_USED_BY_OTHER_CODE_RUN',
+      ownerCodeRun: gpsEventReservation.record?.codeRun || null,
+      gpsEventUsageKeyHash: hashAuditValue(gpsEventReservation.usageKey),
+    };
+  }
   const now = new Date().toISOString();
   const payload = normalizedStampType === 'ETA'
     ? {
@@ -2235,13 +2361,16 @@ async function createPendingGpsStamp(stampType, state) {
         gpsSnapshot: { gpsId: state.gpsId, gpsTime: state.gpsTime, latitude: state.latitude, longitude: state.longitude, speed: state.speedKmh, geofence: state.lastInsideGeofenceName || state.geofenceName },
       };
   const initial = {
-    pendingSchemaVersion: 50,
+    pendingSchemaVersion: 51,
     operationDate: operation.operationDate,
     cutoffAt: operation.cutoffAt,
     pendingId, stampType: normalizedStampType, codeRun,
     licensePlate: state.licensePlate, normalizedLicensePlate: normalizeLicensePlate(state.licensePlate),
     gpsId: state.gpsId,
     gpsTime: state.gpsTime,
+    gpsEventUsageKey: gpsEventReservation.usageKey,
+    gpsEventUsageKeyHash: hashAuditValue(gpsEventReservation.usageKey),
+    gpsEventReservationNew: gpsEventReservation.newlyReserved,
     selectedPlanEta: state.activePlanEta || null,
     selectedPlanEtaMinutes: parsePlanMinutes(state.activePlanEta),
     geofence: payload.geofence || null,
@@ -2484,9 +2613,28 @@ async function processPendingGpsStamp(pendingId) {
         });
       }
     }
+    try {
+      await assertGpsEventReservedForPending(record);
+    } catch (usageError) {
+      console.warn(JSON.stringify({
+        logType: 'ELIVE_GPS_STAMP',
+        event: 'GPS_EVENT_FINAL_GUARD_BLOCKED',
+        pendingId,
+        codeRun: record.codeRun,
+        stampType: record.stampType,
+        gpsTime: record.gpsTime,
+        ownerCodeRun: usageError?.ownerCodeRun || null,
+        reason: getErrorMessage(usageError),
+      }));
+      return await closePendingStamp(record, 'SUPERSEDED', {
+        lastError: getErrorMessage(usageError),
+        terminalReason: 'GPS_EVENT_CROSS_CODE_RUN_GUARD',
+      });
+    }
     console.log(JSON.stringify({ logType: 'ELIVE_GPS_STAMP', event: 'STAMP_REQUEST_SENT', pendingId, codeRun: record.codeRun, stampType: record.stampType, attemptCount }));
     const response = await stampActualData(record.payload);
     const stampResult = response?.result || response;
+    await markGpsEventUsageStamped(record, stampResult);
     const status = stampResult?.written === false ? 'ALREADY_STAMPED' : 'STAMPED';
     console.log(JSON.stringify({ logType: 'ELIVE_GPS_STAMP', event: status === 'STAMPED' ? 'STAMP_CONFIRMED' : 'STAMP_ALREADY_EXISTS', pendingId, codeRun: record.codeRun }));
     return await closePendingStamp(record, status, { result: stampResult });
@@ -5103,7 +5251,7 @@ app.get(['/health', '/api/health'], (req, res) => {
       etdReconciliationPolicy: 'STAMP_OPEN_ETA_TRIP_ON_ANY_SAME_DAY_GPS_OUTSIDE_TARGET_GEOFENCE',
       etdGpsFreshnessRequired: false,
       etdSameDayGpsRequired: true,
-      etdDuplicateGpsAllowed: true,
+      etdDuplicateGpsAllowed: false,
       etdOutOfOrderGpsAllowedWithinSameDay: true,
       backgroundWorkerEnabled: GPS_BACKGROUND_WORKER_ENABLED,
       backgroundWorkerIntervalMs: GPS_BACKGROUND_WORKER_INTERVAL_MS,
@@ -5130,7 +5278,13 @@ app.get(['/health', '/api/health'], (req, res) => {
       gpsWorkerInputMode: 'FRESH_APPS_SCRIPT_RESPONSE',
       dashboardSnapshotRole: 'DISPLAY_ONLY',
       fallbackAutoStampAllowed: false,
-      duplicateGpsGuardEnabled: false,
+      duplicateGpsGuardEnabled: true,
+      crossCodeRunGpsEventGuardEnabled: true,
+      gpsEventUsageLedgerEnabled: true,
+      gpsEventUsageLedgerKeyPrefix: GPS_EVENT_USAGE_KEY_PREFIX,
+      gpsEventUsageLedgerTtlSeconds: GPS_EVENT_USAGE_TTL_SECONDS,
+      gpsEventUsageIdentity: 'STAMP_TYPE_OPERATION_DATE_LICENSE_PLATE_GPS_ID_GPS_TIME_GEOFENCE',
+      gpsEventFinalPreSendGuardEnabled: true,
       outOfOrderGpsGuardEnabled: false,
       autoStampFreshThresholdSeconds: null,
       lastProcessedGpsTtlSeconds: GPS_LAST_PROCESSED_TTL_SECONDS,
@@ -5222,7 +5376,7 @@ app.get(['/health', '/api/health'], (req, res) => {
       emptyPendingQueueLoggingEnabled: false,
       pendingStampOrphanedProcessingPolicy: 'RETURN_TO_PENDING',
       pendingStampDelayedScheduleAllowedStatuses: ['RETRY_WAIT'],
-      pendingStampSchemaVersion: 50,
+      pendingStampSchemaVersion: 51,
       legacyEtaPendingAutoSuperseded: false,
       terminalPendingRecordCanBeRecreated: true,
       newlyCreatedPendingProcessedInSameWorkerCycle: true,
