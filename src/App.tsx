@@ -1166,12 +1166,6 @@ export default function App() {
                 placeholder="กรอก Password"
               />
             </label>
-            {sessionEndedMessage && !loginError && (
-              <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                <span>{sessionEndedMessage}</span>
-              </div>
-            )}
             {loginError && (
               <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -1187,9 +1181,6 @@ export default function App() {
               {isSubmittingLogin ? 'กำลังเข้าสู่ระบบ...' : 'Sign In'}
             </button>
           </form>
-          <p className="mt-5 text-center text-xs text-slate-400">
-            Session จะหมดอายุภายใน 12 ชั่วโมง หรือเมื่อระบบ Backend เริ่มทำงานใหม่
-          </p>
         </div>
       </div>
     );
