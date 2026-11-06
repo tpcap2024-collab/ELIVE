@@ -264,10 +264,11 @@ export function MobileOperation({
                 <Menu className="h-5 w-5" />
               </button>
             )}
-
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-600">
-              <span className="text-xl font-black italic text-white">E</span>
-            </div>
+            <img
+              src="/pwa-192x192.png"
+              alt="ELIVE"
+              className="h-11 w-11 shrink-0 rounded-full object-contain shadow-sm"
+            />
 
             <div className="min-w-0">
               <h1 className="truncate text-base font-black text-slate-900">
