@@ -1114,7 +1114,8 @@ export default function App() {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-50 font-sans">
         <div className="flex flex-col items-center gap-4 rounded-2xl border border-slate-200 bg-white px-10 py-8 shadow-sm">
-          <RefreshCw className="h-8 w-8 animate-spin text-blue-600" />
+          <img src="/pwa-192x192.png" alt="ELIVE" className="h-16 w-16 rounded-full object-contain shadow-sm" />
+          <RefreshCw className="h-6 w-6 animate-spin text-blue-600" />
           <div className="text-center">
             <h1 className="font-bold text-slate-800">ELIVE</h1>
             <p className="mt-1 text-sm text-slate-500">กำลังตรวจสอบ Session...</p>
@@ -1128,9 +1129,7 @@ export default function App() {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50 px-4 font-sans">
         <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
-          <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-blue-600">
-            <span className="text-3xl font-bold italic text-white">E</span>
-          </div>
+          <img src="/pwa-192x192.png" alt="ELIVE" className="mx-auto mb-6 h-20 w-20 rounded-full object-contain shadow-md" />
           <h1 className="mb-2 text-center text-2xl font-bold text-slate-800">ELIVE Login</h1>
           <p className="mb-6 text-center text-sm text-slate-500">เข้าสู่ระบบเพื่อใช้งาน ELIVE Dashboard</p>
           <form onSubmit={handleAppLogin} className="space-y-4">
@@ -1213,9 +1212,7 @@ export default function App() {
       {currentView !== 'mobile' && (
         <div className="sticky top-0 z-20 flex items-center justify-between border-b border-slate-200 bg-white p-4 md:hidden">
         <div className="flex items-center gap-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600">
-            <span className="text-lg font-bold italic text-white">E</span>
-          </div>
+          <img src="/pwa-192x192.png" alt="ELIVE" className="h-9 w-9 rounded-full object-contain shadow-sm" />
           <div><span className="block text-xl font-bold text-slate-800">ELIVE</span><span className="block text-[10px] text-slate-400">Logistics Platform</span></div>
         </div>
         <button type="button" onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="rounded-lg p-2 text-slate-600 hover:bg-slate-100">
@@ -1234,9 +1231,7 @@ export default function App() {
           >
             <div className="flex w-64 items-center justify-between border-b border-slate-200 p-5">
               <div className="flex items-center gap-3">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600">
-                  <span className="text-lg font-bold italic text-white">E</span>
-                </div>
+                <img src="/pwa-192x192.png" alt="ELIVE" className="h-9 w-9 rounded-full object-contain shadow-sm" />
                 <div><span className="block text-xl font-bold text-slate-800">ELIVE</span><span className="block text-[10px] text-slate-400">Logistics Platform</span></div>
               </div>
               <button type="button" onClick={() => setIsSidebarOpen(false)} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 md:hidden">
