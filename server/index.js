@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '82';
+const API_VERSION = '83';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -70,6 +70,18 @@ const MASTER_PLAN_CREATE_BATCH_MAX_ROWS = 500;
 const MASTER_PLAN_CREATE_BATCH_TIMEOUT_MS = 120000;
 const DAILY_PLAN_CREATE_BATCH_MAX_ROWS = 500;
 const DAILY_PLAN_CREATE_BATCH_TIMEOUT_MS = 120000;
+const DAILY_PLAN_RETENTION_DAYS = 62;
+const DAILY_PLAN_RETENTION_RUN_MINUTES = 20 * 60;
+const DAILY_PLAN_RETENTION_MAX_ROWS = 5000;
+const DAILY_PLAN_RETENTION_TIMEOUT_MS = 180000;
+const DAILY_PLAN_RETENTION_ENABLED = cleanText(
+  process.env.DAILY_PLAN_RETENTION_ENABLED || 'true'
+).toLowerCase() === 'true';
+const DAILY_PLAN_RETENTION_LOCK_KEY = 'elive:daily-plan-retention:lock';
+const DAILY_PLAN_RETENTION_LOCK_SECONDS = 10 * 60;
+const DAILY_PLAN_RETENTION_COMPLETION_KEY_PREFIX = 'elive:daily-plan-retention:completed:';
+const DAILY_PLAN_RETENTION_COMPLETION_TTL_SECONDS = 7 * 24 * 60 * 60;
+const DAILY_PLAN_RETENTION_CHECK_INTERVAL_MS = 60 * 1000;
 const GPS_PARKING_SPEED_THRESHOLD_KMH = 0;
 const GPS_DWELL_THRESHOLD_MS = 3 * 60 * 1000;
 const GPS_STALE_THRESHOLD_MS = 5 * 60 * 1000;
@@ -274,6 +286,9 @@ let gpsWorkerTimer = null;
 let gpsWorkerStopping = false;
 let gpsWorkerCycleRunning = false;
 let lastPendingStampMaintenanceAtMs = 0;
+let dailyPlanRetentionTimer = null;
+let dailyPlanRetentionCycleRunning = false;
+let dailyPlanRetentionStopping = false;
 
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
@@ -837,6 +852,30 @@ function getBangkokDateText(date = new Date()) {
     month: '2-digit',
     day: '2-digit',
   }).format(date);
+}
+function shiftIsoDateText(dateText, dayOffset) {
+  const validated = validateDateText(dateText, 'dateText');
+  const [year, month, day] = validated.split('-').map(Number);
+  const shifted = new Date(Date.UTC(year, month - 1, day + Number(dayOffset || 0)));
+  return `${shifted.getUTCFullYear()}-${String(shifted.getUTCMonth() + 1).padStart(2, '0')}-${String(shifted.getUTCDate()).padStart(2, '0')}`;
+}
+function getDailyPlanRetentionDecision(now = new Date()) {
+  const operationDate = getBangkokDateText(now);
+  const minuteOfDay = getBangkokMinuteOfDay(now);
+  const cutoffDate = shiftIsoDateText(operationDate, -DAILY_PLAN_RETENTION_DAYS);
+  return {
+    enabled: DAILY_PLAN_RETENTION_ENABLED,
+    operationDate,
+    cutoffDate,
+    retentionDays: DAILY_PLAN_RETENTION_DAYS,
+    minuteOfDay,
+    scheduledMinutes: DAILY_PLAN_RETENTION_RUN_MINUTES,
+    scheduledTime: '20:00',
+    eligibleToRun: minuteOfDay >= DAILY_PLAN_RETENTION_RUN_MINUTES,
+  };
+}
+function getDailyPlanRetentionCompletionKey(operationDate) {
+  return `${DAILY_PLAN_RETENTION_COMPLETION_KEY_PREFIX}${operationDate}`;
 }
 function parseSheetDateText(value) {
   const text = cleanText(value);
@@ -3763,6 +3802,161 @@ async function runGpsBackgroundCycle() {
   }
 }
 
+async function runDailyPlanRetentionCycle() {
+  const decision = getDailyPlanRetentionDecision(new Date());
+  const empty = {
+    ...decision,
+    skipped: true,
+    reason: null,
+    planDeletedCount: 0,
+    actualDeletedCount: 0,
+    redisKeysDeleted: 0,
+    durationMs: 0,
+  };
+  if (!decision.enabled) return { ...empty, reason: 'RETENTION_DISABLED' };
+  if (!decision.eligibleToRun) return { ...empty, reason: 'BEFORE_20_00_BANGKOK' };
+  if (dailyPlanRetentionCycleRunning) return { ...empty, reason: 'LOCAL_CYCLE_ALREADY_RUNNING' };
+  const client = requireRedisClient();
+  const completionKey = getDailyPlanRetentionCompletionKey(decision.operationDate);
+  if (await client.exists(completionKey)) return { ...empty, reason: 'ALREADY_COMPLETED_TODAY' };
+  const lockToken = randomUUID();
+  const acquired = await client.set(
+    DAILY_PLAN_RETENTION_LOCK_KEY,
+    lockToken,
+    { NX: true, EX: DAILY_PLAN_RETENTION_LOCK_SECONDS }
+  );
+  if (!acquired) return { ...empty, reason: 'LEADER_LOCK_NOT_ACQUIRED' };
+  dailyPlanRetentionCycleRunning = true;
+  const startedAt = Date.now();
+  console.log(JSON.stringify({
+    logType: 'ELIVE_AUTO_DELETE_RETENTION',
+    event: 'AUTO_DELETE_RETENTION_STARTED',
+    operationDate: decision.operationDate,
+    cutoffDate: decision.cutoffDate,
+    retentionDays: decision.retentionDays,
+    maximumRows: DAILY_PLAN_RETENTION_MAX_ROWS,
+  }));
+  try {
+    await waitForExistingAppsScriptReads();
+    const response = await requestAppsScriptPost(
+      'deleteExpiredDailyPlans',
+      {
+        cutoffDate: decision.cutoffDate,
+        retentionDays: decision.retentionDays,
+        maximumRows: DAILY_PLAN_RETENTION_MAX_ROWS,
+        deletePlan: true,
+        deleteActual: true,
+      },
+      DAILY_PLAN_RETENTION_TIMEOUT_MS
+    );
+    const result = response?.result || response || {};
+    const failedCount = Number(result.failedCount || 0);
+    if (failedCount > 0 || result.success === false) {
+      throw new Error(result.message || `Retention deletion failed ${failedCount} rows.`);
+    }
+    clearTruckCache();
+    const deletedDailyPlanCacheCount = await clearGpsWorkerDailyPlanCache();
+    const deletedRealtimeCacheCount = await client.del(GPS_REALTIME_CACHE_KEY);
+    const deletedCodeRuns = Array.isArray(result.deletedCodeRuns)
+      ? result.deletedCodeRuns.map(normalizeCodeRun)
+      : [];
+    let redisKeysDeleted = 0;
+    for (const codeRun of deletedCodeRuns) {
+      redisKeysDeleted += await client.del([
+        getGpsDwellKey(codeRun),
+        getPendingStampKey(getPendingStampId('ETA', codeRun)),
+        getPendingStampKey(getPendingStampId('ETD', codeRun)),
+      ]);
+      await client.zRem(GPS_PENDING_STAMP_SCHEDULE_KEY, [
+        getPendingStampId('ETA', codeRun),
+        getPendingStampId('ETD', codeRun),
+      ]);
+    }
+    const summary = {
+      ...decision,
+      skipped: false,
+      reason: null,
+      requestedPlanCount: Number(result.requestedPlanCount || result.planRequestedCount || 0),
+      requestedActualCount: Number(result.requestedActualCount || result.actualRequestedCount || 0),
+      planDeletedCount: Number(result.planDeletedCount || result.deletedPlanCount || 0),
+      actualDeletedCount: Number(result.actualDeletedCount || result.deletedActualCount || 0),
+      failedCount,
+      deletedDailyPlanCacheCount,
+      deletedRealtimeCacheCount,
+      redisKeysDeleted,
+      durationMs: Date.now() - startedAt,
+      completedAt: new Date().toISOString(),
+    };
+    await client.set(completionKey, JSON.stringify(summary), {
+      EX: DAILY_PLAN_RETENTION_COMPLETION_TTL_SECONDS,
+    });
+    writeAuditLog({
+      requestId: randomUUID(),
+      timestamp: summary.completedAt,
+      actorUsername: 'SYSTEM',
+      actorRole: 'SYSTEM',
+      method: 'SYSTEM',
+      path: 'daily-plan-retention',
+      action: 'AUTO_DELETE_RETENTION_COMPLETED',
+      targetType: 'PLAN_AND_ACTUAL_RETENTION',
+      targetIdHash: hashAuditValue(decision.cutoffDate),
+      cutoffDate: decision.cutoffDate,
+      retentionDays: decision.retentionDays,
+      planDeletedCount: summary.planDeletedCount,
+      actualDeletedCount: summary.actualDeletedCount,
+      result: 'SUCCESS',
+      statusCode: 200,
+      durationMs: summary.durationMs,
+      ipHash: null,
+      userAgentHash: null,
+    });
+    console.log(JSON.stringify({
+      logType: 'ELIVE_AUTO_DELETE_RETENTION',
+      event: 'AUTO_DELETE_RETENTION_COMPLETED',
+      ...summary,
+    }));
+    return summary;
+  } catch (error) {
+    const summary = {
+      ...decision,
+      skipped: false,
+      reason: 'RETENTION_DELETE_FAILED',
+      error: getErrorMessage(error),
+      durationMs: Date.now() - startedAt,
+    };
+    console.error(JSON.stringify({
+      logType: 'ELIVE_AUTO_DELETE_RETENTION',
+      event: 'AUTO_DELETE_RETENTION_FAILED',
+      ...summary,
+    }));
+    return summary;
+  } finally {
+    dailyPlanRetentionCycleRunning = false;
+    await releaseRedisLock(client, DAILY_PLAN_RETENTION_LOCK_KEY, lockToken).catch(() => {});
+  }
+}
+function scheduleNextDailyPlanRetentionCheck(delayMs = DAILY_PLAN_RETENTION_CHECK_INTERVAL_MS) {
+  if (dailyPlanRetentionStopping || !DAILY_PLAN_RETENTION_ENABLED) return;
+  dailyPlanRetentionTimer = setTimeout(async () => {
+    await runDailyPlanRetentionCycle();
+    scheduleNextDailyPlanRetentionCheck();
+  }, delayMs);
+  dailyPlanRetentionTimer.unref?.();
+}
+function startDailyPlanRetentionScheduler() {
+  if (!DAILY_PLAN_RETENTION_ENABLED) {
+    console.log('Daily Plan retention scheduler is disabled.');
+    return;
+  }
+  console.log(`Daily Plan retention scheduler enabled: ${DAILY_PLAN_RETENTION_DAYS} days, 20:00 Asia/Bangkok.`);
+  scheduleNextDailyPlanRetentionCheck(15000);
+}
+async function stopDailyPlanRetentionScheduler() {
+  dailyPlanRetentionStopping = true;
+  if (dailyPlanRetentionTimer) clearTimeout(dailyPlanRetentionTimer);
+  const deadline = Date.now() + 15000;
+  while (dailyPlanRetentionCycleRunning && Date.now() < deadline) await wait(250);
+}
 function scheduleNextGpsWorkerCycle(delayMs) {
   if (gpsWorkerStopping || !GPS_BACKGROUND_WORKER_ENABLED) return;
   gpsWorkerTimer = setTimeout(async () => {
@@ -5300,6 +5494,17 @@ app.get(['/health', '/api/health'], (req, res) => {
       '/api/route-to-tpcap',
     ],
     sessionStore: { type: 'redis', configured: Boolean(REDIS_URL), ready: Boolean(redisReady && redisClient?.isReady), lastError: lastRedisError },
+    dailyPlanRetention: {
+      enabled: DAILY_PLAN_RETENTION_ENABLED,
+      retentionDays: DAILY_PLAN_RETENTION_DAYS,
+      scheduledTime: '20:00',
+      timeZone: 'Asia/Bangkok',
+      deleteScope: 'PLAN_AND_MATCHING_ACTUAL',
+      maximumRowsPerRun: DAILY_PLAN_RETENTION_MAX_ROWS,
+      permanentDelete: true,
+      action: 'deleteExpiredDailyPlans',
+      leaderLockKey: DAILY_PLAN_RETENTION_LOCK_KEY,
+    },
     gpsDockMonitoring: {
       enabled: true,
       autoStampEnabled: GPS_AUTO_STAMP_ETA_ENABLED,
@@ -6556,6 +6761,7 @@ try {
 
 async function shutdown(signal) {
   console.log(`Received ${signal}. Shutting down safely.`);
+  await stopDailyPlanRetentionScheduler();
   await stopGpsBackgroundWorker();
   if (redisClient?.isOpen) await redisClient.quit().catch(() => {});
   process.exit(0);
@@ -6566,6 +6772,7 @@ async function startServer(){
   await initializeRedis();
   await maintainPendingStampSchedule(true);
   startGpsBackgroundWorker();
+  startDailyPlanRetentionScheduler();
   if (SERVICE_MODE === 'worker') {
     if (!GPS_BACKGROUND_WORKER_ENABLED) throw new Error('SERVICE_MODE worker requires GPS_BACKGROUND_WORKER_ENABLED=true.');
     console.log(`ELIVE GPS Background Worker version ${API_VERSION} is running.`);
