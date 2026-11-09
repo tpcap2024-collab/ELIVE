@@ -54,13 +54,23 @@ type GeofenceConfig = {
   latitude: number;
   longitude: number;
   radiusMeters: number;
+  detectionMode?: 'CIRCLE' | 'POLYGON';
+  polygon?: [number, number][];
   color: string;
 };
 type GeofenceEvaluation = GeofenceConfig & {
   distanceMeters: number;
+  boundaryDistanceMeters: number;
   isInside: boolean;
 };
 const DEFAULT_GEOFENCE_RADIUS_METERS = 50;
+
+const TPCAP_LSP_POLYGON: [number, number][] = [
+  [13.624857244606016, 101.01561954685484],
+  [13.624106306310814, 101.0148249703053],
+  [13.623781427556, 101.01512623649937],
+  [13.62459619769645, 101.01593633649198],
+];
 
 const TPCAP_SITE_POLYGON: [number, number][] = [
   [13.628373770556774, 101.01488672623992],
@@ -84,6 +94,31 @@ function isInsideTpcapSite(latitude: number, longitude: number): boolean {
   return inside;
 }
 
+function isPointInsidePolygon(latitude: number, longitude: number, polygon: [number, number][]): boolean {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const [ay, ax] = polygon[j], [by, bx] = polygon[i];
+    if ((ay > latitude) !== (by > latitude) && longitude < (bx - ax) * (latitude - ay) / (by - ay) + ax) inside = !inside;
+  }
+  return inside;
+}
+function distancePointToSegmentMeters(point: [number, number], start: [number, number], end: [number, number]): number {
+  const latScale = 111320, lonScale = 111320 * Math.cos(point[0] * Math.PI / 180);
+  const px=point[1]*lonScale, py=point[0]*latScale, ax=start[1]*lonScale, ay=start[0]*latScale, bx=end[1]*lonScale, by=end[0]*latScale;
+  const dx=bx-ax, dy=by-ay, lengthSquared=dx*dx+dy*dy;
+  const ratio=lengthSquared ? Math.max(0,Math.min(1,((px-ax)*dx+(py-ay)*dy)/lengthSquared)) : 0;
+  return Math.hypot(px-(ax+ratio*dx),py-(ay+ratio*dy));
+}
+function evaluateLiveMapGeofence(geofence: GeofenceConfig, latitude: number, longitude: number): GeofenceEvaluation {
+  if (geofence.detectionMode === 'POLYGON' && geofence.polygon) {
+    const isInside=isPointInsidePolygon(latitude,longitude,geofence.polygon);
+    const boundaryDistanceMeters=Math.min(...geofence.polygon.map((point,index)=>distancePointToSegmentMeters([latitude,longitude],point,geofence.polygon![(index+1)%geofence.polygon!.length])));
+    return {...geofence,distanceMeters:isInside?0:boundaryDistanceMeters,boundaryDistanceMeters,isInside};
+  }
+  const distanceMeters=calculateDistanceMeters(latitude,longitude,geofence.latitude,geofence.longitude);
+  return {...geofence,distanceMeters,boundaryDistanceMeters:Math.abs(geofence.radiusMeters-distanceMeters),isInside:distanceMeters<=geofence.radiusMeters};
+}
+
 const GPS_GEOFENCES: GeofenceConfig[] = [
   {
     id: 'TPCAP-LSP',
@@ -91,6 +126,8 @@ const GPS_GEOFENCES: GeofenceConfig[] = [
     latitude: 13.624391050915499,
     longitude: 101.01532262451346,
     radiusMeters: 60,
+    detectionMode: 'POLYGON',
+    polygon: TPCAP_LSP_POLYGON,
     color: '#7c3aed',
   },
   {
@@ -708,19 +745,9 @@ export function LiveMap({
   const selectedGeofenceEvaluation =
     useMemo<GeofenceEvaluation | null>(() => {
       if (!selectedGpsLocation) return null;
-      const evaluations = GPS_GEOFENCES.map(geofence => {
-        const distanceMeters = calculateDistanceMeters(
-          selectedGpsLocation.latitude,
-          selectedGpsLocation.longitude,
-          geofence.latitude,
-          geofence.longitude
-        );
-        return {
-          ...geofence,
-          distanceMeters,
-          isInside: distanceMeters <= geofence.radiusMeters,
-        };
-      });
+      const evaluations = GPS_GEOFENCES.map(geofence =>
+        evaluateLiveMapGeofence(geofence, selectedGpsLocation.latitude, selectedGpsLocation.longitude)
+      );
       const targetId = getTargetGeofenceId(selectedTruck?.dropPoint);
       if (targetId) {
         return evaluations.find(item => item.id === targetId) || null;
@@ -954,15 +981,11 @@ export function LiveMap({
         : [];
     for (const geofence of geofencesToShow) {
       const position: [number, number] = [geofence.latitude, geofence.longitude];
-      L.circle(position, {
-        radius: geofence.radiusMeters,
-        color: geofence.color,
-        weight: 3,
-        opacity: 0.95,
-        fillColor: geofence.color,
-        fillOpacity: 0.12,
-        dashArray: '8 6',
-      }).addTo(geofenceLayer);
+      if (geofence.detectionMode === 'POLYGON' && geofence.polygon) {
+        L.polygon(geofence.polygon, { color: geofence.color, weight: 3, opacity: 0.95, fillColor: geofence.color, fillOpacity: 0.12, dashArray: '8 6' }).addTo(geofenceLayer);
+      } else {
+        L.circle(position, { radius: geofence.radiusMeters, color: geofence.color, weight: 3, opacity: 0.95, fillColor: geofence.color, fillOpacity: 0.12, dashArray: '8 6' }).addTo(geofenceLayer);
+      }
       if (showGeofenceDebug) {
         L.marker(position, {
           icon: createGeofenceMarkerIcon(geofence.name, geofence.color),
@@ -1437,10 +1460,9 @@ export function LiveMap({
       if (map) {
         const geofenceBounds = L.latLngBounds([
           ...TPCAP_SITE_POLYGON,
-          ...GPS_GEOFENCES.map(geofence => [
-            geofence.latitude,
-            geofence.longitude,
-          ] as [number, number]),
+          ...GPS_GEOFENCES.flatMap(geofence => geofence.detectionMode === 'POLYGON' && geofence.polygon
+            ? geofence.polygon
+            : [[geofence.latitude, geofence.longitude] as [number, number]]),
         ]);
         map.fitBounds(geofenceBounds, {
           padding: [60, 60],
@@ -1482,6 +1504,7 @@ export function LiveMap({
   const geofenceName = selectedGeofenceEvaluation?.name || '-';
   const geofenceDistance = selectedGeofenceEvaluation?.distanceMeters;
   const geofenceRadius = selectedGeofenceEvaluation?.radiusMeters;
+  const geofenceDetectionMode = selectedGeofenceEvaluation?.detectionMode || 'CIRCLE';
   const etaStatus = hasStampedEta ? 'STAMPED' : gpsDockResult?.readyForGpsStampEta ? 'READY' : 'WAITING';
   const etdStatus = hasStampedEtd ? 'STAMPED' : gpsDockResult?.readyForGpsStampEtd ? 'READY' : 'WAITING';
   return (
