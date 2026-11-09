@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '85';
+const API_VERSION = '86';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -1694,13 +1694,17 @@ async function recoverGpsBlockedEntries(data, operationDate) {
 function selectGpsEtaArrivalGroup(trips, activeTrip, geofenceId, nowMinutes) {
   const eligibleTrips = getEligibleEtaTripsForVehicle(trips, geofenceId, nowMinutes);
   if (!eligibleTrips.length) return [];
-  if (activeTrip) {
-    const activeEligibleTrip = eligibleTrips.find(
-      trip => trip.codeRun === activeTrip.codeRun
-    );
-    if (activeEligibleTrip) return [activeEligibleTrip];
+  const primaryTrip = activeTrip
+    ? eligibleTrips.find(trip => trip.codeRun === activeTrip.codeRun) || eligibleTrips[0]
+    : eligibleTrips[0];
+  if (geofenceId !== 'TPCAP-LSP') return [primaryTrip];
+  const sharedTrips = getLspSharedVisitTrips(trips, primaryTrip)
+    .filter(trip => !trip.stampEta && !trip.stampEtd && !trip.noWorkAction);
+  if (sharedTrips.length > 1) {
+    console.log(JSON.stringify({ logType:'ELIVE_GPS_STAMP', event:'LSP_SHARED_VISIT_SELECTED', visitId:getLspSharedVisitId(primaryTrip, primaryTrip.planLicensePlate), groupCode:primaryTrip.groupCode, codeRuns:sharedTrips.map(trip=>trip.codeRun), dropPoints:sharedTrips.map(trip=>trip.dropPoint) }));
+    return sharedTrips;
   }
-  return [eligibleTrips[0]];
+  return [primaryTrip];
 }
 
 function selectTripForVehicle(trips, nowMinutes, previousCycle = null, detectedGeofenceId = null) {
@@ -2105,6 +2109,7 @@ function findTripByCodeRun(data, codeRun) {
     dropPoint: cleanText(planRow[9]).toUpperCase(),
     planEta: cleanText(planRow[10]),
     planEtaMinutes: parsePlanMinutes(planRow[10]),
+    groupCode: normalizeGroupCode(planRow[15]),
     stampEta: cleanText(actualRow[4]),
     stampEtd: cleanText(actualRow[5]),
     actionStatus: cleanText(actualRow[1]),
@@ -2154,6 +2159,43 @@ async function stampActualData(payload) {
   clearTruckCache();
   return result;
 }
+function isLspFamilyDropPoint(dropPoint) {
+  return /^(?:L1|L2|L3|M1)(?:-|\b)/.test(cleanText(dropPoint).toUpperCase());
+}
+function getLspSharedVisitId(trip, licensePlate) {
+  const groupCode = normalizeGroupCode(trip?.groupCode);
+  if (!groupCode || !isLspFamilyDropPoint(trip?.dropPoint)) return null;
+  if (getGeofenceIdForDropPoint(trip.dropPoint) !== 'TPCAP-LSP') return null;
+  const planDate = cleanText(trip?.planDate);
+  const normalizedPlate = normalizeLicensePlate(licensePlate || trip?.planLicensePlate);
+  if (!planDate || !normalizedPlate) return null;
+  return `${planDate}|${normalizedPlate}|${groupCode}|TPCAP-LSP`;
+}
+function getLspSharedVisitTrips(trips, sourceTrip) {
+  const visitId = getLspSharedVisitId(sourceTrip, sourceTrip?.planLicensePlate);
+  if (!visitId) return [];
+  return (Array.isArray(trips) ? trips : [])
+    .filter(trip =>
+      getLspSharedVisitId(trip, trip?.planLicensePlate) === visitId &&
+      !trip.noWorkAction &&
+      !trip.stampEtd
+    )
+    .sort(compareTripsByPlanTime);
+}
+function buildGpsEventOwnership(state, codeRun) {
+  const normalizedCodeRun = normalizeCodeRun(codeRun);
+  const visitId = cleanText(state?.sharedVisitId);
+  const allowedCodeRuns = [...new Set(
+    (Array.isArray(state?.sharedAllowedCodeRuns) ? state.sharedAllowedCodeRuns : [normalizedCodeRun])
+      .map(normalizeCodeRun)
+  )];
+  return {
+    ownershipType: visitId ? 'LSP_SHARED_VISIT' : 'CODE_RUN',
+    ownerId: visitId || normalizedCodeRun,
+    visitId: visitId || null,
+    allowedCodeRuns: visitId ? allowedCodeRuns : [normalizedCodeRun],
+  };
+}
 function getGpsEventUsageIdentity(stampType, state) {
   const normalizedStampType = normalizeStampType(stampType);
   const gpsTime = parseBangkokDateTime(state?.gpsTime, 'gpsTime').toISOString();
@@ -2189,58 +2231,64 @@ function getGpsEventUsageIdentity(stampType, state) {
 async function reserveGpsEventForCodeRun(stampType, state, codeRun) {
   const normalizedCodeRun = normalizeCodeRun(codeRun);
   const usage = getGpsEventUsageIdentity(stampType, state);
+  const ownership = buildGpsEventOwnership(state, normalizedCodeRun);
   const client = requireRedisClient();
   const now = new Date().toISOString();
   const record = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     ...usage,
     key: undefined,
     codeRun: normalizedCodeRun,
+    ...ownership,
     status: 'RESERVED',
     reservedAt: now,
     updatedAt: now,
   };
-  const ttlSeconds = Math.min(
-    GPS_EVENT_USAGE_TTL_SECONDS,
-    getGpsOperationStateTtlSeconds(usage.operationDate)
-  );
-  const reserved = await client.set(usage.key, JSON.stringify(record), {
-    NX: true,
-    EX: ttlSeconds,
-  });
+  const ttlSeconds = Math.min(GPS_EVENT_USAGE_TTL_SECONDS, getGpsOperationStateTtlSeconds(usage.operationDate));
+  const reserved = await client.set(usage.key, JSON.stringify(record), { NX: true, EX: ttlSeconds });
   if (reserved) return { allowed: true, usageKey: usage.key, record, newlyReserved: true };
   const existingRaw = await client.get(usage.key);
   let existing = null;
   try { existing = existingRaw ? JSON.parse(existingRaw) : null; } catch { existing = null; }
-  if (existing?.codeRun === normalizedCodeRun) {
+  const sameSharedVisit = Boolean(
+    ownership.ownershipType === 'LSP_SHARED_VISIT' &&
+    existing?.ownershipType === 'LSP_SHARED_VISIT' &&
+    existing?.ownerId === ownership.ownerId &&
+    Array.isArray(existing?.allowedCodeRuns) &&
+    existing.allowedCodeRuns.includes(normalizedCodeRun)
+  );
+  if (existing?.codeRun === normalizedCodeRun || sameSharedVisit) {
+    if (sameSharedVisit && existing?.codeRun !== normalizedCodeRun) {
+      console.log(JSON.stringify({ logType:'ELIVE_GPS_STAMP', event:'GPS_EVENT_SHARED_WITHIN_VISIT_GROUP', stampType:usage.stampType, gpsTime:usage.gpsTime, visitId:ownership.visitId, requestedCodeRun:normalizedCodeRun, ownerCodeRun:existing.codeRun }));
+    }
     return { allowed: true, usageKey: usage.key, record: existing, newlyReserved: false };
   }
-  console.warn(JSON.stringify({
-    logType: 'ELIVE_GPS_STAMP',
-    event: 'GPS_EVENT_ALREADY_USED_BY_OTHER_CODE_RUN',
-    stampType: usage.stampType,
-    gpsTime: usage.gpsTime,
-    gpsId: usage.gpsId || null,
-    geofence: usage.geofence || null,
-    requestedCodeRun: normalizedCodeRun,
-    ownerCodeRun: existing?.codeRun || null,
-    ownerStatus: existing?.status || null,
-  }));
-  return { allowed: false, usageKey: usage.key, record: existing, newlyReserved: false };
+  console.warn(JSON.stringify({ logType:'ELIVE_GPS_STAMP', event:'GPS_EVENT_ALREADY_USED_BY_OTHER_CODE_RUN', stampType:usage.stampType, gpsTime:usage.gpsTime, gpsId:usage.gpsId||null, geofence:usage.geofence||null, requestedCodeRun:normalizedCodeRun, ownerCodeRun:existing?.codeRun||null, ownerStatus:existing?.status||null, requestedOwnerId:ownership.ownerId, existingOwnerId:existing?.ownerId||null }));
+  return { allowed:false, usageKey:usage.key, record:existing, newlyReserved:false };
 }
+
 async function assertGpsEventReservedForPending(record) {
   if (!record?.gpsEventUsageKey) throw new Error('GPS_EVENT_USAGE_RESERVATION_MISSING');
   const raw = await requireRedisClient().get(record.gpsEventUsageKey);
   if (!raw) throw new Error('GPS_EVENT_USAGE_RESERVATION_EXPIRED');
   let usage;
   try { usage = JSON.parse(raw); } catch { throw new Error('GPS_EVENT_USAGE_RESERVATION_INVALID'); }
-  if (usage.codeRun !== record.codeRun || usage.stampType !== record.stampType) {
+  const sameCodeRun = usage.codeRun === record.codeRun;
+  const sameSharedVisit = Boolean(
+    record.sharedVisitId &&
+    usage.ownershipType === 'LSP_SHARED_VISIT' &&
+    usage.ownerId === record.sharedVisitId &&
+    Array.isArray(usage.allowedCodeRuns) &&
+    usage.allowedCodeRuns.includes(record.codeRun)
+  );
+  if ((!sameCodeRun && !sameSharedVisit) || usage.stampType !== record.stampType) {
     const error = new Error('GPS_EVENT_ALREADY_USED_BY_OTHER_CODE_RUN');
     error.ownerCodeRun = usage.codeRun || null;
     throw error;
   }
   return usage;
 }
+
 async function markGpsEventUsageStamped(record, stampResult) {
   if (!record?.gpsEventUsageKey) return null;
   const usage = await assertGpsEventReservedForPending(record);
@@ -2467,7 +2515,7 @@ async function createPendingGpsStamp(stampType, state) {
         gpsSnapshot: { gpsId: state.gpsId, gpsTime: state.gpsTime, latitude: state.latitude, longitude: state.longitude, speed: state.speedKmh, geofence: state.lastInsideGeofenceName || state.geofenceName },
       };
   const initial = {
-    pendingSchemaVersion: 51,
+    pendingSchemaVersion: 52,
     operationDate: operation.operationDate,
     cutoffAt: operation.cutoffAt,
     pendingId, stampType: normalizedStampType, codeRun,
@@ -2477,6 +2525,8 @@ async function createPendingGpsStamp(stampType, state) {
     gpsEventUsageKey: gpsEventReservation.usageKey,
     gpsEventUsageKeyHash: hashAuditValue(gpsEventReservation.usageKey),
     gpsEventReservationNew: gpsEventReservation.newlyReserved,
+    sharedVisitId: cleanText(state.sharedVisitId) || null,
+    sharedAllowedCodeRuns: Array.isArray(state.sharedAllowedCodeRuns) ? state.sharedAllowedCodeRuns : [codeRun],
     selectedPlanEta: state.activePlanEta || null,
     selectedPlanEtaMinutes: parsePlanMinutes(state.activePlanEta),
     geofence: payload.geofence || null,
@@ -2628,11 +2678,15 @@ async function processPendingGpsStamp(pendingId) {
       if (!pendingGeofenceId || getGeofenceIdForDropPoint(currentTrip.dropPoint) !== pendingGeofenceId) {
         return await closePendingStamp(record, 'SUPERSEDED', { lastError: 'PLAN_GEOFENCE_DOES_NOT_MATCH_DETECTED_GEOFENCE' });
       }
-      const eligibleTrips = getEligibleEtaTripsForVehicle(
-        currentTrips,
-        pendingGeofenceId,
-        currentBangkokMinutes
-      );
+      const eligibleTrips = record.sharedVisitId
+        ? getLspSharedVisitTrips(currentTrips, currentTrip).filter(item =>
+            !item.stampEta && !item.stampEtd && !item.noWorkAction
+          )
+        : getEligibleEtaTripsForVehicle(
+            currentTrips,
+            pendingGeofenceId,
+            currentBangkokMinutes
+          );
       let siteGroupState = await readGpsSiteGroupState(
         record.licensePlate,
         pendingDate
@@ -2842,35 +2896,25 @@ async function executeGpsAutoStampEta(state) {
   return { ...pending, queued: isActivePendingStamp(pending) };
 }
 async function executeGpsAutoStampEtaBatch(state, trips) {
-  if (!GPS_AUTO_STAMP_ETA_ENABLED || !state?.isInside || state.waitingForExit) {
-    return [];
+  if (!GPS_AUTO_STAMP_ETA_ENABLED || !state?.isInside || state.waitingForExit) return [];
+  const selectedTrips = [...trips].sort(compareTripsByPlanTime);
+  if (!selectedTrips.length) return [];
+  const sharedVisitId = selectedTrips.length > 1
+    ? getLspSharedVisitId(selectedTrips[0], selectedTrips[0].planLicensePlate)
+    : null;
+  const sharedAllowedCodeRuns = selectedTrips.map(trip => trip.codeRun);
+  if (sharedVisitId) {
+    console.log(JSON.stringify({ logType:'ELIVE_GPS_STAMP', event:'LSP_SHARED_ETA_BATCH_QUEUED', visitId:sharedVisitId, codeRuns:sharedAllowedCodeRuns, gpsTime:state.gpsTime, geofenceId:state.geofenceId }));
   }
-  const selectedTrip = [...trips].sort(compareTripsByPlanTime)[0] || null;
-  if (!selectedTrip) return [];
   const results = [];
-  for (const trip of [selectedTrip]) {
-    const tripState = {
-      ...state,
-      codeRun: trip.codeRun,
-      activeCodeRun: trip.codeRun,
-      activePlanDate: trip.planDate,
-      activePlanEta: trip.planEta,
-      activeTripSequence: trip.tripSequence,
-      planLicensePlate: trip.planLicensePlate,
-      noWorkAction: trip.noWorkAction === true,
-      etaActualMissing: !trip.stampEta,
-      readyForGpsStampEta: !trip.stampEta,
-    };
+  for (const trip of selectedTrips) {
+    const tripState = { ...state, codeRun:trip.codeRun, activeCodeRun:trip.codeRun, activePlanDate:trip.planDate, activePlanEta:trip.planEta, activeTripSequence:trip.tripSequence, planLicensePlate:trip.planLicensePlate, noWorkAction:trip.noWorkAction===true, etaActualMissing:!trip.stampEta, readyForGpsStampEta:!trip.stampEta, sharedVisitId, sharedAllowedCodeRuns };
     const result = await executeGpsAutoStampEta(tripState);
-    results.push({
-      codeRun: trip.codeRun,
-      dropPoint: trip.dropPoint,
-      geofenceId: state.geofenceId,
-      result,
-    });
+    results.push({ codeRun:trip.codeRun, dropPoint:trip.dropPoint, geofenceId:state.geofenceId, sharedVisitId, result });
   }
   return results;
 }
+
 async function executeGpsAutoStampEtd(state, activeTrip) {
   if (state?.noWorkAction || activeTrip?.noWorkAction) return { status:'BLOCKED_NO_WORK', reason:'NO_WORK_ACTION' };
   const recovery = state?.etdDetectionMode === 'ETA_OPEN_TRIP_OUTSIDE_RECONCILIATION';
@@ -2884,6 +2928,20 @@ async function executeGpsAutoStampEtd(state, activeTrip) {
   return { ...pending, queued: isActivePendingStamp(pending), detectionMode: state.etdDetectionMode };
 }
 
+async function executeGpsAutoStampEtdBatch(state, activeTrip, trips) {
+  if (!state?.readyForGpsStampEtd || !activeTrip) return [];
+  const sharedTrips = getLspSharedVisitTrips(trips, activeTrip).filter(trip => trip.stampEta && !trip.stampEtd && !trip.noWorkAction);
+  const selectedTrips = sharedTrips.length > 1 ? sharedTrips : [activeTrip];
+  const sharedVisitId = selectedTrips.length > 1 ? getLspSharedVisitId(activeTrip, activeTrip.planLicensePlate) : null;
+  const sharedAllowedCodeRuns = selectedTrips.map(trip => trip.codeRun);
+  if (sharedVisitId) console.log(JSON.stringify({ logType:'ELIVE_GPS_STAMP', event:'LSP_SHARED_ETD_BATCH_QUEUED', visitId:sharedVisitId, codeRuns:sharedAllowedCodeRuns, gpsTime:state.gpsTime }));
+  const results=[];
+  for (const trip of selectedTrips) {
+    const tripState={...state,codeRun:trip.codeRun,activeCodeRun:trip.codeRun,activePlanDate:trip.planDate,activePlanEta:trip.planEta,activeTripSequence:trip.tripSequence,planLicensePlate:trip.planLicensePlate,noWorkAction:trip.noWorkAction===true,sharedVisitId,sharedAllowedCodeRuns};
+    results.push({codeRun:trip.codeRun,dropPoint:trip.dropPoint,sharedVisitId,result:await executeGpsAutoStampEtd(tripState,trip)});
+  }
+  return results;
+}
 function isLspDropPoint(dropPoint) {
   return /^(?:L1|L2|L3|M1)(?:-|\b)/.test(cleanText(dropPoint).toUpperCase());
 }
@@ -3571,6 +3629,7 @@ async function evaluateGpsDock(payload, dataOverride = null, noWorkCollector = n
     autoStampEtaResult: null,
     autoStampEtaResults: [],
     autoStampEtdResult: null,
+    autoStampEtdResults: [],
   };
   await writeGpsDwellState(effectiveCodeRun, state);
   if (state.readyForGpsStampEta) {
@@ -3594,11 +3653,13 @@ async function evaluateGpsDock(payload, dataOverride = null, noWorkCollector = n
       || etaResults[0]
       || null;
   }
-  if (state.readyForGpsStampEtd) state.autoStampEtdResult = await executeGpsAutoStampEtd(state, activeTrip);
+  if (state.readyForGpsStampEtd) {
+    state.autoStampEtdResults = await executeGpsAutoStampEtdBatch(state, activeTrip, tripResolution.trips);
+    const etdResults = state.autoStampEtdResults.map(item => item.result).filter(Boolean);
+    state.autoStampEtdResult = etdResults.find(item => item.status === 'STAMPED') || etdResults.find(item => item.status === 'ALREADY_STAMPED') || etdResults[0] || null;
+  }
   state.autoStampResult = state.autoStampEtdResult || state.autoStampEtaResult;
-  state.autoStampExecuted = state.autoStampEtaResults.some(item =>
-    ['STAMPED', 'ALREADY_STAMPED'].includes(item.result?.status)
-  ) || ['STAMPED', 'ALREADY_STAMPED'].includes(state.autoStampEtdResult?.status);
+  state.autoStampExecuted = state.autoStampEtaResults.some(item => ['STAMPED', 'ALREADY_STAMPED'].includes(item.result?.status)) || state.autoStampEtdResults.some(item => ['STAMPED', 'ALREADY_STAMPED'].includes(item.result?.status));
   await writeGpsDwellState(effectiveCodeRun, state);
   return createGpsDockResult(state);
 }
@@ -3815,9 +3876,12 @@ async function runGpsBackgroundCycle() {
         const etaStampedCount = etaBatchResults.filter(item => item.status === 'STAMPED').length;
         const etaAlreadyStampedCount = etaBatchResults.filter(item => item.status === 'ALREADY_STAMPED').length;
         summary.etaStamped += etaStampedCount;
-        if (result.autoStampEtdResult?.status === 'STAMPED') summary.etdStamped += 1;
-        summary.stamped += etaStampedCount + (result.autoStampEtdResult?.status === 'STAMPED' ? 1 : 0);
-        summary.alreadyStamped += etaAlreadyStampedCount + (result.autoStampEtdResult?.status === 'ALREADY_STAMPED' ? 1 : 0);
+        const etdBatchResults = Array.isArray(result.autoStampEtdResults) ? result.autoStampEtdResults.map(item => item.result).filter(Boolean) : result.autoStampEtdResult ? [result.autoStampEtdResult] : [];
+        const etdStampedCount = etdBatchResults.filter(item => item.status === 'STAMPED').length;
+        const etdAlreadyStampedCount = etdBatchResults.filter(item => item.status === 'ALREADY_STAMPED').length;
+        summary.etdStamped += etdStampedCount;
+        summary.stamped += etaStampedCount + etdStampedCount;
+        summary.alreadyStamped += etaAlreadyStampedCount + etdAlreadyStampedCount;
       } catch (error) {
         summary.failed += 1;
         summary.failures.push({ gpsIdHash: hashAuditValue(input.gpsId), error: getErrorMessage(error) });
@@ -5627,7 +5691,10 @@ app.get(['/health', '/api/health'], (req, res) => {
       openEtaGroupLockEnabled: true,
       futureGroupSelectionRespectsEarlyWindow: true,
       pendingEtaCanRecoverMatchingActiveGroup: true,
-      singleEtaCandidatePerVehicleCycle: true,
+      singleEtaCandidatePerVehicleCycle: false,
+      lspSharedVisitMultipleEtaEnabled: true,
+      lspSharedVisitEtaAndEtdEnabled: true,
+      lspSharedVisitIdentity: 'PLAN_DATE_LICENSE_PLATE_GROUP_CODE_TPCAP_LSP',
       lspStampCopyToM1Enabled: false,
       lspStampCopyTargets: [],
       lspStampCopyMatchKeys: [],
@@ -5676,8 +5743,9 @@ app.get(['/health', '/api/health'], (req, res) => {
       rDockAutoNoWorkPostAction: 'setGpsNoWorkBatch',
       sheetsTimeOnlyIsoUsesFixedBangkokOffset: true,
       exitRequiredBeforeNextTrip: true,
-      etaRule: 'STAMP_ONE_EARLIEST_UNSTAMPED_PLAN_AFTER_PREVIOUS_SAME_DOCK_ETD',
-      multiDropSameGeofenceEtaEnabled: false,
+      etaRule: 'STAMP_ALL_M1_L1_L2_L3_IN_SAME_GROUP_AT_TPCAP_LSP_ELSE_ONE_EARLIEST_ELIGIBLE_PLAN',
+      multiDropSameGeofenceEtaEnabled: true,
+      multiDropSameGeofencePolicy: 'M1_L1_L2_L3_SAME_GROUP_CODE_SHARE_ETA_ETD_EVENT_OWNERSHIP',
       lspArrivalGroupWindowMinutes: GPS_LSP_ARRIVAL_GROUP_WINDOW_MINUTES,
       dropPointGeofenceMapping: { L1: 'TPCAP-LSP', L2: 'TPCAP-LSP', L3: 'TPCAP-LSP', M1: 'TPCAP-LSP', R1: 'TPCAP-R1', R2: 'TPCAP-R2' },
       blockedGpsEntryRecoveryEnabled: true,
@@ -5696,7 +5764,7 @@ app.get(['/health', '/api/health'], (req, res) => {
       emptyPendingQueueLoggingEnabled: false,
       pendingStampOrphanedProcessingPolicy: 'RETURN_TO_PENDING',
       pendingStampDelayedScheduleAllowedStatuses: ['RETRY_WAIT'],
-      pendingStampSchemaVersion: 51,
+      pendingStampSchemaVersion: 52,
       legacyEtaPendingAutoSuperseded: false,
       terminalPendingRecordCanBeRecreated: true,
       newlyCreatedPendingProcessedInSameWorkerCycle: true,
