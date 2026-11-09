@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '83';
+const API_VERSION = '84';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -155,6 +155,12 @@ const GPS_SITE_EXIT_CONFIRM_MS = 60 * 1000;
 const GPS_SITE_GROUP_KEY_PREFIX = 'elive:gps-site-group:';
 const GPS_SITE_GROUP_TTL_SECONDS = 36 * 60 * 60;
 
+const TPCAP_LSP_POLYGON = Object.freeze([
+  Object.freeze({ latitude: 13.624857244606016, longitude: 101.01561954685484 }),
+  Object.freeze({ latitude: 13.624106306310814, longitude: 101.0148249703053 }),
+  Object.freeze({ latitude: 13.623781427556, longitude: 101.01512623649937 }),
+  Object.freeze({ latitude: 13.62459619769645, longitude: 101.01593633649198 }),
+]);
 const GPS_GEOFENCES = Object.freeze([
   Object.freeze({
     id: 'TPCAP-LSP',
@@ -162,6 +168,8 @@ const GPS_GEOFENCES = Object.freeze([
     latitude: 13.624391050915499,
     longitude: 101.01532262451346,
     radiusMeters: 60,
+    detectionMode: 'POLYGON',
+    polygon: TPCAP_LSP_POLYGON,
   }),
   Object.freeze({
     id: 'TPCAP-R2',
@@ -1280,6 +1288,56 @@ function isPointInsidePolygon(latitude, longitude, polygon = TPCAP_SITE_POLYGON)
   }
   return inside;
 }
+function getDistanceToPolygonBoundaryMeters(latitude, longitude, polygon) {
+  if (!Array.isArray(polygon) || polygon.length < 3) return Number.POSITIVE_INFINITY;
+  let minimumDistanceMeters = Number.POSITIVE_INFINITY;
+  for (let index = 0; index < polygon.length; index += 1) {
+    const start = polygon[index];
+    const end = polygon[(index + 1) % polygon.length];
+    const distanceMeters = distancePointToSegmentMeters(
+      { lat: latitude, lng: longitude },
+      { lat: start.latitude, lng: start.longitude },
+      { lat: end.latitude, lng: end.longitude }
+    );
+    minimumDistanceMeters = Math.min(minimumDistanceMeters, distanceMeters);
+  }
+  return minimumDistanceMeters;
+}
+function evaluateGpsGeofence(geofence, latitude, longitude) {
+  const centerDistanceMeters = calculateDistanceMeters(
+    latitude,
+    longitude,
+    geofence.latitude,
+    geofence.longitude
+  );
+  if (geofence.detectionMode === 'POLYGON' && Array.isArray(geofence.polygon)) {
+    const inside = isPointInsidePolygon(latitude, longitude, geofence.polygon);
+    const boundaryDistanceMeters = getDistanceToPolygonBoundaryMeters(
+      latitude,
+      longitude,
+      geofence.polygon
+    );
+    return {
+      ...geofence,
+      inside,
+      distanceMeters: inside ? 0 : boundaryDistanceMeters,
+      boundaryDistanceMeters,
+      centerDistanceMeters,
+      marginMeters: inside ? boundaryDistanceMeters : -boundaryDistanceMeters,
+      decisionShape: 'POLYGON',
+    };
+  }
+  const inside = centerDistanceMeters <= geofence.radiusMeters;
+  return {
+    ...geofence,
+    inside,
+    distanceMeters: centerDistanceMeters,
+    boundaryDistanceMeters: Math.abs(geofence.radiusMeters - centerDistanceMeters),
+    centerDistanceMeters,
+    marginMeters: geofence.radiusMeters - centerDistanceMeters,
+    decisionShape: 'CIRCLE',
+  };
+}
 function getGpsSiteGroupKey(licensePlate, operationDate) {
   return `${GPS_SITE_GROUP_KEY_PREFIX}${operationDate}:${createHash('sha256').update(normalizeLicensePlate(licensePlate)).digest('hex')}`;
 }
@@ -1963,27 +2021,18 @@ function validateGpsDockPayload(body) {
 }
 function evaluateRawGpsCoordinatesAgainstEliveGeofences(latitude, longitude) {
   const evaluations = GPS_GEOFENCES
-    .map(geofence => {
-      const distanceMeters = calculateDistanceMeters(
-        latitude,
-        longitude,
-        geofence.latitude,
-        geofence.longitude
-      );
-      return {
-        ...geofence,
-        distanceMeters,
-        inside: distanceMeters <= geofence.radiusMeters,
-        marginMeters: geofence.radiusMeters - distanceMeters,
-      };
-    })
-    .sort((first, second) => first.distanceMeters - second.distanceMeters);
+    .map(geofence => evaluateGpsGeofence(geofence, latitude, longitude))
+    .sort((first, second) => {
+      if (first.inside !== second.inside) return first.inside ? -1 : 1;
+      return first.distanceMeters - second.distanceMeters;
+    });
   return {
     evaluations,
     nearest: evaluations[0] || null,
     insideGeofences: evaluations.filter(item => item.inside),
   };
 }
+
 function findNearestGpsGeofence(latitude, longitude) {
   return evaluateRawGpsCoordinatesAgainstEliveGeofences(
     latitude,
@@ -1993,17 +2042,9 @@ function findNearestGpsGeofence(latitude, longitude) {
 
 function findGpsGeofenceById(geofenceId, latitude, longitude) {
   const geofence = GPS_GEOFENCES.find(item => item.id === geofenceId);
-  if (!geofence) return null;
-  return {
-    ...geofence,
-    distanceMeters: calculateDistanceMeters(
-      latitude,
-      longitude,
-      geofence.latitude,
-      geofence.longitude
-    ),
-  };
+  return geofence ? evaluateGpsGeofence(geofence, latitude, longitude) : null;
 }
+
 async function readGpsDwellState(codeRun, geofenceId = null) {
   const client = requireRedisClient();
   const rawState = await client.get(getGpsDwellKey(codeRun, geofenceId));
@@ -2860,7 +2901,7 @@ async function reconcileSkippedRDockAfterLsp(input, data, noWorkCollector = null
   const trips = buildTripsForPlate(data, input.licensePlate, operationDate).sort(compareTripsByPlanTime);
   const groups = buildGpsPlanGroups(trips);
   const detected = findNearestGpsGeofence(input.latitude, input.longitude);
-  const detectedGeofenceId = detected.distanceMeters <= detected.radiusMeters ? detected.id : null;
+  const detectedGeofenceId = detected.inside ? detected.id : null;
   const isInsideSite = isPointInsidePolygon(input.latitude, input.longitude);
   const nowIso = new Date().toISOString();
   const currentTimeMs = Date.now();
@@ -3309,7 +3350,7 @@ async function evaluateGpsDock(payload, dataOverride = null, noWorkCollector = n
   );
   const nearestGeofence = rawGeofenceEvaluation.nearest;
   if (!nearestGeofence) throw new Error('ELIVE_GEOFENCE_CONFIGURATION_EMPTY');
-  const nearestIsInside = nearestGeofence.distanceMeters <= nearestGeofence.radiusMeters;
+  const nearestIsInside = nearestGeofence.inside === true;
   const detectedGeofenceId = nearestIsInside ? nearestGeofence.id : null;
   const isParked = input.speedKmh === GPS_PARKING_SPEED_THRESHOLD_KMH;
   const autoNoWorkResults = dataOverride
@@ -3340,12 +3381,16 @@ async function evaluateGpsDock(payload, dataOverride = null, noWorkCollector = n
     configuredGeofences: rawGeofenceEvaluation.evaluations.map(item => ({
       geofenceId: item.id,
       distanceMeters: Number(item.distanceMeters.toFixed(2)),
-      radiusMeters: item.radiusMeters,
+      detectionMode: item.decisionShape,
+      radiusMeters: item.decisionShape === 'CIRCLE' ? item.radiusMeters : null,
+      polygonPointCount: item.decisionShape === 'POLYGON' ? item.polygon.length : 0,
+      centerDistanceMeters: Number(item.centerDistanceMeters.toFixed(2)),
+      boundaryDistanceMeters: Number(item.boundaryDistanceMeters.toFixed(2)),
       inside: item.inside,
       marginMeters: Number(item.marginMeters.toFixed(2)),
     })),
   }));
-  const isInside = Boolean(detectedGeofenceId && evaluatedGeofence && evaluatedGeofence.id === detectedGeofenceId && evaluatedGeofence.distanceMeters <= evaluatedGeofence.radiusMeters);
+  const isInside = Boolean(detectedGeofenceId && evaluatedGeofence && evaluatedGeofence.id === detectedGeofenceId && evaluatedGeofence.inside === true);
   if (!evaluatedGeofence) {
     throw new Error('TARGET_GEOFENCE_NOT_FOUND');
   }
@@ -3472,7 +3517,11 @@ async function evaluateGpsDock(payload, dataOverride = null, noWorkCollector = n
     geofenceName: evaluatedGeofence.name,
     geofenceLatitude: evaluatedGeofence.latitude,
     geofenceLongitude: evaluatedGeofence.longitude,
-    radiusMeters: evaluatedGeofence.radiusMeters,
+    geofenceDetectionMode: evaluatedGeofence.decisionShape,
+    radiusMeters: evaluatedGeofence.decisionShape === 'CIRCLE' ? evaluatedGeofence.radiusMeters : null,
+    polygonPointCount: evaluatedGeofence.decisionShape === 'POLYGON' ? evaluatedGeofence.polygon.length : 0,
+    centerDistanceMeters: Number(evaluatedGeofence.centerDistanceMeters.toFixed(2)),
+    boundaryDistanceMeters: Number(evaluatedGeofence.boundaryDistanceMeters.toFixed(2)),
     distanceMeters: Number(evaluatedGeofence.distanceMeters.toFixed(2)),
     isInside,
     wasInsideBeforeExit,
@@ -5651,7 +5700,11 @@ app.get(['/health', '/api/health'], (req, res) => {
       pendingStampRetryBaseSeconds: Math.floor(GPS_PENDING_STAMP_BASE_RETRY_MS / 1000),
       pendingStampRetryMaximumSeconds: Math.floor(GPS_PENDING_STAMP_MAX_RETRY_MS / 1000),
       etdRule: 'NORMAL_EXIT_AFTER_INSIDE_OR_OPEN_ETA_RECONCILIATION_ON_ANY_SAME_DAY_GPS_OUTSIDE_TARGET_GEOFENCE',
-      geofenceSelectionPolicy: 'ACTIVE_TRIP_DROP_POINT_TARGET_WITH_ELIVE_RAW_COORDINATE_DISTANCE',
+      geofenceSelectionPolicy: 'ACTIVE_TRIP_DROP_POINT_TARGET_WITH_MIXED_POLYGON_AND_CIRCLE_DETECTION',
+      lspGeofenceDetectionMode: 'POLYGON',
+      lspGeofencePolygon: TPCAP_LSP_POLYGON,
+      lspLegacyCircleUsedForDecision: false,
+      r1R2GeofenceDetectionMode: 'CIRCLE',
       geofenceDecisionSource: 'RAW_GPS_LATITUDE_LONGITUDE',
       providerStationNameUsedForDecision: false,
       providerStationNameRole: 'DEBUG_ONLY',
