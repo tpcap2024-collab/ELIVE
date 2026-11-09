@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '84';
+const API_VERSION = '85';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -210,6 +210,7 @@ const pbkdf2Async = promisify(pbkdf2Callback);
 const SESSION_COOKIE_NAME = '__Host-elive_session';
 const SESSION_DURATION_MS = 12 * 60 * 60 * 1000;
 const SESSION_IDLE_TIMEOUT_MS = 60 * 60 * 1000;
+const SESSION_IDLE_TIMEOUT_EXEMPT_ROLES = Object.freeze(['TV_VIEWER']);
 const SESSION_TTL_SECONDS = Math.floor(SESSION_DURATION_MS / 1000);
 const SESSION_KEY_PREFIX = 'elive:session:';
 const SESSION_USER_INDEX_PREFIX = 'elive:session-user:';
@@ -4129,6 +4130,11 @@ function getSessionUserIndexKey(username) {
     .digest('hex')}`;
 }
 
+function isSessionIdleTimeoutExempt(role) {
+  return SESSION_IDLE_TIMEOUT_EXEMPT_ROLES.includes(
+    cleanText(role).toUpperCase()
+  );
+}
 function getConcurrentSessionLimit(role) {
   return SESSION_LIMITS_BY_ROLE[cleanText(role).toUpperCase()] || 1;
 }
@@ -4395,12 +4401,14 @@ async function getSessionFromRequest(req) {
     createdAt: Number(session.createdAt || 0),
     expiresAt: Number(session.expiresAt),
     lastUserActivityAt: Number(session.lastUserActivityAt || session.createdAt || 0),
+    idleTimeoutExempt: isSessionIdleTimeoutExempt(session.role),
     credentialVersion: Number(session.credentialVersion || 0),
     lastReauthenticatedAt: Number(session.lastReauthenticatedAt || 0),
     passwordChangedAt: session.passwordChangedAt || null,
   };
   const idleDurationMs = Date.now() - normalizedSession.lastUserActivityAt;
-  if (idleDurationMs >= SESSION_IDLE_TIMEOUT_MS) {
+  const idleTimeoutExempt = isSessionIdleTimeoutExempt(normalizedSession.role);
+  if (!idleTimeoutExempt && idleDurationMs >= SESSION_IDLE_TIMEOUT_MS) {
     await client
       .multi()
       .del(getSessionKey(tokenHash))
@@ -5747,7 +5755,15 @@ app.get(['/health', '/api/health'], (req, res) => {
     adminSessionRevocation: { enabled: true, currentAdminSessionPreserved: true },
     adminSessionInventory: { enabled: true, exposesSecrets: false },
     userActivitySignal: { enabled: true, endpoint: '/api/auth/activity', frontendThrottleSeconds: 60 },
-    sessionIdleTimeout: { enabled: true, timeoutSeconds: Math.floor(SESSION_IDLE_TIMEOUT_MS / 1000), enforcedServerSide: true, absoluteLifetimeSeconds: SESSION_TTL_SECONDS },
+    sessionIdleTimeout: {
+      enabled: true,
+      timeoutSeconds: Math.floor(SESSION_IDLE_TIMEOUT_MS / 1000),
+      enforcedServerSide: true,
+      exemptRoles: SESSION_IDLE_TIMEOUT_EXEMPT_ROLES,
+      exemptRolePolicy: 'NO_IDLE_TIMEOUT_ABSOLUTE_LIFETIME_STILL_ENFORCED',
+      absoluteLifetimeSeconds: SESSION_TTL_SECONDS,
+      tvViewerAbsoluteLifetimeHours: Math.floor(SESSION_DURATION_MS / (60 * 60 * 1000)),
+    },
     appsScript: {
       configured: Boolean(APPS_SCRIPT_URL),
       signatureConfigured: Boolean(APPS_SCRIPT_SHARED_SECRET && APPS_SCRIPT_SHARED_SECRET.length >= 32),
