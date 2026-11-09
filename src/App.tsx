@@ -647,11 +647,16 @@ export default function App() {
       setIsGpsPopupOpen(true);
     };
 
-    if (document.fullscreenElement) {
+    // Only Mobile Mode exits Full Screen. Live Dashboard and Platform Dashboard
+    // keep their current Full Screen element while Live Map is open.
+    if (openedFromMobile && document.fullscreenElement) {
       void document.exitFullscreen()
         .then(openPopup)
         .catch(error => {
-          console.error('Unable to exit fullscreen before opening Live Map:', error);
+          console.error(
+            'Unable to exit fullscreen before opening Live Map from Mobile Mode:',
+            error
+          );
           openPopup();
         });
       return;
@@ -1655,8 +1660,8 @@ export default function App() {
               </div>
             </div>
           </div>,
-          isDashboardFullscreen && dashboardFullscreenRef.current
-            ? dashboardFullscreenRef.current
+          document.fullscreenElement instanceof HTMLElement
+            ? document.fullscreenElement
             : document.body
         )}
 
