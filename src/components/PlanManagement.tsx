@@ -496,6 +496,8 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
   const [dailyImportRows,setDailyImportRows]=useState<DailyPlanImportRow[]>([]);
   const [dailyImportErrors,setDailyImportErrors]=useState<DailyPlanImportError[]>([]);
   const [isImportingDaily,setIsImportingDaily]=useState(false);
+  const [isReadingDailyImport,setIsReadingDailyImport]=useState(false);
+  const [dailyImportFileName,setDailyImportFileName]=useState('');
   const [showBatchCancelConfirmation,setShowBatchCancelConfirmation]=useState(false);
   const [restoreTarget, setRestoreTarget] = useState<DailyPlan | null>(null);
 
@@ -919,8 +921,37 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
       setIsLoadingDaily(false);
     }
   };
-  const openDailyImport=()=>{setDailyImportRows([]);setDailyImportErrors([]);setShowDailyImportConfirm(false);if(dailyImportInputRef.current){dailyImportInputRef.current.value='';dailyImportInputRef.current.click();}};
-  const readDailyImport=async(file:File)=>{try{const x=parseDailyUpload(await readPlanFile(file));setDailyImportRows(x.rows);setDailyImportErrors(x.errors);}catch(error){setNotice({type:'error',message:getErrorMessage(error)});}};
+  const openDailyImport=()=>{
+    setDailyImportRows([]);
+    setDailyImportErrors([]);
+    setDailyImportFileName('');
+    setShowDailyImportConfirm(false);
+    setNotice(null);
+    if(dailyImportInputRef.current){
+      dailyImportInputRef.current.value='';
+      dailyImportInputRef.current.click();
+    }
+  };
+  const readDailyImport=async(file:File)=>{
+    setShowDailyImport(true);
+    setIsReadingDailyImport(true);
+    setDailyImportFileName(file.name);
+    setDailyImportRows([]);
+    setDailyImportErrors([]);
+    setNotice(null);
+    try{
+      const parsed=parseDailyUpload(await readPlanFile(file));
+      setDailyImportRows(parsed.rows);
+      setDailyImportErrors(parsed.errors);
+    }catch(error){
+      setDailyImportRows([]);
+      setDailyImportErrors([]);
+      setNotice({type:'error',message:`อ่านไฟล์ ${file.name} ไม่สำเร็จ: ${getErrorMessage(error)}`});
+    }finally{
+      setIsReadingDailyImport(false);
+      if(dailyImportInputRef.current) dailyImportInputRef.current.value='';
+    }
+  };
   const saveDailyImport=async()=>{if(!dailyImportRows.length||dailyImportErrors.length||isImportingDaily)return;setShowDailyImportConfirm(false);setIsImportingDaily(true);try{const result=await createDailyPlansBatch(dailyImportRows.map(({sourceRow,...row})=>row));if(Number(result?.failedCount||0))throw new Error(`นำเข้าไม่สำเร็จ ${result.failedCount} รายการ`);setShowDailyImport(false);setNotice({type:'success',message:`นำเข้าแผนประจำวันสำเร็จ ${Number(result?.createdCount??dailyImportRows.length)} รายการ`});}catch(error){setNotice({type:'error',message:getErrorMessage(error)});}finally{setIsImportingDaily(false);}};
   const openExtraDialog = () => {
     if (isSavingPlan) return;
@@ -1560,7 +1591,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                   </div>
                   <div className="flex flex-wrap justify-end gap-2">
                     <button type="button" onClick={downloadDailyPlanTemplate} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"><Download className="h-4 w-4"/>Template</button>
-                    <input ref={dailyImportInputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={event=>{const file=event.target.files?.[0];if(file){setShowDailyImport(true);void readDailyImport(file);}}}/>
+                    <input ref={dailyImportInputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={event=>{const file=event.target.files?.[0];if(file)void readDailyImport(file);}}/>
                     <button type="button" onClick={openDailyImport} disabled={isImportingDaily} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-60"><Upload className="h-4 w-4"/>อัปโหลดไฟล์</button>
                     <button type="button" onClick={openExtraDialog} disabled={isSavingPlan} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-orange-500 px-5 text-sm font-semibold text-white shadow-sm hover:bg-orange-600 disabled:opacity-60"><Plus className="h-4 w-4"/>เพิ่มรายการ</button>
                   </div>
@@ -1851,6 +1882,55 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
               <button type="button" onClick={() => setShowDeleteSelectedMaster(false)} className="rounded-xl border px-4 py-2">กลับ</button>
               <button type="button" onClick={() => void handleDeleteSelectedMaster()} className="rounded-xl bg-red-600 px-4 py-2 font-semibold text-white">ยืนยันลบ</button>
             </div>
+          </div>
+        </div>
+      )}
+      {showDailyImport && (
+        <div className="fixed inset-0 z-[1300] flex items-center justify-center bg-slate-950/70 p-4">
+          <div className="flex max-h-[90vh] w-full max-w-[1320px] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <div className="flex items-start justify-between border-b px-5 py-4">
+              <div>
+                <h2 className="text-xl font-bold">ตรวจสอบ Daily Plan ก่อนอัปโหลด</h2>
+                <p className="mt-1 text-sm text-slate-500">{dailyImportFileName || 'กำลังเลือกไฟล์'}</p>
+              </div>
+              <button type="button" onClick={()=>!isImportingDaily&&!isReadingDailyImport&&setShowDailyImport(false)} disabled={isImportingDaily||isReadingDailyImport} className="rounded-lg p-2 hover:bg-slate-100 disabled:opacity-40"><X className="h-5 w-5"/></button>
+            </div>
+            <div className="flex min-h-0 flex-1 flex-col gap-3 p-5">
+              {isReadingDailyImport ? (
+                <div className="flex min-h-[260px] flex-col items-center justify-center text-center"><Loader2 className="h-10 w-10 animate-spin text-blue-600"/><p className="mt-4 font-bold text-slate-800">กำลังอ่านไฟล์...</p><p className="mt-1 text-sm text-slate-500">กรุณารอสักครู่</p></div>
+              ) : dailyImportRows.length ? (
+                <>
+                  <div className="grid grid-cols-4 gap-2">
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-slate-800">ทั้งหมด <b>{dailyImportRows.length}</b></div>
+                    <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-blue-800">REGULAR <b>{dailyImportSummary.regular}</b></div>
+                    <div className="rounded-lg border border-purple-200 bg-purple-50 px-3 py-2 text-purple-800">EXTRA <b>{dailyImportSummary.extra}</b></div>
+                    <div className={`rounded-lg border px-3 py-2 ${dailyImportErrors.length?'border-red-200 bg-red-50 text-red-800':'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>ผิดพลาด <b>{dailyImportErrors.length}</b></div>
+                  </div>
+                  {dailyImportErrors.length>0&&<div className="max-h-28 overflow-auto rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">{dailyImportErrors.slice(0,30).map(item=><p key={item.sourceRow}>แถว {item.sourceRow}: {item.errors.join(', ')}</p>)}</div>}
+                  <div className="min-h-0 flex-1 overflow-auto rounded-xl border">
+                    <table className="min-w-[1180px] w-full text-xs">
+                      <thead className="sticky top-0 bg-slate-100 text-left text-[10px] uppercase text-slate-600"><tr>{['แถว','Date','Route','Company','Truck Name','Truck Type','Driver','Project','Drop Point','ETA','ETD','Group','Remark','Work Detail'].map(h=><th key={h} className="px-2 py-2">{h}</th>)}</tr></thead>
+                      <tbody className="divide-y">{dailyImportRows.map(row=><tr key={`${row.sourceRow}-${row.route}-${row.truckName}-${row.planEta}`} className={dailyImportErrors.some(error=>error.sourceRow===row.sourceRow)?'bg-red-50':''}><td className="px-2 py-2 text-center">{row.sourceRow}</td><td className="px-2 py-2">{row.date||'-'}</td><td className="px-2 py-2 font-semibold">{row.route||'-'}</td><td className="px-2 py-2">{row.company||'-'}</td><td className="px-2 py-2 font-bold text-blue-700">{row.truckName||'-'}</td><td className="px-2 py-2">{row.truckType||'-'}</td><td className="px-2 py-2">{row.driverName||'-'}</td><td className="px-2 py-2">{row.project||'-'}</td><td className="px-2 py-2">{row.dropPoint||'-'}</td><td className="px-2 py-2 font-mono">{row.planEta||'-'}</td><td className="px-2 py-2 font-mono">{row.planEtd||'-'}</td><td className="px-2 py-2">{row.groupCode||'-'}</td><td className="px-2 py-2"><RemarkBadge remark={row.remark}/></td><td className="max-w-[220px] truncate px-2 py-2" title={row.workDetail||''}>{row.workDetail||'-'}</td></tr>)}</tbody>
+                    </table>
+                  </div>
+                </>
+              ) : (
+                <div className="flex min-h-[260px] flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 text-center"><AlertTriangle className="h-9 w-9 text-amber-500"/><p className="mt-3 font-bold text-slate-800">ไม่พบข้อมูลที่นำเข้าได้</p><p className="mt-1 text-sm text-slate-500">ตรวจสอบไฟล์และเลือกอัปโหลดใหม่</p></div>
+              )}
+            </div>
+            <div className="flex justify-end gap-3 border-t px-5 py-3">
+              <button type="button" onClick={()=>setShowDailyImport(false)} disabled={isImportingDaily||isReadingDailyImport} className="rounded-xl border px-5 py-2.5 disabled:opacity-40">ยกเลิก</button>
+              <button type="button" onClick={()=>setShowDailyImportConfirm(true)} disabled={isReadingDailyImport||isImportingDaily||!dailyImportRows.length||dailyImportErrors.length>0} className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 font-semibold text-white disabled:opacity-40">{isImportingDaily&&<Loader2 className="h-4 w-4 animate-spin"/>}ยืนยันอัปโหลด {dailyImportRows.length} รายการ</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {showDailyImportConfirm && dailyImportRows.length>0 && (
+        <div className="fixed inset-0 z-[1400] flex items-center justify-center bg-slate-950/70 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
+            <h2 className="text-lg font-bold">ยืนยันอัปโหลด Daily Plan</h2>
+            <p className="mt-3 text-sm text-slate-600">ระบบจะสร้างแผน {dailyImportRows.length} รายการ กรุณาตรวจสอบว่าไม่มีรายการผิดพลาดก่อนยืนยัน</p>
+            <div className="mt-6 flex justify-end gap-3"><button type="button" onClick={()=>setShowDailyImportConfirm(false)} disabled={isImportingDaily} className="rounded-xl border px-4 py-2.5">กลับ</button><button type="button" onClick={()=>void saveDailyImport()} disabled={isImportingDaily||dailyImportErrors.length>0} className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 font-semibold text-white disabled:opacity-40">{isImportingDaily&&<Loader2 className="h-4 w-4 animate-spin"/>}{isImportingDaily?'กำลังอัปโหลด...':'ยืนยัน'}</button></div>
           </div>
         </div>
       )}
