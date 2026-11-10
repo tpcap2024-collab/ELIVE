@@ -344,11 +344,11 @@ async function readPlanFile(file: File): Promise<unknown[][]> {
 
 const DAILY_UPLOAD_ALIASES={date:['date','วันที่'],route:['route','เส้นทาง'],company:['company','supplier','บริษัท'],truckName:['truckname','licenseplate','ทะเบียนรถ'],truckType:['trucktype','ประเภทรถ'],driverName:['drivername','driver','ชื่อคนขับ'],telDriver:['teldriver','phone','เบอร์โทร'],project:['project','โครงการ'],dropPoint:['droppoint','dock','จุดลงงาน'],planEta:['planeta','eta','เวลาเข้า'],planEtd:['planetd','etd','เวลาออก'],groupCode:['groupcode','group','กลุ่มงาน'],remark:['remark','ประเภทแผน','ประเภท'],workDetail:['workdetail','รายละเอียดงาน','งาน']} as const;
 function parseDailyUploadDate(v:unknown){if(typeof v==='number'){const p=XLSX.SSF.parse_date_code(v);if(p)return `${p.y}-${String(p.m).padStart(2,'0')}-${String(p.d).padStart(2,'0')}`;}const t=cleanCell(v);const a=t.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);if(a)return `${a[1]}-${a[2].padStart(2,'0')}-${a[3].padStart(2,'0')}`;const b=t.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);return b?`${b[3]}-${b[2].padStart(2,'0')}-${b[1].padStart(2,'0')}`:'';}
-function parseDailyUpload(raw:unknown[][]):{rows:DailyPlanImportRow[];errors:DailyPlanImportError[]}{if(raw.length<2)throw new Error('ไฟล์ต้องมีหัวตารางและข้อมูล');const h=raw[0].map(cleanHeader);const ix=Object.fromEntries(Object.entries(DAILY_UPLOAD_ALIASES).map(([k,a])=>[k,findColumn(h,[...a])])) as Record<keyof typeof DAILY_UPLOAD_ALIASES,number>;const required=['date','route','company','truckName','truckType','project','dropPoint','planEta','planEtd'] as const;const missing=required.filter(k=>ix[k]<0);if(missing.length)throw new Error(`ไม่พบคอลัมน์: ${missing.join(', ')}`);const rows:DailyPlanImportRow[]=[];const errors:DailyPlanImportError[]=[];const seen=new Set<string>();raw.slice(1,501).forEach((r,i)=>{if(r.every(v=>cleanCell(v)===''))return;const sourceRow=i+2;const remarkText=ix.remark>=0?cleanCell(r[ix.remark]).toUpperCase():'';const row:DailyPlanImportRow={sourceRow,date:parseDailyUploadDate(r[ix.date]),route:cleanCell(r[ix.route]),company:cleanCell(r[ix.company]),truckName:cleanCell(r[ix.truckName]),truckType:cleanCell(r[ix.truckType]),driverName:ix.driverName>=0?cleanCell(r[ix.driverName]):'',telDriver:ix.telDriver>=0?cleanCell(r[ix.telDriver]):'',project:cleanCell(r[ix.project]),dropPoint:cleanCell(r[ix.dropPoint]),planEta:normalizeTime(r[ix.planEta]),planEtd:normalizeTime(r[ix.planEtd]),groupCode:ix.groupCode>=0?cleanCell(r[ix.groupCode]).toUpperCase():'',remark:(['REGULAR','EXTRA','CANCEL'].includes(remarkText)?remarkText:'REGULAR') as PlanRemark,workDetail:ix.workDetail>=0?cleanCell(r[ix.workDetail]):''};const e:string[]=[];if(!row.date)e.push('Date');if(!row.route)e.push('Route');if(!row.company)e.push('Company');if(!row.truckName)e.push('Truck Name');if(!row.truckType)e.push('Truck Type');if(!row.project)e.push('Project');if(!row.dropPoint)e.push('Drop Point');if(!row.planEta)e.push('Plan ETA');if(!row.planEtd)e.push('Plan ETD');if(remarkText&&!['REGULAR','EXTRA','CANCEL'].includes(remarkText))e.push('Remark');const key=[row.date,row.route,row.truckName,row.dropPoint,row.planEta].join('|').toUpperCase();if(seen.has(key))e.push('รายการซ้ำ');else seen.add(key);if(e.length)errors.push({sourceRow,errors:e});rows.push(row);});if(!rows.length)throw new Error('ไม่พบข้อมูลแผน');return{rows,errors};}
+function parseDailyUpload(raw:unknown[][]):{rows:DailyPlanImportRow[];errors:DailyPlanImportError[]}{if(raw.length<2)throw new Error('ไฟล์ต้องมีหัวตารางและข้อมูล');const h=raw[0].map(cleanHeader);const ix=Object.fromEntries(Object.entries(DAILY_UPLOAD_ALIASES).map(([k,a])=>[k,findColumn(h,[...a])])) as Record<keyof typeof DAILY_UPLOAD_ALIASES,number>;const required=['date','route','company','truckName','truckType','project','dropPoint','planEta','planEtd'] as const;const missing=required.filter(k=>ix[k]<0);if(missing.length)throw new Error(`ไม่พบคอลัมน์: ${missing.join(', ')}`);const rows:DailyPlanImportRow[]=[];const errors:DailyPlanImportError[]=[];const seen=new Set<string>();raw.slice(1,501).forEach((r,i)=>{if(r.every(v=>cleanCell(v)===''))return;const sourceRow=i+2;const remarkText=ix.remark>=0?cleanCell(r[ix.remark]).toUpperCase():'';const normalizedRemark=remarkText==='NORMAL'?'REGULAR':remarkText;const row:DailyPlanImportRow={sourceRow,date:parseDailyUploadDate(r[ix.date]),route:cleanCell(r[ix.route]),company:cleanCell(r[ix.company]),truckName:cleanCell(r[ix.truckName]),truckType:cleanCell(r[ix.truckType]),driverName:ix.driverName>=0?cleanCell(r[ix.driverName]):'',telDriver:ix.telDriver>=0?cleanCell(r[ix.telDriver]):'',project:cleanCell(r[ix.project]),dropPoint:cleanCell(r[ix.dropPoint]),planEta:normalizeTime(r[ix.planEta]),planEtd:normalizeTime(r[ix.planEtd]),groupCode:ix.groupCode>=0?cleanCell(r[ix.groupCode]).toUpperCase():'',remark:(['REGULAR','EXTRA','CANCEL'].includes(normalizedRemark)?normalizedRemark:'REGULAR') as PlanRemark,workDetail:ix.workDetail>=0?cleanCell(r[ix.workDetail]):''};const e:string[]=[];if(!row.date)e.push('Date');if(!row.route)e.push('Route');if(!row.company)e.push('Company');if(!row.truckName)e.push('Truck Name');if(!row.truckType)e.push('Truck Type');if(!row.project)e.push('Project');if(!row.dropPoint)e.push('Drop Point');if(!row.planEta)e.push('Plan ETA');if(!row.planEtd)e.push('Plan ETD');if(remarkText&&!['NORMAL','REGULAR','EXTRA','CANCEL'].includes(remarkText))e.push('Remark');const key=[row.date,row.route,row.truckName,row.dropPoint,row.planEta].join('|').toUpperCase();if(seen.has(key))e.push('รายการซ้ำ');else seen.add(key);if(e.length)errors.push({sourceRow,errors:e});rows.push(row);});if(!rows.length)throw new Error('ไม่พบข้อมูลแผน');return{rows,errors};}
 function buildDailyPlanUploadTemplate() {
   const headers = ['Date','Route','Company','Truck Name','Truck Type','Driver Name','Tel Driver','Project','Drop Point','Plan ETA','Plan ETD','Group Code','Remark','Work Detail'];
   const examples = [
-    ['03/11/2026','TB08-B','CTS','71-6137','6W','ตัวอย่าง คนขับ','081-234-5678','Inbound','R1-1','11:30','11:45','G02','REGULAR','ตัวอย่าง - ลบแถวนี้ก่อนอัปโหลด'],
+    ['03/11/2026','TB08-B','CTS','71-6137','6W','ตัวอย่าง คนขับ','081-234-5678','Inbound','R1-1','11:30','11:45','G02','NORMAL','ตัวอย่าง - ลบแถวนี้ก่อนอัปโหลด'],
     ['03/11/2026','GW01-D','CTS','71-6472','6W','','','Inbound','L1-1','13:00','13:15','G02','EXTRA','ตัวอย่าง - ลบแถวนี้ก่อนอัปโหลด'],
   ];
   const workbook = XLSX.utils.book_new();
@@ -423,7 +423,7 @@ function RemarkBadge({ remark }: { remark: PlanRemark }) {
 
   return (
     <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${classes[remark]}`}>
-      {remark}
+      {remark === 'REGULAR' ? 'NORMAL' : remark}
     </span>
   );
 }
@@ -1589,7 +1589,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                   <div className="grid grid-cols-5 gap-2">
                     <div className="min-w-[82px] rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-amber-800"><p className="text-[9px] font-bold uppercase">ทั้งหมด</p><p className="text-base font-bold tabular-nums">{dailyResult?.rowCount??0}</p></div>
                     <div className="min-w-[82px] rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-emerald-800"><p className="text-[9px] font-bold uppercase">ใช้งาน</p><p className="text-base font-bold tabular-nums">{dailyResult?.activeCount??0}</p></div>
-                    <div className="min-w-[82px] rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-blue-800"><p className="text-[9px] font-bold uppercase">แผนปกติ</p><p className="text-base font-bold tabular-nums">{dailyResult?.regularCount??0}</p></div>
+                    <div className="min-w-[82px] rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-blue-800"><p className="text-[9px] font-bold uppercase">NORMAL</p><p className="text-base font-bold tabular-nums">{dailyResult?.regularCount??0}</p></div>
                     <div className="min-w-[82px] rounded-lg border border-purple-200 bg-purple-50 px-3 py-1.5 text-purple-800"><p className="text-[9px] font-bold uppercase">แผนพิเศษ</p><p className="text-base font-bold tabular-nums">{dailyResult?.extraCount??0}</p></div>
                     <div className="min-w-[82px] rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-red-800"><p className="text-[9px] font-bold uppercase">ยกเลิก</p><p className="text-base font-bold tabular-nums">{dailyResult?.cancelCount??0}</p></div>
                   </div>
@@ -1626,7 +1626,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                       className="rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm"
                     >
                       <option value="ALL">ทุกประเภท</option>
-                      <option value="REGULAR">REGULAR</option>
+                      <option value="REGULAR">NORMAL</option>
                       <option value="EXTRA">EXTRA</option>
                       <option value="CANCEL">CANCEL</option>
                     </select>
@@ -1795,7 +1795,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
                 <label className="text-sm font-medium text-slate-700">
                   Remark
                   <select value={planForm.remark || 'REGULAR'} onChange={event => setPlanFormField('remark', event.target.value)} disabled={isSavingPlan} className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 disabled:bg-slate-100">
-                    <option value="REGULAR">REGULAR</option>
+                    <option value="REGULAR">NORMAL</option>
                     <option value="EXTRA">EXTRA</option>
                   </select>
                 </label>
@@ -2011,7 +2011,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
             <h2 className="text-lg font-bold">คืนค่า {restoreTarget.codeRun}</h2>
             <p className="mt-2 text-sm text-slate-500">เลือกประเภทของแผนที่ต้องการคืนค่า</p>
             <div className="mt-5 grid grid-cols-2 gap-3">
-              <button type="button" onClick={() => void handleRestorePlan('REGULAR')} disabled={isSavingPlan} className="rounded-xl bg-blue-600 px-4 py-3 font-semibold text-white disabled:opacity-60">REGULAR</button>
+              <button type="button" onClick={() => void handleRestorePlan('REGULAR')} disabled={isSavingPlan} className="rounded-xl bg-blue-600 px-4 py-3 font-semibold text-white disabled:opacity-60">NORMAL</button>
               <button type="button" onClick={() => void handleRestorePlan('EXTRA')} disabled={isSavingPlan} className="rounded-xl bg-purple-600 px-4 py-3 font-semibold text-white disabled:opacity-60">EXTRA</button>
             </div>
             <button type="button" onClick={() => setRestoreTarget(null)} disabled={isSavingPlan} className="mt-3 w-full rounded-xl border px-4 py-2.5 disabled:opacity-50">ยกเลิก</button>
