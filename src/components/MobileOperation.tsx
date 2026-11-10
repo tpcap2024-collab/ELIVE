@@ -32,6 +32,7 @@ interface MobileOperationProps {
   trucks: Truck[];
   gpsLocations?: GpsLocation[];
   selectedDate: string;
+  onDateChange: (date: string) => void;
   lastUpdate: string;
   isRefreshing: boolean;
   canOperate: boolean;
@@ -159,6 +160,7 @@ export function MobileOperation({
   trucks,
   gpsLocations = [],
   selectedDate,
+  onDateChange,
   lastUpdate,
   isRefreshing,
   canOperate,
@@ -302,6 +304,20 @@ export function MobileOperation({
           </div>
         )}
       </header>
+
+      <div className="shrink-0 border-b border-slate-200 bg-white px-3 pt-3">
+        <label className="flex h-11 items-center gap-3 rounded-xl border border-blue-200 bg-blue-50 px-3 text-sm font-bold text-slate-700">
+          <span className="shrink-0">วันที่</span>
+          <input
+            type="date"
+            value={selectedDate}
+            onChange={event => onDateChange(event.target.value)}
+            disabled={isRefreshing}
+            aria-label="เลือกวันที่แผนงาน"
+            className="min-w-0 flex-1 bg-transparent text-right font-bold text-blue-700 outline-none disabled:opacity-50"
+          />
+        </label>
+      </div>
 
       <div className="shrink-0 border-b border-slate-200 bg-white px-3 py-3">
         <div className="grid grid-cols-4 gap-1.5">
