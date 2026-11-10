@@ -320,102 +320,37 @@ export function MobileTripCard({
   return (
     <article
       ref={cardRef}
-      className={`overflow-hidden rounded-xl border border-l-4 border-slate-200 shadow-sm ${getCardBackgroundClass(
-        truck
-      )} ${getCardAccentClass(truck)}`}
+      className={`overflow-hidden rounded-xl border border-l-4 border-slate-200 shadow-sm ${getCardBackgroundClass(truck)} ${getCardAccentClass(truck)}`}
     >
-      <div className="px-3 py-2">
-        <div className="flex min-w-0 items-center gap-2 text-xs">
-          <button
-            type="button"
-            onClick={() => setShowDetails(current => !current)}
-            aria-expanded={showDetails}
-            aria-label={`รายละเอียด ${truck.route} ${truck.licensePlate}`}
-            className="flex min-h-11 min-w-0 flex-1 items-center gap-2 text-left"
-          >
-            <span className="shrink-0 rounded-md bg-blue-700 px-2 py-1 font-mono text-base font-black leading-none tracking-tight text-white shadow-sm">
-              {formatValue(truck.route)}
-            </span>
-            <span className="shrink-0 text-slate-300" aria-hidden="true">|</span>
-            <span className="min-w-0 truncate text-lg font-black leading-none tracking-tight text-slate-950">
-              {formatValue(truck.licensePlate)}
-            </span>
-            <span
-              className="min-w-0 truncate rounded-md bg-slate-100 px-1.5 py-1 text-xs font-bold leading-none text-slate-600"
-              title={formatValue(truck.dropPoint)}
-            >
-              {formatValue(truck.dropPoint)}
-            </span>
-            <span
-              className="shrink-0 rounded-md bg-blue-50 px-1.5 py-1 font-mono text-xs font-black leading-none text-blue-700"
-              title={`Plan ETA ${formatPlanEtaTime(truck.planEta)}`}
-            >
-              {formatPlanEtaTime(truck.planEta)}
-            </span>
-            {hasPendingWorkDetail && <ClipboardCheck className="h-4 w-4 shrink-0 text-amber-600" aria-label="มีงานรอตรวจสอบ เปิดรายละเอียด" />}
+      <div className="px-2.5 py-2">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <button type="button" onClick={() => setShowDetails(current => !current)} aria-expanded={showDetails} aria-label={`รายละเอียด ${truck.route} ${truck.licensePlate}`} className="flex min-h-8 min-w-0 flex-1 items-center gap-1.5 text-left">
+            <span className="shrink-0 rounded-md bg-blue-700 px-1.5 py-1 font-mono text-sm font-black leading-none text-white shadow-sm">{formatValue(truck.route)}</span>
+            <span className="min-w-0 truncate text-base font-black leading-none tracking-tight text-slate-950">{formatValue(truck.licensePlate)}</span>
+            <span className="shrink-0 rounded-md bg-slate-100 px-1.5 py-1 text-[11px] font-bold leading-none text-slate-600" title={formatValue(truck.dropPoint)}>{formatValue(truck.dropPoint)}</span>
+            <span className="shrink-0 rounded-md bg-blue-50 px-1.5 py-1 font-mono text-[11px] font-black leading-none text-blue-700" title={`Plan ETA ${formatPlanEtaTime(truck.planEta)}`}>{formatPlanEtaTime(truck.planEta)}</span>
+            {hasPendingWorkDetail && <ClipboardCheck className="h-3.5 w-3.5 shrink-0 text-amber-600" aria-label="มีงานรอตรวจสอบ เปิดรายละเอียด" />}
           </button>
-          <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-bold ${
-            gpsLost ? 'bg-orange-100 text-orange-800' : noWork ? 'bg-slate-100 text-slate-700' : completed ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-50 text-blue-700'
-          }`}>
-            {gpsLost ? 'GPS มีปัญหา' : noWork ? 'ไม่มีงานลง' : completed ? 'เสร็จแล้ว' : truck.status === 'TRAVELING' ? 'กำลังเดินทาง' : truck.status === 'WAITING_AREA' ? 'พื้นที่รอ' : truck.status === 'DOCK_IN' ? 'เข้าช่องจอด' : 'กำลังลงงาน'}
+          <span className={`shrink-0 whitespace-nowrap rounded-full px-2 py-1 text-[9px] font-bold ${gpsLost ? 'bg-slate-200 text-slate-700' : noWork ? 'bg-slate-100 text-slate-700' : completed ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-50 text-blue-700'}`}>
+            {gpsLost ? 'GPS LOST' : noWork ? 'ไม่มีงานลง' : completed ? 'เสร็จแล้ว' : truck.status === 'TRAVELING' ? 'กำลังเดินทาง' : truck.status === 'WAITING_AREA' ? 'พื้นที่รอ' : truck.status === 'DOCK_IN' ? 'เข้าช่องจอด' : 'กำลังลงงาน'}
           </span>
         </div>
-        <div className="flex min-w-0 items-center text-sm">
-          <span className="min-w-0 flex-1 truncate font-semibold text-slate-700" title={truck.gpsLocation?.locationName || ''}>
-            {truck.gpsLocation?.locationName || 'ยังไม่มีข้อมูลตำแหน่ง'}
-          </span>
-        </div>
-        <div className="flex min-w-0 items-center justify-between gap-2">
-          <span className="min-w-0 flex-1 truncate text-xs font-medium text-slate-600" title={truck.actionProblem || ''}>
-            {gpsLost
-              ? 'ไม่สามารถยืนยันเวลาถึง'
-              : noWork
-                ? (truck.actionProblem || 'ไม่มีงานลง')
-                : completed
-                  ? `ออก ${actualEtd}`
-                  : isInsideTpcap
-                    ? 'อยู่ในพื้นที่ TPCAP'
-                    : isRouteLoading
-                      ? 'กำลังคำนวณเส้นทาง...'
-                      : routeResult
-                        ? `อีก ${formatRouteDuration(routeResult.durationMinutes)} • ถึง ${formatRouteEta(routeResult.estimatedArrival)} • ${routeResult.distanceKilometers.toFixed(1)} กม.`
-                        : routeUnavailable
-                          ? 'ไม่สามารถคำนวณเส้นทางได้'
-                          : truck.gpsLocation
-                            ? 'รอคำนวณเส้นทาง'
-                            : 'ยังไม่มีข้อมูลตำแหน่ง'}
-          </span>
-          <button
-            type="button"
-            onClick={() => onOpenGps(truck.id)}
-            aria-label={`เปิดแผนที่ ${truck.route} ${truck.licensePlate}`}
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border-2 border-red-800 bg-red-50 shadow-sm active:bg-red-100"
-          >
-            <svg
-              viewBox="0 0 32 40"
-              className="h-8 w-7 shrink-0"
-              aria-hidden="true"
-            >
-              <path
-                d="M16 1.5C8.27 1.5 2 7.77 2 15.5c0 10.5 14 22.5 14 22.5s14-12 14-22.5C30 7.77 23.73 1.5 16 1.5Z"
-                fill="#ff0000"
-                stroke="#111827"
-                strokeWidth="2.8"
-                strokeLinejoin="round"
-              />
-              <circle
-                cx="16"
-                cy="15.5"
-                r="6.5"
-                fill="#ffffff"
-                stroke="#111827"
-                strokeWidth="2.5"
-              />
+        <div className="mt-1 flex min-w-0 items-center gap-2">
+          <button type="button" onClick={() => setShowDetails(current => !current)} className="min-w-0 flex-1 text-left" aria-label={`ข้อมูลปัจจุบัน ${truck.route} ${truck.licensePlate}`}>
+            <p className="truncate text-xs font-semibold leading-4 text-slate-700" title={truck.gpsLocation?.locationName || ''}>
+              {truck.gpsLocation?.locationName || 'ยังไม่มีข้อมูลตำแหน่ง'}
+              <span className="mx-1 text-slate-400">·</span>
+              <span className="font-medium text-slate-600">{gpsLost ? 'ไม่พบ GPS ของวันที่วิ่ง' : noWork ? (truck.actionProblem || 'ไม่มีงานลง') : completed ? `ออก ${actualEtd}` : isInsideTpcap ? 'อยู่ในพื้นที่ TPCAP' : routeResult ? `ถึง ${formatRouteEta(routeResult.estimatedArrival)}` : isRouteLoading ? 'กำลังคำนวณ...' : routeUnavailable ? 'คำนวณเส้นทางไม่ได้' : 'รอข้อมูลเส้นทาง'}</span>
+            </p>
+          </button>
+          <button type="button" onClick={() => onOpenGps(truck.id)} disabled={!truck.gpsLocation} aria-label={`เปิดแผนที่ ${truck.route} ${truck.licensePlate}`} className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-2 shadow-sm ${truck.gpsLocation ? 'border-red-800 bg-red-50 active:bg-red-100' : 'cursor-not-allowed border-slate-400 bg-slate-100 opacity-50'}`}>
+            <svg viewBox="0 0 32 40" className="h-6 w-5 shrink-0" aria-hidden="true">
+              <path d="M16 1.5C8.27 1.5 2 7.77 2 15.5c0 10.5 14 22.5 14 22.5s14-12 14-22.5C30 7.77 23.73 1.5 16 1.5Z" fill={truck.gpsLocation ? '#ff0000' : '#94a3b8'} stroke="#111827" strokeWidth="2.8" strokeLinejoin="round" />
+              <circle cx="16" cy="15.5" r="6.5" fill="#ffffff" stroke="#111827" strokeWidth="2.5" />
             </svg>
           </button>
         </div>
       </div>
-
       {showDetails && (
         <div className="border-t border-slate-300 bg-white/55 p-3">
           <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-slate-600">
