@@ -324,14 +324,14 @@ export function MobileTripCard({
     >
       <div className="px-2.5 py-2">
         <div className="flex min-w-0 items-center gap-1.5">
-          <button type="button" onClick={() => setShowDetails(current => !current)} aria-expanded={showDetails} aria-label={`รายละเอียด ${truck.route} ${truck.licensePlate}`} className="flex min-h-8 min-w-0 flex-1 items-center gap-1.5 text-left">
+          <button type="button" onClick={() => setShowDetails(current => !current)} aria-expanded={showDetails} aria-label={`รายละเอียด ${truck.route} ${truck.licensePlate}`} className="flex min-h-8 min-w-0 flex-1 flex-wrap items-center gap-1.5 text-left">
             <span className="shrink-0 rounded-md bg-blue-700 px-1.5 py-1 font-mono text-sm font-black leading-none text-white shadow-sm">{formatValue(truck.route)}</span>
-            <span className="min-w-0 truncate text-base font-black leading-none tracking-tight text-slate-950">{formatValue(truck.licensePlate)}</span>
-            <span className="shrink-0 rounded-md bg-slate-100 px-1.5 py-1 text-[11px] font-bold leading-none text-slate-600" title={formatValue(truck.dropPoint)}>{formatValue(truck.dropPoint)}</span>
-            <span className="shrink-0 rounded-md bg-blue-50 px-1.5 py-1 font-mono text-[11px] font-black leading-none text-blue-700" title={`Plan ETA ${formatPlanEtaTime(truck.planEta)}`}>{formatPlanEtaTime(truck.planEta)}</span>
+            <span className="shrink-0 whitespace-nowrap text-base font-black leading-none tracking-tight text-slate-950" title={formatValue(truck.licensePlate)}>{formatValue(truck.licensePlate)}</span>
+            <span className="order-3 shrink-0 rounded-md bg-slate-100 px-1.5 py-1 text-[11px] font-bold leading-none text-slate-600 min-[360px]:order-none" title={formatValue(truck.dropPoint)}>{formatValue(truck.dropPoint)}</span>
+            <span className="order-4 shrink-0 rounded-md bg-blue-50 px-1.5 py-1 font-mono text-[11px] font-black leading-none text-blue-700 min-[360px]:order-none" title={`Plan ETA ${formatPlanEtaTime(truck.planEta)}`}>{formatPlanEtaTime(truck.planEta)}</span>
             {hasPendingWorkDetail && <ClipboardCheck className="h-3.5 w-3.5 shrink-0 text-amber-600" aria-label="มีงานรอตรวจสอบ เปิดรายละเอียด" />}
           </button>
-          <span className={`shrink-0 whitespace-nowrap rounded-full px-2 py-1 text-[9px] font-bold ${gpsLost ? 'bg-slate-200 text-slate-700' : noWork ? 'bg-slate-100 text-slate-700' : completed ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-50 text-blue-700'}`}>
+          <span className={`order-5 ml-auto shrink-0 whitespace-nowrap rounded-full px-2 py-1 text-[9px] font-bold min-[360px]:order-none ${gpsLost ? 'bg-slate-200 text-slate-700' : noWork ? 'bg-slate-100 text-slate-700' : completed ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-50 text-blue-700'}`}>
             {gpsLost ? 'GPS LOST' : noWork ? 'ไม่มีงานลง' : completed ? 'เสร็จแล้ว' : truck.status === 'TRAVELING' ? 'กำลังเดินทาง' : truck.status === 'WAITING_AREA' ? 'พื้นที่รอ' : truck.status === 'DOCK_IN' ? 'เข้าช่องจอด' : 'กำลังลงงาน'}
           </span>
         </div>
