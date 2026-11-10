@@ -108,7 +108,7 @@ type AppPermission =
   | 'MANAGE_SYSTEM';
 const ROLE_PERMISSIONS: Record<EliveUserRole, ReadonlySet<AppPermission>> = {
   TV_VIEWER: new Set(['VIEW_DASHBOARD', 'VIEW_LIVE_MAP', 'VIEW_PLATFORM', 'VIEW_REPORT']),
-  OPERATOR: new Set(['VIEW_DASHBOARD', 'VIEW_LIVE_MAP', 'USE_MOBILE_MODE', 'STAMP_TRUCK', 'SUBMIT_ACTION']),
+  OPERATOR: new Set(['USE_MOBILE_MODE', 'STAMP_TRUCK', 'SUBMIT_ACTION']),
   PLANNER: new Set(['VIEW_DASHBOARD', 'VIEW_LIVE_MAP', 'VIEW_PLATFORM', 'VIEW_REPORT', 'USE_MOBILE_MODE', 'STAMP_TRUCK', 'SUBMIT_ACTION', 'VIEW_ACTION_CENTER', 'MANAGE_PLAN']),
   SUPERVISOR: new Set(['VIEW_DASHBOARD', 'VIEW_LIVE_MAP', 'VIEW_PLATFORM', 'VIEW_REPORT', 'SUBMIT_ACTION', 'VIEW_ACTION_CENTER']),
   ADMIN: new Set(['VIEW_DASHBOARD', 'VIEW_LIVE_MAP', 'VIEW_PLATFORM', 'VIEW_REPORT', 'USE_MOBILE_MODE', 'STAMP_TRUCK', 'SUBMIT_ACTION', 'VIEW_ACTION_CENTER', 'MANAGE_PLAN', 'MANAGE_SYSTEM']),
@@ -312,6 +312,10 @@ export default function App() {
   }, [currentView]);
   useEffect(() => {
     if (!authenticatedUser) return;
+    if (authenticatedUser.role === 'OPERATOR') {
+      if (currentView !== 'mobile') setCurrentView('mobile');
+      return;
+    }
     if (!canAccessView(authenticatedUser.role, currentView)) {
       setCurrentView('dashboard');
     }
@@ -598,7 +602,7 @@ export default function App() {
 
   const changeView = (view: CurrentView) => {
     if (!authenticatedUser || !canAccessView(authenticatedUser.role, view)) {
-      setCurrentView('dashboard');
+      setCurrentView(authenticatedUser?.role === 'OPERATOR' ? 'mobile' : 'dashboard');
       return;
     }
     if (document.fullscreenElement) {
@@ -624,6 +628,7 @@ export default function App() {
   };
 
   const exitMobileMode = () => {
+    if (authenticatedUser?.role === 'OPERATOR') return;
     setCurrentView('dashboard');
     setIsSidebarOpen(window.innerWidth >= 768);
   };
