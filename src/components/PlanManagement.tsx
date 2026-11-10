@@ -144,6 +144,7 @@ const PLAN_FORM_FIELDS: FormFieldConfig<keyof EditablePlan>[] = [
   { field: 'dropPoint', label: 'Drop Point', type: 'text', required: true },
   { field: 'planEta', label: 'Plan ETA', type: 'time', required: true },
   { field: 'planEtd', label: 'Plan ETD', type: 'time', required: true },
+  { field: 'groupCode', label: 'Group Code', type: 'text', required: false },
 ];
 
 const MASTER_FORM_FIELDS: FormFieldConfig<keyof EditableMasterPlanRow>[] = [
@@ -992,20 +993,23 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
 
     const mode = planDialogMode;
     const codeRun = editingCodeRun;
-    const submittedPlan = { ...planForm };
+    const submittedPlan = {
+      ...planForm,
+      groupCode: String(planForm.groupCode || '').trim().toUpperCase(),
+    };
     setIsSavingPlan(true);
     setNotice(null);
 
     try {
       if (mode === 'extra') {
-        const result = await createExtraPlan({ ...submittedPlan, remark: 'EXTRA' });
+        await createExtraPlan({ ...submittedPlan, remark: 'EXTRA' });
         setNotice({
           type: 'success',
-          message: `เพิ่มเที่ยว Extra เรียบร้อยแล้ว Code run: ${result.codeRun}`,
+          message: 'เพิ่มแผนพิเศษเรียบร้อยแล้ว',
         });
       } else {
         await updateDailyPlan(codeRun, submittedPlan);
-        setNotice({ type: 'success', message: `แก้ไข ${codeRun} สำเร็จ` });
+        setNotice({ type: 'success', message: 'แก้ไขแผนเรียบร้อยแล้ว' });
       }
 
       setDailyDate(submittedPlan.date);
@@ -1745,8 +1749,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
           <form onSubmit={handleSavePlan} className="max-h-[92vh] w-full max-w-3xl overflow-auto rounded-2xl bg-white p-6 shadow-2xl">
             <div className="flex items-center justify-between">
               <div>
-                <h2 className="text-xl font-bold">{planDialogMode === 'extra' ? 'เพิ่มแผนพิเศษ' : `แก้ไข ${editingCodeRun}`}</h2>
-                <p className="text-sm text-slate-500">เลขอ้างอิงจะถูกสร้างให้อัตโนมัติ</p>
+                <h2 className="text-xl font-bold">{planDialogMode === 'extra' ? 'เพิ่มแผนพิเศษ' : 'แก้ไขแผน'}</h2>
               </div>
               <button type="button" onClick={() => !isSavingPlan && setPlanDialogMode(null)} disabled={isSavingPlan} className="rounded-lg p-2 hover:bg-slate-100 disabled:opacity-50"><X className="h-5 w-5" /></button>
             </div>
