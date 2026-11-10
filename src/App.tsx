@@ -1369,7 +1369,8 @@ export default function App() {
             trucks={inboundTrucks}
             gpsLocations={filteredGpsLocations}
             selectedDate={selectedDate}
-            lastUpdate={lastUpdate}
+                          onDateChange={setSelectedDate}
+lastUpdate={lastUpdate}
             isRefreshing={isRefreshing}
             canOperate={canUseMobileMode && canStamp && canSubmitAction}
             onRefresh={loadData}
