@@ -56,15 +56,6 @@ const MOBILE_FILTERS: Array<{
   { value: 'COMPLETED', label: 'เสร็จแล้ว', icon: CheckCircle2 },
 ];
 
-const MOBILE_FILTER_OPTION_STYLES: Record<MobileFilter, React.CSSProperties> = {
-  ALL: { backgroundColor: '#0f172a', color: '#ffffff', fontWeight: 900 },
-  ACTIVE: { backgroundColor: '#fde047', color: '#0f172a', fontWeight: 900 },
-  PENDING: { backgroundColor: '#dbeafe', color: '#1e40af', fontWeight: 900 },
-  ISSUE: { backgroundColor: '#fecaca', color: '#991b1b', fontWeight: 900 },
-  COMPLETED: { backgroundColor: '#bbf7d0', color: '#166534', fontWeight: 900 },
-};
-
-
 function parseGpsTimestamp(value?: string): number {
   const text = String(value || '').trim();
   if (!text) return 0;
@@ -230,17 +221,6 @@ export function MobileOperation({
     remaining: areaTrucks.filter(truck => !isCompletedTruck(truck) && !isActiveTruck(truck) && !hasNoWorkAction(truck)).length,
     issue: areaTrucks.filter(isIssueTruck).length,
   }), [areaTrucks]);
-  const counts = useMemo(
-    () => ({
-      ALL: areaTrucks.length,
-      ACTIVE: areaTrucks.filter(isActiveTruck).length,
-      PENDING: areaTrucks.filter(isPendingTruck).length,
-      ISSUE: areaTrucks.filter(isIssueTruck).length,
-      COMPLETED: areaTrucks.filter(isCompletedTruck).length,
-    }),
-    [areaTrucks]
-  );
-
   const visibleTrucks = useMemo(() => {
     const query = searchText.trim().toLocaleLowerCase('th');
     return areaTrucks
@@ -328,31 +308,14 @@ export function MobileOperation({
           {MOBILE_AREA_FILTERS.map(item => <button key={item.value} type="button" onClick={() => setAreaFilter(item.value)} className={`h-9 rounded-lg border px-2 text-xs font-black ${areaFilter === item.value ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-200 bg-white text-slate-600'}`}>{item.label}</button>)}
         </div>
         <div className="mt-2 grid grid-cols-4 gap-1.5">
-          <div className="rounded-lg border bg-slate-50 p-1.5 text-center"><p className="text-[9px] font-bold text-slate-500">ทั้งหมด</p><p className="font-black">{areaKpi.total}</p></div>
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-1.5 text-center"><p className="text-[9px] font-bold text-emerald-700">ลงแล้ว</p><p className="font-black text-emerald-800">{areaKpi.completed}</p></div>
-          <div className="rounded-lg border border-amber-200 bg-amber-50 p-1.5 text-center"><p className="text-[9px] font-bold text-amber-700">กำลังลง</p><p className="font-black text-amber-800">{areaKpi.unloading}</p></div>
-          <div className="rounded-lg border border-blue-200 bg-blue-50 p-1.5 text-center"><p className="text-[9px] font-bold text-blue-700">เหลือ</p><p className="font-black text-blue-800">{areaKpi.remaining}</p></div>
+          <button type="button" onClick={() => setFilter('ALL')} aria-pressed={filter === 'ALL'} className={`rounded-lg border p-1.5 text-center transition-all ${filter === 'ALL' ? 'border-slate-900 bg-slate-900 text-white ring-2 ring-slate-300' : 'border-slate-300 bg-slate-50 text-slate-700'}`}><p className="text-[9px] font-bold">ทั้งหมด</p><p className="font-black tabular-nums">{areaKpi.total}</p></button>
+          <button type="button" onClick={() => setFilter('COMPLETED')} aria-pressed={filter === 'COMPLETED'} className={`rounded-lg border p-1.5 text-center transition-all ${filter === 'COMPLETED' ? 'border-emerald-700 bg-emerald-600 text-white ring-2 ring-emerald-200' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}><p className="text-[9px] font-bold">ลงแล้ว</p><p className="font-black tabular-nums">{areaKpi.completed}</p></button>
+          <button type="button" onClick={() => setFilter('ACTIVE')} aria-pressed={filter === 'ACTIVE'} className={`rounded-lg border p-1.5 text-center transition-all ${filter === 'ACTIVE' ? 'border-amber-600 bg-amber-500 text-slate-950 ring-2 ring-amber-200' : 'border-amber-200 bg-amber-50 text-amber-800'}`}><p className="text-[9px] font-bold">กำลังลง</p><p className="font-black tabular-nums">{areaKpi.unloading}</p></button>
+          <button type="button" onClick={() => setFilter('PENDING')} aria-pressed={filter === 'PENDING'} className={`rounded-lg border p-1.5 text-center transition-all ${filter === 'PENDING' ? 'border-blue-700 bg-blue-600 text-white ring-2 ring-blue-200' : 'border-blue-200 bg-blue-50 text-blue-800'}`}><p className="text-[9px] font-bold">เหลือ</p><p className="font-black tabular-nums">{areaKpi.remaining}</p></button>
         </div>
-        {areaKpi.issue > 0 && <p className="mt-1 text-right text-[10px] font-bold text-red-600">ผิดปกติ {areaKpi.issue} รายการ</p>}
+        {areaKpi.issue > 0 && <button type="button" onClick={() => setFilter('ISSUE')} aria-pressed={filter === 'ISSUE'} className={`mt-1.5 flex w-full items-center justify-center rounded-lg border px-3 py-1.5 text-xs font-black transition-all ${filter === 'ISSUE' ? 'border-red-700 bg-red-600 text-white ring-2 ring-red-200' : 'border-red-200 bg-red-50 text-red-700'}`}><AlertTriangle className="mr-1.5 h-3.5 w-3.5" />ผิดปกติ {areaKpi.issue} รายการ</button>}
         <div className="flex min-w-0 items-center gap-2">
-          <select
-            value={filter}
-            onChange={event => {
-              const value = event.target.value;
-              const option = MOBILE_FILTERS.find(item => item.value === value);
-              if (option) setFilter(option.value);
-            }}
-            aria-label="เลือกสถานะรถ"
-            style={{ fontWeight: 900 }}
-            className="h-11 w-40 min-w-0 shrink-0 rounded-xl border border-blue-400 bg-white px-3 text-sm font-black text-slate-950 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
-          >
-            {MOBILE_FILTERS.map(item => (
-              <option key={item.value} value={item.value} style={MOBILE_FILTER_OPTION_STYLES[item.value]}>
-                {item.label} ({counts[item.value]})
-              </option>
-            ))}
-          </select>
-          <div className="relative min-w-0 flex-1">
+          <div className="relative mt-3 min-w-0 flex-1">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <input
               type="search"
