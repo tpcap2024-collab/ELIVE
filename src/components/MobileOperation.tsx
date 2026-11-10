@@ -16,6 +16,17 @@ import { normalizeLicensePlate } from '../lib/sheets';
 import MobileTripCard from './MobileTripCard';
 
 type MobileFilter = 'ALL' | 'ACTIVE' | 'PENDING' | 'ISSUE' | 'COMPLETED';
+type MobileAreaFilter = 'ALL' | 'LSP' | 'R1' | 'R2';
+const MOBILE_AREA_FILTERS: Array<{ value: MobileAreaFilter; label: string }> = [
+  { value: 'ALL', label: 'ทุกพื้นที่' }, { value: 'LSP', label: 'LSP' }, { value: 'R1', label: 'R1' }, { value: 'R2', label: 'R2' },
+];
+function getMobileArea(truck: Truck): Exclude<MobileAreaFilter, 'ALL'> | 'OTHER' {
+  const dropPoint = String(truck.dropPoint || '').trim().toUpperCase();
+  if (/^(?:M1|L1|L2|L3)(?:-|\b)/.test(dropPoint)) return 'LSP';
+  if (/^R1(?:-|\b)/.test(dropPoint)) return 'R1';
+  if (/^R2(?:-|\b)/.test(dropPoint)) return 'R2';
+  return 'OTHER';
+}
 
 interface MobileOperationProps {
   trucks: Truck[];
@@ -169,6 +180,7 @@ export function MobileOperation({
   onStampTruck,
 }: MobileOperationProps) {
   const [filter, setFilter] = useState<MobileFilter>('ALL');
+  const [areaFilter, setAreaFilter] = useState<MobileAreaFilter>('ALL');
   const [searchText, setSearchText] = useState('');
   const [isOnline, setIsOnline] = useState(
     typeof navigator === 'undefined' ? true : navigator.onLine
@@ -207,20 +219,31 @@ export function MobileOperation({
     };
   }, []);
 
+  const areaTrucks = useMemo(
+    () => areaFilter === 'ALL' ? trucksWithGps : trucksWithGps.filter(truck => getMobileArea(truck) === areaFilter),
+    [areaFilter, trucksWithGps]
+  );
+  const areaKpi = useMemo(() => ({
+    total: areaTrucks.length,
+    completed: areaTrucks.filter(isCompletedTruck).length,
+    unloading: areaTrucks.filter(isActiveTruck).length,
+    remaining: areaTrucks.filter(truck => !isCompletedTruck(truck) && !isActiveTruck(truck) && !hasNoWorkAction(truck)).length,
+    issue: areaTrucks.filter(isIssueTruck).length,
+  }), [areaTrucks]);
   const counts = useMemo(
     () => ({
-      ALL: trucksWithGps.length,
-      ACTIVE: trucksWithGps.filter(isActiveTruck).length,
-      PENDING: trucksWithGps.filter(isPendingTruck).length,
-      ISSUE: trucksWithGps.filter(isIssueTruck).length,
-      COMPLETED: trucksWithGps.filter(isCompletedTruck).length,
+      ALL: areaTrucks.length,
+      ACTIVE: areaTrucks.filter(isActiveTruck).length,
+      PENDING: areaTrucks.filter(isPendingTruck).length,
+      ISSUE: areaTrucks.filter(isIssueTruck).length,
+      COMPLETED: areaTrucks.filter(isCompletedTruck).length,
     }),
-    [trucksWithGps]
+    [areaTrucks]
   );
 
   const visibleTrucks = useMemo(() => {
     const query = searchText.trim().toLocaleLowerCase('th');
-    return trucksWithGps
+    return areaTrucks
       .filter(truck => {
         if (filter === 'ALL') return true;
         if (filter === 'ACTIVE') return isActiveTruck(truck);
@@ -244,7 +267,7 @@ export function MobileOperation({
           numeric: true,
         });
       });
-  }, [filter, searchText, trucksWithGps]);
+  }, [areaTrucks, filter, searchText]);
   const selectedFilter =
     MOBILE_FILTERS.find(item => item.value === filter) || MOBILE_FILTERS[0];
   const SelectedFilterIcon = selectedFilter.icon;
@@ -253,7 +276,7 @@ export function MobileOperation({
     <div className="flex h-[100dvh] min-h-0 w-full flex-col overflow-hidden bg-slate-100">
       <header className="sticky top-0 z-30 shrink-0 border-b border-slate-200 bg-white shadow-sm">
         <div className="flex min-h-16 items-center justify-between gap-2 px-3 py-2">
-          <div className="flex min-w-0 items-center gap-2">
+          <div className="mt-3 flex min-w-0 items-center gap-2">
             {onOpenMenu && (
               <button
                 type="button"
@@ -301,6 +324,16 @@ export function MobileOperation({
       </header>
 
       <div className="shrink-0 border-b border-slate-200 bg-white px-3 py-3">
+        <div className="grid grid-cols-4 gap-1.5">
+          {MOBILE_AREA_FILTERS.map(item => <button key={item.value} type="button" onClick={() => setAreaFilter(item.value)} className={`h-9 rounded-lg border px-2 text-xs font-black ${areaFilter === item.value ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-200 bg-white text-slate-600'}`}>{item.label}</button>)}
+        </div>
+        <div className="mt-2 grid grid-cols-4 gap-1.5">
+          <div className="rounded-lg border bg-slate-50 p-1.5 text-center"><p className="text-[9px] font-bold text-slate-500">ทั้งหมด</p><p className="font-black">{areaKpi.total}</p></div>
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-1.5 text-center"><p className="text-[9px] font-bold text-emerald-700">ลงแล้ว</p><p className="font-black text-emerald-800">{areaKpi.completed}</p></div>
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-1.5 text-center"><p className="text-[9px] font-bold text-amber-700">กำลังลง</p><p className="font-black text-amber-800">{areaKpi.unloading}</p></div>
+          <div className="rounded-lg border border-blue-200 bg-blue-50 p-1.5 text-center"><p className="text-[9px] font-bold text-blue-700">เหลือ</p><p className="font-black text-blue-800">{areaKpi.remaining}</p></div>
+        </div>
+        {areaKpi.issue > 0 && <p className="mt-1 text-right text-[10px] font-bold text-red-600">ผิดปกติ {areaKpi.issue} รายการ</p>}
         <div className="flex min-w-0 items-center gap-2">
           <select
             value={filter}
@@ -346,7 +379,7 @@ export function MobileOperation({
           <div className="flex min-w-0 items-center gap-2">
             <SelectedFilterIcon className="h-4 w-4 shrink-0 text-blue-600" />
             <span className="truncate text-sm font-bold text-slate-700">
-              {selectedFilter.label}
+              {MOBILE_AREA_FILTERS.find(item => item.value === areaFilter)?.label} · {selectedFilter.label}
             </span>
           </div>
           <div className="flex shrink-0 items-center gap-2">
