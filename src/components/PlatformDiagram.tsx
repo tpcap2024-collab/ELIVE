@@ -3,6 +3,7 @@ import type { Truck } from '../types';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   AlertTriangle,
+  ArrowRightLeft,
   CheckCircle2,
   Clock,
   Expand,
@@ -259,16 +260,20 @@ function getActualDurationMinutes(truck: Truck, actualEta: string): number {
   return Math.max(10, elapsed > 0 ? elapsed : 10);
 }
 
+function isExtraTrip(truck: Truck): boolean { return String(truck.planRemark || '').trim().toUpperCase() === 'EXTRA'; }
+function getMovedDockLabel(truck: Truck): string {
+  const data = truck as unknown as Record<string, unknown>;
+  const dock = (v: unknown) => String(v || '').toUpperCase().match(/(?:M1|L1|L2|L3|R1|R2)(?:-\d+)?/)?.[0] || '';
+  let from = [data.moveFrom,data.movedFrom,data.previousDropPoint,data.originalDropPoint,data.oldDropPoint,data.fromDropPoint].map(dock).find(Boolean) || '';
+  let to = [data.moveTo,data.movedTo,data.newDropPoint,data.toDropPoint,truck.dropPoint].map(dock).find(Boolean) || '';
+  if (!from) { const ds = [truck.workDetail,truck.actionProblem,truck.actionCountermeasure].join(' ').toUpperCase().match(/(?:M1|L1|L2|L3|R1|R2)(?:-\d+)?/g) || []; if (ds.length >= 2) { from=ds[0]; to=ds[ds.length-1]; } }
+  return from && to && from !== to ? `${from} to ${to}` : '';
+}
 function getTimelineCardColor(truck: Truck, rowType: 'PLAN' | 'ACTUAL'): string {
+  if (getMovedDockLabel(truck)) return 'bg-fuchsia-700 border-slate-950 text-white shadow-sm shadow-fuchsia-400/60';
+  if (isExtraTrip(truck)) return 'bg-white border-2 border-red-600 text-slate-950 shadow-sm shadow-red-200/70';
   const base = getTruckColor(truck);
-  if (truck.planRemark === 'EXTRA') {
-    return `${base} ring-2 ring-inset ring-red-700`;
-  }
-  if (rowType === 'ACTUAL' && truck.stampEta && !truck.stampEtd) {
-    return truck.performanceStatus === 'DELAY'
-      ? 'bg-orange-500 border-orange-700 text-white'
-      : 'bg-yellow-400 border-yellow-600 text-slate-900';
-  }
+  if (rowType === 'ACTUAL' && truck.stampEta && !truck.stampEtd) return truck.performanceStatus === 'DELAY' ? 'bg-orange-500 border-orange-700 text-white' : 'bg-yellow-400 border-yellow-600 text-slate-900';
   return base;
 }
 
@@ -809,9 +814,10 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
                                             style={{ left: `${position.left}%`, width: `${position.width}%` }}
                                             title={`${rowType}: ${truck.licensePlate} (${truck.route}) ${startText}-${endText}`}
                                           >
-                                            {truck.planRemark === 'EXTRA' && (
-                                              <div className="absolute left-0.5 top-0 text-[5px] font-black">+EXTRA</div>
+                                            {isExtraTrip(truck) && (
+                                              <div className="absolute left-0.5 top-0 text-[5px] font-black text-red-700">+EXTRA</div>
                                             )}
+                                            {getMovedDockLabel(truck) && <ArrowRightLeft className="absolute right-0.5 top-0.5 h-3 w-3 text-slate-950" />}
                                             <div className="w-full truncate text-[7px] font-bold leading-[8px]">{truck.route}</div>
                                             <div className="w-full truncate text-[7px] font-bold leading-[8px]">{truck.licensePlate}</div>
                                             {rowType === 'ACTUAL' && (
@@ -820,7 +826,7 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
                                               </div>
                                             )}
                                             <div className={`w-full truncate text-[6px] font-black leading-[7px] ${rowType === 'PLAN' ? 'mt-1.5' : 'mt-0.5'}`}>
-                                              {hasGpsLostAction(truck) ? 'GPS LOST' : hasNoWorkAction(truck) ? 'NO WORK · NO DROP' : getMinuteDifferenceLabel(truck)}
+                                              {getMovedDockLabel(truck) ? `${getMovedDockLabel(truck)} · ${getMinuteDifferenceLabel(truck) || 'NO ACTIVITY'}` : hasGpsLostAction(truck) ? 'GPS LOST' : hasNoWorkAction(truck) ? 'NO WORK · NO DROP' : getMinuteDifferenceLabel(truck)}
                                             </div>
                                             {!hasGpsLostAction(truck) && !isNonInboundProject(truck) && truck.performanceStatus === 'DELAY' && (
                                               <AlertTriangle className="absolute right-0.5 top-0.5 h-2.5 w-2.5 text-white" />
@@ -884,7 +890,7 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
                           <h3 className="text-xl font-black text-slate-900 sm:text-2xl">Trip Details</h3>
-                          {selectedTruck.planRemark === 'EXTRA' && (
+                          {isExtraTrip(selectedTruck) && (
                             <span className="rounded-full border border-red-300 bg-red-50 px-2.5 py-1 text-xs font-black text-red-700">+ EXTRA</span>
                           )}
                           <span className={`rounded-full border px-2.5 py-1 text-xs font-black ${getStatusBadgeClass(selectedTruck.status)}`}>
