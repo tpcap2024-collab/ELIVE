@@ -279,11 +279,21 @@ export function MobileOperation({
               <h1 className="truncate text-base font-black text-slate-900">
                 Mobile Operation
               </h1>
-              <p className="truncate text-[11px] text-slate-500">
-                {formatSelectedDate(selectedDate)}
-                <span className="mx-1.5">•</span>
-                อัปเดต {lastUpdate || '-'}
-              </p>
+              <div className="flex min-w-0 items-center gap-1.5 text-[11px] text-slate-500">
+                <label className="relative inline-flex shrink-0 items-center rounded-md border border-blue-200 bg-blue-50 px-1.5 py-0.5 font-bold text-blue-700">
+                  <span>{formatSelectedDate(selectedDate)}</span>
+                  <input
+                    type="date"
+                    value={selectedDate}
+                    onChange={event => onDateChange(event.target.value)}
+                    disabled={isRefreshing}
+                    aria-label="เลือกวันที่แผนงาน"
+                    className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
+                  />
+                </label>
+                <span>•</span>
+                <span className="truncate">อัปเดต {lastUpdate || '-'}</span>
+              </div>
             </div>
           </div>
 
@@ -304,20 +314,6 @@ export function MobileOperation({
           </div>
         )}
       </header>
-
-      <div className="shrink-0 border-b border-slate-200 bg-white px-3 pt-3">
-        <label className="flex h-11 items-center gap-3 rounded-xl border border-blue-200 bg-blue-50 px-3 text-sm font-bold text-slate-700">
-          <span className="shrink-0">วันที่</span>
-          <input
-            type="date"
-            value={selectedDate}
-            onChange={event => onDateChange(event.target.value)}
-            disabled={isRefreshing}
-            aria-label="เลือกวันที่แผนงาน"
-            className="min-w-0 flex-1 bg-transparent text-right font-bold text-blue-700 outline-none disabled:opacity-50"
-          />
-        </label>
-      </div>
 
       <div className="shrink-0 border-b border-slate-200 bg-white px-3 py-3">
         <div className="grid grid-cols-4 gap-1.5">
@@ -354,28 +350,7 @@ export function MobileOperation({
             )}
           </div>
         </div>
-        <div className="mt-2 flex items-center justify-between gap-3">
-          <div className="flex min-w-0 items-center gap-2">
-            <SelectedFilterIcon className="h-4 w-4 shrink-0 text-blue-600" />
-            <span className="truncate text-sm font-bold text-slate-700">
-              {MOBILE_AREA_FILTERS.find(item => item.value === areaFilter)?.label} · {selectedFilter.label}
-            </span>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-600" role="status" aria-live="polite">
-              {visibleTrucks.length} รายการ
-            </span>
-            <button
-              type="button"
-              onClick={() => void onRefresh()}
-              disabled={isRefreshing || !isOnline}
-              className="flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200 bg-white text-blue-600 disabled:cursor-not-allowed disabled:opacity-40"
-              aria-label="โหลดข้อมูลใหม่"
-            >
-              <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-            </button>
-          </div>
-        </div>
+
       </div>
       <main
         className="mobile-operation-scroll min-h-0 flex-1 overflow-y-scroll overscroll-y-auto p-3"
