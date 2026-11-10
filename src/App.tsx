@@ -1615,14 +1615,6 @@ export default function App() {
             )}
           </>
         )}
-
-        {currentView !== 'plan-management' && currentView !== 'mobile' && <footer className="z-10 flex h-12 shrink-0 items-center justify-between bg-slate-800 px-6 text-xs text-white">
-          <div className="flex items-center gap-4">
-            <span className="rounded-full bg-red-500 px-2 py-0.5 text-[10px] font-bold">ALERT</span>
-            <span className="hidden sm:inline">System running. Check the warning banner for connection status.</span>
-          </div>
-          <span className="opacity-60">© 2026 ELIVE Logistics</span>
-        </footer>}
       </div>
 
       {isGpsPopupOpen &&
