@@ -86,7 +86,7 @@ const GPS_PARKING_SPEED_THRESHOLD_KMH = 0;
 const GPS_DWELL_THRESHOLD_MS = 3 * 60 * 1000;
 const GPS_STALE_THRESHOLD_MS = 5 * 60 * 1000;
 const GPS_MOVEMENT_GRACE_MS = 30 * 1000;
-const GPS_NEXT_TRIP_EARLY_WINDOW_MINUTES = 90;
+const GPS_NEXT_TRIP_EARLY_WINDOW_MINUTES = 600;
 const GPS_OPERATION_CUTOFF_MINUTES = 20 * 60;
 const GPS_LSP_ARRIVAL_GROUP_WINDOW_MINUTES = 30;
 const GPS_DWELL_STATE_TTL_SECONDS = 36 * 60 * 60;
@@ -6390,7 +6390,7 @@ app.post('/api/plans/:codeRun/stamp', requireAuthentication, requirePermission('
         req.auditDetails = { stampType, stampSource, reason: etaWindow.reason, etaWindow };
         return res.status(409).json({
           success: false,
-          error: 'ยังไม่สามารถ Stamp ETA ได้ สามารถบันทึกได้ล่วงหน้าสูงสุด 90 นาทีจาก Plan ETA',
+          error: `ยังไม่สามารถ Stamp ETA ได้ สามารถบันทึกได้ล่วงหน้าสูงสุด ${GPS_NEXT_TRIP_EARLY_WINDOW_MINUTES} นาทีจาก Plan ETA`,
           reason: etaWindow.reason,
           etaWindow,
         });
