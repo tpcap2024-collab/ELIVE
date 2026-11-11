@@ -1674,15 +1674,15 @@ export default function App() {
               }
             }}
           >
-            <div className="w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-2xl">
-              <div className="flex items-start justify-between gap-4 border-b border-amber-200 bg-yellow-50 px-6 py-5">
+            <div className="w-full max-w-xl overflow-hidden rounded-2xl bg-white shadow-2xl">
+              <div className="flex items-start justify-between gap-3 border-b border-amber-200 bg-yellow-50 px-5 py-4">
                 <div className="flex items-start gap-3">
-                  <div className="rounded-xl border border-amber-400 bg-yellow-300 p-3 text-amber-950">
-                    <AlertTriangle className="h-6 w-6" />
+                  <div className="rounded-xl border border-amber-400 bg-yellow-300 p-2.5 text-amber-950">
+                    <AlertTriangle className="h-5 w-5" />
                   </div>
                   <div>
-                    <h3 className="text-xl font-bold text-slate-900">รายละเอียดงาน</h3>
-                    <p className="mt-1 text-sm text-slate-600">
+                    <h3 className="text-lg font-bold text-slate-900">ยืนยันรายละเอียดงาน</h3>
+                    <p className="mt-0.5 text-sm text-slate-600">
                       {workDetailTruck.route} · {workDetailTruck.licensePlate} · {workDetailTruck.dropPoint}
                     </p>
                   </div>
@@ -1691,41 +1691,30 @@ export default function App() {
                   type="button"
                   disabled={isConfirmingWorkDetail}
                   onClick={() => setWorkDetailTruck(null)}
-                  className="rounded-lg p-2 text-slate-500 hover:bg-amber-100 disabled:opacity-50"
+                  aria-label="ปิดรายละเอียดงาน"
+                    title="ปิด"
+                    className="rounded-lg p-2 text-slate-500 hover:bg-amber-100 disabled:opacity-50"
                 >
                   <X className="h-5 w-5" />
                 </button>
               </div>
-              <div className="p-6">
-                <div className="max-h-[55vh] overflow-y-auto whitespace-pre-wrap break-words rounded-xl border border-slate-200 bg-slate-50 p-5 text-base leading-7 text-slate-800">
+              <div className="p-5">
+                <div className="max-h-[50vh] overflow-y-auto whitespace-pre-wrap break-words rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-base leading-7 text-slate-800">
                   {workDetailTruck.workDetail}
                 </div>
-                <p className="mt-4 text-sm text-slate-500">
-                  กรุณาตรวจสอบว่าดำเนินการตามรายละเอียดครบถ้วนก่อนกดยืนยัน
-                </p>
-                <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-                  <button
-                    type="button"
-                    disabled={isConfirmingWorkDetail}
-                    onClick={() => setWorkDetailTruck(null)}
-                    className="rounded-xl bg-slate-100 px-6 py-3 font-bold text-slate-700 hover:bg-slate-200 disabled:opacity-50"
-                  >
-                    ปิด
-                  </button>
-                  <button
+                <button
                     type="button"
                     disabled={isConfirmingWorkDetail}
                     onClick={() => void handleConfirmWorkDetail()}
-                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-6 py-3 font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-6 py-3 font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {isConfirmingWorkDetail ? (
                       <RefreshCw className="h-5 w-5 animate-spin" />
                     ) : (
                       <CheckCircle2 className="h-5 w-5" />
                     )}
-                    {isConfirmingWorkDetail ? 'กำลังยืนยัน...' : 'ยืนยันดำเนินการแล้ว'}
+                    {isConfirmingWorkDetail ? 'กำลังยืนยัน...' : 'ดำเนินการแล้ว'}
                   </button>
-                </div>
               </div>
             </div>
           </div>,
