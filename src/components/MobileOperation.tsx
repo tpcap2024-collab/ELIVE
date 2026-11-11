@@ -39,6 +39,7 @@ interface MobileOperationProps {
   canOperate: boolean;
   onRefresh: () => void | Promise<void>;
   onExitMobileMode: () => void;
+  showDesktopButton?: boolean;
   onLogout: () => void | Promise<void>;
   onOpenMenu?: () => void;
   onOpenGps: (truckId: string) => void;
@@ -168,6 +169,7 @@ export function MobileOperation({
   canOperate,
   onRefresh,
   onExitMobileMode,
+  showDesktopButton = false,
   onLogout,
   onOpenMenu,
   onOpenGps,
@@ -300,15 +302,27 @@ export function MobileOperation({
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            <button
-              type="button"
-              onClick={onExitMobileMode}
-              className="flex h-11 w-11 items-center justify-center rounded-xl border border-slate-300 bg-white text-slate-700 active:bg-slate-100"
-              aria-label="กลับหน้า Desktop"
-              title="Desktop"
-            >
-              <Laptop className="h-5 w-5" />
-            </button>
+            {showDesktopButton && (
+
+              <button
+
+                            type="button"
+
+                            onClick={onExitMobileMode}
+
+                            className="flex h-11 w-11 items-center justify-center rounded-xl border border-slate-300 bg-white text-slate-700 active:bg-slate-100"
+
+                            aria-label="กลับหน้า Desktop"
+
+                            title="Desktop"
+
+                          >
+
+                            <Laptop className="h-5 w-5" />
+
+                          </button>
+
+            )}
             <button
               type="button"
               onClick={() => {
