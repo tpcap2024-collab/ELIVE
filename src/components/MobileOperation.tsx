@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   Clock3,
   Laptop,
+  LogOut,
   Menu,
   RefreshCw,
   Search,
@@ -38,6 +39,7 @@ interface MobileOperationProps {
   canOperate: boolean;
   onRefresh: () => void | Promise<void>;
   onExitMobileMode: () => void;
+  onLogout: () => void | Promise<void>;
   onOpenMenu?: () => void;
   onOpenGps: (truckId: string) => void;
   onOpenAction: (truck: Truck) => void;
@@ -166,6 +168,7 @@ export function MobileOperation({
   canOperate,
   onRefresh,
   onExitMobileMode,
+  onLogout,
   onOpenMenu,
   onOpenGps,
   onOpenAction,
@@ -296,15 +299,28 @@ export function MobileOperation({
               </div>
             </div>
           </div>
-
-          <button
-            type="button"
-            onClick={onExitMobileMode}
-            className="flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-3 text-xs font-bold text-slate-700 active:bg-slate-100"
-          >
-            <Laptop className="h-4 w-4" />
-            Desktop
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={onExitMobileMode}
+              className="flex h-11 w-11 items-center justify-center rounded-xl border border-slate-300 bg-white text-slate-700 active:bg-slate-100"
+              aria-label="กลับหน้า Desktop"
+              title="Desktop"
+            >
+              <Laptop className="h-5 w-5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (window.confirm('ต้องการออกจากระบบหรือไม่?')) void onLogout();
+              }}
+              className="flex h-11 w-11 items-center justify-center rounded-xl border border-red-200 bg-white text-red-600 active:bg-red-50"
+              aria-label="ออกจากระบบ"
+              title="ออกจากระบบ"
+            >
+              <LogOut className="h-5 w-5" />
+            </button>
+          </div>
         </div>
 
         {!isOnline && (
