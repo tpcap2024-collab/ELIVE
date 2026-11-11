@@ -1369,12 +1369,13 @@ export default function App() {
             trucks={inboundTrucks}
             gpsLocations={filteredGpsLocations}
             selectedDate={selectedDate}
-                          onDateChange={setSelectedDate}
-lastUpdate={lastUpdate}
+            onDateChange={setSelectedDate}
+            lastUpdate={lastUpdate}
             isRefreshing={isRefreshing}
             canOperate={canUseMobileMode && canStamp && canSubmitAction}
             onRefresh={loadData}
             onExitMobileMode={exitMobileMode}
+            onLogout={handleAppLogout}
             onOpenGps={handleOpenGps}
             onOpenAction={truck => setActionDialog({ isOpen: true, truck })}
             onOpenWorkDetail={truck => setWorkDetailTruck(truck)}
