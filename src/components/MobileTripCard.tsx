@@ -57,6 +57,10 @@ function hasNoWorkAction(truck: Truck): boolean {
   );
 }
 
+function isExtraTrip(truck: Truck): boolean {
+  return String(truck.planRemark || '').trim().toUpperCase() === 'EXTRA';
+}
+
 function getCardAccentClass(truck: Truck): string {
   if (hasCompletedTrip(truck)) return 'border-l-emerald-600';
   if (hasNoWorkAction(truck)) return 'border-l-slate-600';
@@ -65,6 +69,7 @@ function getCardAccentClass(truck: Truck): string {
     return 'border-l-yellow-500';
   }
   if (hasGpsLostAction(truck)) return 'border-l-orange-500';
+  if (isExtraTrip(truck)) return 'border-l-violet-600';
   return 'border-l-blue-500';
 }
 function isUnloadingTrip(truck: Truck): boolean {
@@ -96,6 +101,7 @@ function getCardBackgroundClass(truck: Truck): string {
   if (isUnloadingTrip(truck) && truck.performanceStatus === 'DELAY') return 'bg-orange-200';
   if (isUnloadingTrip(truck)) return 'bg-yellow-100';
   if (isPlanEtaReachedWithoutActivity(truck)) return 'animate-pulse bg-red-200';
+  if (isExtraTrip(truck)) return 'bg-violet-100';
   return 'bg-white';
 }
 
@@ -357,7 +363,7 @@ export function MobileTripCard({
             <span>Plan {formatValue(truck.planEta)}</span>
             <span>Actual {actualEta} / {actualEtd}</span>
             <span>{truck.performanceStatus}</span>
-            {truck.planRemark === 'EXTRA' && <span className="font-bold text-violet-700">EXTRA</span>}
+            {isExtraTrip(truck) && <span className="rounded-full bg-violet-700 px-2 py-0.5 font-black text-white">EXTRA</span>}
           </div>
           <div className="mb-3 flex flex-wrap gap-2">
             {canStampEta && (
