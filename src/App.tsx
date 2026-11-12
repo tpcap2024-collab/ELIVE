@@ -1375,6 +1375,7 @@ export default function App() {
             canOperate={canUseMobileMode && canStamp && canSubmitAction}
             onRefresh={loadData}
             onExitMobileMode={exitMobileMode}
+              showDesktopButton={authenticatedUser.role !== 'OPERATOR'}
             onLogout={handleAppLogout}
             onOpenGps={handleOpenGps}
             onOpenAction={truck => setActionDialog({ isOpen: true, truck })}
