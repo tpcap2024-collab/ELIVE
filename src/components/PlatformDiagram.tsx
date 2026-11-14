@@ -537,6 +537,9 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
     .pdf-diagram [class*="overflow-x-auto"],
     .pdf-diagram [class*="overflow-y-auto"],
     .pdf-diagram [class*="overflow-hidden"] { overflow: visible !important; max-height: none !important; height: auto !important; }
+    /* Sticky columns are useful on screen, but in the cloned PDF they anchor to
+       the print viewport and move the Total column into the middle of the timeline. */
+    .pdf-diagram .sticky { position: static !important; left: auto !important; right: auto !important; }
     @media print {
       html, body { width: 100%; height: auto; overflow: hidden; }
       * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
