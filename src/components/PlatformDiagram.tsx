@@ -491,6 +491,8 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
     const exportedAt = new Date().toLocaleString('th-TH');
     const viewLabel = timelineView === 'ALL' ? 'PLAN + ACTUAL' : timelineView;
     const periodLabel = period === 'MORNING' ? 'MORNING 07:00-12:00' : period === 'AFTERNOON' ? 'AFTERNOON 12:00-17:00' : 'FULL DAY 07:00-17:00';
+    const isHalfDayExport = period !== 'FULL';
+    const pageOrientation = 'landscape';
     const dockLabel = selectedGroups.length === GROUP_FILTER_OPTIONS.length
       ? 'ALL'
       : selectedGroups.join(', ');
@@ -523,7 +525,7 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
   ${styleLinks}
   ${inlineStyles}
   <style>
-    @page { size: A3 landscape; margin: 8mm; }
+    @page { size: A3 ${pageOrientation}; margin: 8mm; }
     html, body { margin: 0; background: #fff; color: #0f172a; }
     body { font-family: Arial, sans-serif; }
     .pdf-meta { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin: 0 0 8px; padding-bottom: 6px; border-bottom: 1px solid #cbd5e1; }
@@ -532,7 +534,7 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
     .pdf-exported { font-size: 9px; color: #64748b; text-align: right; }
     .pdf-diagram, .pdf-diagram * { box-sizing: border-box; }
     .pdf-diagram [data-export-hide="true"] { display: none !important; }
-    .pdf-page { position: relative; width: 100%; overflow: hidden; }
+    .pdf-page { position: relative; width: 100%; overflow: visible; }
     .pdf-diagram { width: 2500px !important; min-width: 2500px !important; height: auto !important; overflow: visible !important; background: #fff !important; transform-origin: top left; }
     .pdf-diagram-main { position: relative; z-index: 1; }
     .pdf-diagram-label { position: absolute; inset: 0 auto auto 0; z-index: 2; pointer-events: none; }
@@ -544,8 +546,9 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
        the print viewport and move the Total column into the middle of the timeline. */
     .pdf-diagram .sticky { position: static !important; left: auto !important; right: auto !important; }
     @media print {
-      html, body { width: 100%; height: auto; overflow: hidden; }
+      html, body { width: 100%; height: auto; overflow: visible; }
       * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+      .pdf-diagram-main > * { break-inside: avoid-page; page-break-inside: avoid; }
     }
   </style>
 </head>
@@ -577,9 +580,10 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
         if (!diagram || !page) return;
         var contentWidth = Math.max(diagram.scrollWidth, diagram.getBoundingClientRect().width, 1);
         var contentHeight = Math.max(diagram.scrollHeight, diagram.getBoundingClientRect().height, 1);
-        var availableHeight = PAGE_HEIGHT_PX - HEADER_RESERVE_PX;
         var visibleWidth = Math.min(SEGMENT_WIDTH, contentWidth - SEGMENT_START_X);
-        var scale = Math.min(PAGE_WIDTH_PX / visibleWidth, availableHeight / contentHeight, 1);
+        // Fit to paper width only. If the scaled diagram is taller than one page,
+        // the browser print engine will continue it on the next landscape page.
+        var scale = Math.min(PAGE_WIDTH_PX / visibleWidth, 1);
         diagram.style.transform = 'translateX(' + (-SEGMENT_START_X * scale) + 'px) scale(' + scale + ')';
         if (labelDiagram) {
           if (EXPORT_PERIOD === 'FULL') {
@@ -713,7 +717,6 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
         <div className="mb-2 flex w-full flex-col justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm lg:flex-row lg:items-center">
           <div className="shrink-0">
             <h2 className="text-xl font-bold tracking-tight text-slate-800">Platform Dashboard</h2>
-            <p className="mt-1 text-sm text-slate-500">Real-Time Dock and Truck Operation Monitoring</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-1.5">
