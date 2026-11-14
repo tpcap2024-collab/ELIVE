@@ -70,6 +70,8 @@ const MASTER_PLAN_CREATE_BATCH_MAX_ROWS = 500;
 const MASTER_PLAN_CREATE_BATCH_TIMEOUT_MS = 120000;
 const DAILY_PLAN_CREATE_BATCH_MAX_ROWS = 500;
 const DAILY_PLAN_CREATE_BATCH_TIMEOUT_MS = 120000;
+const DAILY_PLAN_DELETE_BATCH_MAX_ROWS = 500;
+const DAILY_PLAN_DELETE_BATCH_TIMEOUT_MS = 120000;
 const DAILY_PLAN_RETENTION_DAYS = 62;
 const DAILY_PLAN_RETENTION_RUN_MINUTES = 20 * 60;
 const DAILY_PLAN_RETENTION_MAX_ROWS = 5000;
@@ -6257,8 +6259,14 @@ app.post('/api/plans/delete-batch', requireAuthentication, requirePermission('MA
     const input = Array.isArray(req.body?.codeRuns) ? req.body.codeRuns : [];
     const codeRuns = [...new Set(input.map(normalizeCodeRun))];
     if (!codeRuns.length) throw new Error('At least one codeRun is required.');
-    if (codeRuns.length > 2000) throw new Error('เลือกได้สูงสุด 2000 รายการต่อครั้ง');
-    const result = await requestAppsScriptPost('deletePlansBatch', { codeRuns });
+    if (codeRuns.length > DAILY_PLAN_DELETE_BATCH_MAX_ROWS) {
+      throw new Error(`ลบได้สูงสุด ${DAILY_PLAN_DELETE_BATCH_MAX_ROWS} รายการต่อชุด`);
+    }
+    const result = await requestAppsScriptPost(
+      'deletePlansBatch',
+      { codeRuns },
+      DAILY_PLAN_DELETE_BATCH_TIMEOUT_MS
+    );
     clearTruckCache();
     await clearGpsWorkerDailyPlanCache();
     req.auditDetails = { requestedCount: codeRuns.length, deletedPlanCount: Number(result?.result?.deletedPlanCount || 0), deletedActualCount: Number(result?.result?.deletedActualCount || 0) };
