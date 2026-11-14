@@ -652,7 +652,7 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
             </h3>
           </div>
 
-          <div className="flex h-12 min-w-[520px] flex-1 items-center gap-3 whitespace-nowrap rounded-md border border-slate-200 bg-white px-3 py-1.5">
+          <div className="flex h-12 min-w-[650px] flex-1 items-center gap-3 whitespace-nowrap rounded-md border border-slate-200 bg-white px-3 py-1.5">
             <span className="shrink-0 text-[9px] font-black uppercase tracking-wide text-slate-500">Legend</span>
             <div className="flex min-w-0 flex-1 flex-nowrap items-center justify-between gap-2 text-[9px] font-bold text-slate-700">
               <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 shrink-0 rounded-sm border border-blue-700 bg-blue-500" />Early</span>
@@ -660,6 +660,8 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
               <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 shrink-0 rounded-sm border border-red-700 bg-red-500" />Delay</span>
               <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 shrink-0 rounded-sm border border-yellow-600 bg-yellow-400" />Unloading</span>
               <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 shrink-0 rounded-sm border border-orange-700 bg-orange-500" />Unloading + Delay</span>
+              <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 shrink-0 rounded-sm border border-slate-950 bg-slate-900" />No Drop</span>
+              <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 shrink-0 rounded-sm border border-pink-700 bg-pink-500" />Non-Milkrun</span>
             </div>
           </div>
         </div>
