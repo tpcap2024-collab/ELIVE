@@ -568,12 +568,20 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
   <script>
     (function () {
       var PAGE_WIDTH_PX = 1520;
-      var PAGE_HEIGHT_PX = 1010;
-      var HEADER_RESERVE_PX = 55;
       var EXPORT_PERIOD = '${period}';
-      var SEGMENT_START_X = EXPORT_PERIOD === 'AFTERNOON' ? 1130 : 0;
-      var SEGMENT_WIDTH = EXPORT_PERIOD === 'FULL' ? 2500 : 1370;
-      var LABEL_WIDTH = 115;
+      var CONTENT_WIDTH = 2500;
+      var LABEL_WIDTH = 80;
+      var TOTAL_WIDTH = 48;
+      var TIMELINE_LEFT = LABEL_WIDTH;
+      var TIMELINE_RIGHT = CONTENT_WIDTH - TOTAL_WIDTH;
+      var TIMELINE_WIDTH = TIMELINE_RIGHT - TIMELINE_LEFT;
+      var HALF_TIMELINE_WIDTH = TIMELINE_WIDTH / 2;
+      var SEGMENT_START_X = EXPORT_PERIOD === 'AFTERNOON'
+        ? TIMELINE_LEFT + HALF_TIMELINE_WIDTH
+        : TIMELINE_LEFT;
+      var SEGMENT_WIDTH = EXPORT_PERIOD === 'FULL'
+        ? CONTENT_WIDTH
+        : LABEL_WIDTH + HALF_TIMELINE_WIDTH + TOTAL_WIDTH;
       var diagram = document.querySelector('.pdf-diagram-main');
       var labelDiagram = document.querySelector('.pdf-diagram-label');
       var page = document.querySelector('.pdf-page');
@@ -581,11 +589,14 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
         if (!diagram || !page) return;
         var contentWidth = Math.max(diagram.scrollWidth, diagram.getBoundingClientRect().width, 1);
         var contentHeight = Math.max(diagram.scrollHeight, diagram.getBoundingClientRect().height, 1);
-        var visibleWidth = Math.min(SEGMENT_WIDTH, contentWidth - SEGMENT_START_X);
-        // Fit to paper width only. If the scaled diagram is taller than one page,
-        // the browser print engine will continue it on the next landscape page.
-        var scale = Math.min(PAGE_WIDTH_PX / visibleWidth, 1);
-        diagram.style.transform = 'translateX(' + (-SEGMENT_START_X * scale) + 'px) scale(' + scale + ')';
+        var visibleWidth = EXPORT_PERIOD === 'FULL'
+          ? contentWidth
+          : Math.min(SEGMENT_WIDTH, contentWidth);
+        // AM/PM may enlarge beyond 100% so the selected half-day fills A3 width.
+        var scale = PAGE_WIDTH_PX / visibleWidth;
+        var timelineOffset = EXPORT_PERIOD === 'FULL' ? 0 : SEGMENT_START_X;
+        var mainOffset = EXPORT_PERIOD === 'FULL' ? 0 : LABEL_WIDTH - timelineOffset;
+        diagram.style.transform = 'translateX(' + (mainOffset * scale) + 'px) scale(' + scale + ')';
         if (labelDiagram) {
           if (EXPORT_PERIOD === 'FULL') {
             labelDiagram.style.display = 'none';
@@ -596,7 +607,9 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
             labelDiagram.style.clipPath = 'inset(0 ' + Math.max(contentWidth - LABEL_WIDTH, 0) + 'px 0 0)';
           }
         }
-        page.style.width = (visibleWidth * scale) + 'px';
+        page.style.margin = '0 auto';
+        page.style.overflow = 'hidden';
+        page.style.width = PAGE_WIDTH_PX + 'px';
         page.style.height = (contentHeight * scale) + 'px';
         document.documentElement.style.width = PAGE_WIDTH_PX + 'px';
         document.body.style.width = PAGE_WIDTH_PX + 'px';
