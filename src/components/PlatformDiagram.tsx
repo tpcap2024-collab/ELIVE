@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   Clock,
   Expand,
+  FileDown,
   Minimize2,
   Package,
   Truck as TruckIcon,
@@ -462,6 +463,63 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
     }
   };
 
+  const exportDiagramToPdf = () => {
+    const diagramElement = diagramFullscreenRef.current;
+    if (!diagramElement) return;
+
+    const printWindow = window.open('', '_blank', 'noopener,noreferrer');
+    if (!printWindow) {
+      window.alert('ไม่สามารถเปิดหน้าต่าง Export PDF ได้ กรุณาอนุญาต Pop-up สำหรับเว็บไซต์นี้');
+      return;
+    }
+
+    const styleLinks = Array.from(document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"]'))
+      .map(link => `<link rel="stylesheet" href="${link.href}">`)
+      .join('');
+    const inlineStyles = Array.from(document.querySelectorAll<HTMLStyleElement>('style'))
+      .map(style => style.outerHTML)
+      .join('');
+    const exportedAt = new Date().toLocaleString('th-TH');
+
+    printWindow.document.open();
+    printWindow.document.write(`<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <title>ELIVE Platform Diagram</title>
+  ${styleLinks}
+  ${inlineStyles}
+  <style>
+    @page { size: A3 landscape; margin: 8mm; }
+    html, body { margin: 0; background: #fff; color: #0f172a; }
+    body { font-family: Arial, sans-serif; }
+    .pdf-meta { display: flex; justify-content: space-between; margin: 0 0 6px; font-size: 10px; color: #475569; }
+    .pdf-diagram, .pdf-diagram * { box-sizing: border-box; }
+    .pdf-diagram [data-export-hide="true"] { display: none !important; }
+    .pdf-diagram { width: 2500px !important; min-width: 2500px !important; height: auto !important; overflow: visible !important; background: #fff !important; }
+    .pdf-diagram [class*="overflow-x-scroll"],
+    .pdf-diagram [class*="overflow-x-auto"],
+    .pdf-diagram [class*="overflow-y-auto"],
+    .pdf-diagram [class*="overflow-hidden"] { overflow: visible !important; max-height: none !important; height: auto !important; }
+    @media print {
+      .pdf-diagram { zoom: 0.43; }
+      * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="pdf-meta"><strong>ELIVE Platform Diagram</strong><span>Exported: ${exportedAt}</span></div>
+  <div class="pdf-diagram">${diagramElement.outerHTML}</div>
+  <script>
+    window.addEventListener('load', function () {
+      window.setTimeout(function () { window.print(); }, 500);
+    });
+  <\/script>
+</body>
+</html>`);
+    printWindow.document.close();
+  };
+
   const mappedDocks = useMemo(() => {
     const result = new Set<string>();
     ROW_GROUPS.forEach(group => {
@@ -605,9 +663,11 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
           </div>
           <div className="flex shrink-0 items-center gap-3">
             <span className="whitespace-nowrap text-[9px] font-medium text-slate-500">แสดง {selectedGroups.length} จาก {GROUP_FILTER_OPTIONS.length} กลุ่ม</span>
-            <button type="button" onClick={() => void toggleDiagramFullscreen()} title={isDiagramFullscreen ? 'ออกจากโหมดเต็มหน้าจอ' : 'แสดง Platform Dashboard เต็มหน้าจอ'} className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-xs font-bold text-slate-700 shadow-sm hover:border-blue-400 hover:bg-blue-50 hover:text-blue-700">
+            <button type="button" onClick={exportDiagramToPdf} title="Export Diagram เป็น PDF" aria-label="Export Diagram เป็น PDF" data-export-hide="true" className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-700 shadow-sm hover:border-red-400 hover:bg-red-50 hover:text-red-700">
+              <FileDown className="h-4 w-4" />
+            </button>
+            <button type="button" onClick={() => void toggleDiagramFullscreen()} title={isDiagramFullscreen ? 'ออกจากโหมดเต็มหน้าจอ' : 'แสดง Platform Dashboard เต็มหน้าจอ'} aria-label={isDiagramFullscreen ? 'ออกจากโหมดเต็มหน้าจอ' : 'แสดง Platform Dashboard เต็มหน้าจอ'} data-export-hide="true" className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-700 shadow-sm hover:border-blue-400 hover:bg-blue-50 hover:text-blue-700">
               {isDiagramFullscreen ? <Minimize2 className="h-4 w-4" /> : <Expand className="h-4 w-4" />}
-              {isDiagramFullscreen ? 'EXIT FULL SCREEN' : 'FULL SCREEN'}
             </button>
           </div>
         </div>
