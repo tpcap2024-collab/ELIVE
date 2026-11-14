@@ -429,6 +429,21 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
   ]);
   const [isDiagramFullscreen, setIsDiagramFullscreen] = useState(false);
   const diagramFullscreenRef = useRef<HTMLDivElement>(null);
+  const displayedPlanDate = useMemo(() => {
+    const dates = Array.from(new Set(
+      trucks
+        .map(truck => String(truck.planDate || '').trim().slice(0, 10))
+        .filter(date => /^\d{4}-\d{2}-\d{2}$/.test(date))
+    )).sort();
+    if (!dates.length) return '-';
+    const formatDate = (date: string) => {
+      const [year, month, day] = date.split('-');
+      return `${day}/${month}/${year}`;
+    };
+    return dates.length === 1
+      ? formatDate(dates[0])
+      : `${formatDate(dates[0])} - ${formatDate(dates[dates.length - 1])}`;
+  }, [trucks]);
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -467,12 +482,6 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
     const diagramElement = diagramFullscreenRef.current;
     if (!diagramElement) return;
 
-    const printWindow = window.open('', '_blank', 'noopener,noreferrer');
-    if (!printWindow) {
-      window.alert('ไม่สามารถเปิดหน้าต่าง Export PDF ได้ กรุณาอนุญาต Pop-up สำหรับเว็บไซต์นี้');
-      return;
-    }
-
     const styleLinks = Array.from(document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"]'))
       .map(link => `<link rel="stylesheet" href="${link.href}">`)
       .join('');
@@ -480,20 +489,46 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
       .map(style => style.outerHTML)
       .join('');
     const exportedAt = new Date().toLocaleString('th-TH');
+    const viewLabel = timelineView === 'ALL' ? 'PLAN + ACTUAL' : timelineView;
+    const dockLabel = selectedGroups.length === GROUP_FILTER_OPTIONS.length
+      ? 'ALL'
+      : selectedGroups.join(', ');
 
-    printWindow.document.open();
-    printWindow.document.write(`<!doctype html>
+    const printFrame = document.createElement('iframe');
+    printFrame.setAttribute('title', 'Export Platform Diagram PDF');
+    printFrame.style.position = 'fixed';
+    printFrame.style.right = '0';
+    printFrame.style.bottom = '0';
+    printFrame.style.width = '1px';
+    printFrame.style.height = '1px';
+    printFrame.style.border = '0';
+    printFrame.style.opacity = '0';
+    document.body.appendChild(printFrame);
+
+    const frameDocument = printFrame.contentDocument;
+    const frameWindow = printFrame.contentWindow;
+    if (!frameDocument || !frameWindow) {
+      printFrame.remove();
+      window.alert('ไม่สามารถเตรียมไฟล์ PDF ได้ กรุณาลองใหม่อีกครั้ง');
+      return;
+    }
+
+    frameDocument.open();
+    frameDocument.write(`<!doctype html>
 <html lang="th">
 <head>
   <meta charset="utf-8">
-  <title>ELIVE Platform Diagram</title>
+  <title>ELIVE Platform Diagram - ${displayedPlanDate}</title>
   ${styleLinks}
   ${inlineStyles}
   <style>
     @page { size: A3 landscape; margin: 8mm; }
     html, body { margin: 0; background: #fff; color: #0f172a; }
     body { font-family: Arial, sans-serif; }
-    .pdf-meta { display: flex; justify-content: space-between; margin: 0 0 6px; font-size: 10px; color: #475569; }
+    .pdf-meta { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin: 0 0 8px; padding-bottom: 6px; border-bottom: 1px solid #cbd5e1; }
+    .pdf-title { font-size: 16px; font-weight: 700; }
+    .pdf-detail { margin-top: 3px; font-size: 10px; color: #475569; }
+    .pdf-exported { font-size: 9px; color: #64748b; text-align: right; }
     .pdf-diagram, .pdf-diagram * { box-sizing: border-box; }
     .pdf-diagram [data-export-hide="true"] { display: none !important; }
     .pdf-diagram { width: 2500px !important; min-width: 2500px !important; height: auto !important; overflow: visible !important; background: #fff !important; }
@@ -508,16 +543,23 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
   </style>
 </head>
 <body>
-  <div class="pdf-meta"><strong>ELIVE Platform Diagram</strong><span>Exported: ${exportedAt}</span></div>
+  <div class="pdf-meta">
+    <div>
+      <div class="pdf-title">ELIVE Platform Diagram</div>
+      <div class="pdf-detail"><strong>Plan Date:</strong> ${displayedPlanDate} &nbsp; | &nbsp; <strong>View:</strong> ${viewLabel} &nbsp; | &nbsp; <strong>Dock:</strong> ${dockLabel}</div>
+    </div>
+    <div class="pdf-exported">Exported: ${exportedAt}</div>
+  </div>
   <div class="pdf-diagram">${diagramElement.outerHTML}</div>
-  <script>
-    window.addEventListener('load', function () {
-      window.setTimeout(function () { window.print(); }, 500);
-    });
-  <\/script>
 </body>
 </html>`);
-    printWindow.document.close();
+    frameDocument.close();
+
+    window.setTimeout(() => {
+      frameWindow.focus();
+      frameWindow.print();
+      window.setTimeout(() => printFrame.remove(), 1500);
+    }, 700);
   };
 
   const mappedDocks = useMemo(() => {
