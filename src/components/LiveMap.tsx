@@ -727,9 +727,22 @@ export function LiveMap({
   const insideSiteBoundary = Boolean(selectedGpsLocation && isInsideTpcapSite(
     selectedGpsLocation.latitude, selectedGpsLocation.longitude
   ));
+  const selectedTruckState = selectedTruck as (Truck & {
+    noWorkAction?: boolean;
+    actionStatus?: string;
+    performanceStatus?: string;
+    actionProblem?: string;
+  }) | undefined;
+  const hasNoWork = Boolean(
+    selectedTruckState?.noWorkAction ||
+    String(selectedTruckState?.actionStatus || '').trim().toUpperCase() === 'NO_WORK' ||
+    String(selectedTruckState?.performanceStatus || '').trim().toUpperCase() === 'NO_WORK' ||
+    String(selectedTruckState?.actionProblem || '').includes('ไม่มีงาน')
+  );
   const hasCompletedTrip = Boolean(
     selectedTruck?.stampEtd ||
-    gpsDockResult?.autoStampEtdResult
+    gpsDockResult?.autoStampEtdResult ||
+    hasNoWork
   );
   const selectedFreshness =
     useMemo(() => {
@@ -1500,7 +1513,7 @@ export function LiveMap({
     selectedTruck?.actualEta ||
     gpsDockResult?.autoStampEtaResult
   );
-  const hasStampedEtd = hasCompletedTrip;
+  const hasStampedEtd = Boolean(selectedTruck?.stampEtd || gpsDockResult?.autoStampEtdResult);
   const gpsAgeText = selectedGpsLocation ? getGpsAgeText(selectedGpsLocation) : '-';
   const stationName = selectedGpsLocation?.locationName || 'ไม่พบชื่อสถานี';
   const insideGeofence = selectedGeofenceEvaluation?.isInside ?? false;
@@ -1559,7 +1572,7 @@ export function LiveMap({
                 <div className="min-w-0 rounded-xl border border-blue-200 bg-blue-50 px-3 py-3 shadow-sm">
                   <div className="text-xs font-black text-blue-700">ระยะทาง</div>
                   <div className="mt-1 truncate text-lg font-black leading-tight text-slate-950">
-                    {hasCompletedTrip ? 'จบงานแล้ว' : insideSiteBoundary ? 'ในพื้นที่' : routeResult ? `${routeResult.distanceKilometers.toFixed(1)} กม.` : isRouteLoading ? '...' : '-'}
+                    {hasNoWork ? 'ไม่มีงาน' : hasCompletedTrip ? 'จบงานแล้ว' : insideSiteBoundary ? 'ในพื้นที่' : routeResult ? `${routeResult.distanceKilometers.toFixed(1)} กม.` : isRouteLoading ? '...' : '-'}
                   </div>
                 </div>
                 <div className="min-w-0 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-3 shadow-sm">
@@ -1600,7 +1613,7 @@ export function LiveMap({
           <div className="grid min-w-[1180px] grid-cols-[1.35fr_1.45fr_.8fr_.8fr_.9fr_1.05fr_1.45fr] divide-x divide-slate-200">
             <div className="flex items-center gap-3 p-4"><TruckIcon className="h-8 w-8 shrink-0 text-emerald-600" /><div><div className="flex items-center gap-2"><span className="text-lg font-bold text-slate-900">{selectedTruck?.licensePlate || selectedGpsLocation.licensePlate || '-'}</span>{selectedFreshness && <span className={`rounded-full border px-2 py-0.5 text-[9px] font-bold ${getFreshnessClasses(selectedFreshness)}`}>{selectedFreshness}</span>}</div><div className="mt-1 text-xs font-semibold text-slate-600">{selectedTruck?.route || '-'} | {selectedTruck?.dropPoint || '-'}</div><div className={`mt-1 text-[11px] font-bold ${Number(selectedGpsLocation.speed) > 0 ? 'text-emerald-700' : 'text-red-700'}`}>{Number(selectedGpsLocation.speed) > 0 ? 'รถวิ่ง' : 'รถจอด'} · {Number(selectedGpsLocation.speed).toFixed(0)} km/h</div></div></div>
             <div className="p-4"><div className="text-[10px] font-bold uppercase text-slate-400">สถานีปัจจุบัน</div><div className="mt-1 line-clamp-2 text-sm font-bold text-slate-800" title={stationName}>{stationName}</div><div className="mt-1 text-[11px] text-slate-500">GPS {formatGpsDateTime(selectedGpsLocation.gpsTime)} · <span className="font-semibold text-emerald-700">{gpsAgeText}</span></div></div>
-            <div className="p-4"><div className="text-[10px] font-bold uppercase text-blue-500">ระยะทาง</div><div className="mt-2 text-xl font-bold text-slate-900">{hasCompletedTrip ? 'จบงานแล้ว' : insideSiteBoundary ? 'ในพื้นที่' : routeResult ? `${routeResult.distanceKilometers.toFixed(1)} km` : '-'}</div></div>
+            <div className="p-4"><div className="text-[10px] font-bold uppercase text-blue-500">ระยะทาง</div><div className="mt-2 text-xl font-bold text-slate-900">{hasNoWork ? 'ไม่มีงาน' : hasCompletedTrip ? 'จบงานแล้ว' : insideSiteBoundary ? 'ในพื้นที่' : routeResult ? `${routeResult.distanceKilometers.toFixed(1)} km` : '-'}</div></div>
             <div className="p-4"><div className="text-[10px] font-bold uppercase text-indigo-500">เวลาเดินทาง</div><div className="mt-2 text-lg font-bold text-slate-900">{hasCompletedTrip ? '-' : insideSiteBoundary ? '-' : routeResult ? formatDuration(routeResult.durationMinutes) : '-'}</div></div>
             <div className="p-4"><div className="text-[10px] font-bold uppercase text-emerald-600">ETA ถึง TPCAP</div><div className="mt-2 text-lg font-bold text-slate-900">{hasCompletedTrip ? '-' : insideSiteBoundary ? 'ARRIVED' : routeResult ? formatEta(routeResult.estimatedArrival).split(', ').pop() : '-'}</div></div>
             <div className="p-4"><div className="flex items-center justify-between gap-2"><div className="text-[10px] font-bold uppercase text-slate-500">เป้าหมาย</div><span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${insideGeofence ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>{insideGeofence ? 'INSIDE' : 'OUTSIDE'}</span></div><div className="mt-1 text-base font-bold text-slate-900">{geofenceName}</div><div className="mt-1 text-[11px] text-slate-500">ระยะ {geofenceDistance !== undefined ? geofenceDistance >= 1000 ? `${(geofenceDistance / 1000).toFixed(1)} km` : `${geofenceDistance.toFixed(0)} m` : '-'} · รัศมี {geofenceRadius || '-'} m</div></div>
