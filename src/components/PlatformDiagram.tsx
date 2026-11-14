@@ -531,13 +531,14 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
     .pdf-exported { font-size: 9px; color: #64748b; text-align: right; }
     .pdf-diagram, .pdf-diagram * { box-sizing: border-box; }
     .pdf-diagram [data-export-hide="true"] { display: none !important; }
-    .pdf-diagram { width: 2500px !important; min-width: 2500px !important; height: auto !important; overflow: visible !important; background: #fff !important; }
+    .pdf-page { width: 100%; overflow: hidden; }
+    .pdf-diagram { width: 2500px !important; min-width: 2500px !important; height: auto !important; overflow: visible !important; background: #fff !important; transform-origin: top left; }
     .pdf-diagram [class*="overflow-x-scroll"],
     .pdf-diagram [class*="overflow-x-auto"],
     .pdf-diagram [class*="overflow-y-auto"],
     .pdf-diagram [class*="overflow-hidden"] { overflow: visible !important; max-height: none !important; height: auto !important; }
     @media print {
-      .pdf-diagram { zoom: 0.43; }
+      html, body { width: 100%; height: auto; overflow: hidden; }
       * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
     }
   </style>
@@ -550,16 +551,39 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
     </div>
     <div class="pdf-exported">Exported: ${exportedAt}</div>
   </div>
-  <div class="pdf-diagram">${diagramElement.outerHTML}</div>
+  <div class="pdf-page"><div class="pdf-diagram">${diagramElement.outerHTML}</div></div>
+  <script>
+    (function () {
+      var PAGE_WIDTH_PX = 1520;
+      var PAGE_HEIGHT_PX = 1010;
+      var HEADER_RESERVE_PX = 55;
+      var diagram = document.querySelector('.pdf-diagram');
+      var page = document.querySelector('.pdf-page');
+      function fitAndPrint() {
+        if (!diagram || !page) return;
+        var contentWidth = Math.max(diagram.scrollWidth, diagram.getBoundingClientRect().width, 1);
+        var contentHeight = Math.max(diagram.scrollHeight, diagram.getBoundingClientRect().height, 1);
+        var availableHeight = PAGE_HEIGHT_PX - HEADER_RESERVE_PX;
+        var scale = Math.min(PAGE_WIDTH_PX / contentWidth, availableHeight / contentHeight, 1);
+        diagram.style.transform = 'scale(' + scale + ')';
+        page.style.width = (contentWidth * scale) + 'px';
+        page.style.height = (contentHeight * scale) + 'px';
+        document.documentElement.style.width = PAGE_WIDTH_PX + 'px';
+        document.body.style.width = PAGE_WIDTH_PX + 'px';
+        window.setTimeout(function () { window.focus(); window.print(); }, 250);
+      }
+      if (document.fonts && document.fonts.ready) {
+        document.fonts.ready.then(function () { window.setTimeout(fitAndPrint, 150); });
+      } else {
+        window.addEventListener('load', function () { window.setTimeout(fitAndPrint, 250); });
+      }
+    })();
+  <\/script>
 </body>
 </html>`);
     frameDocument.close();
 
-    window.setTimeout(() => {
-      frameWindow.focus();
-      frameWindow.print();
-      window.setTimeout(() => printFrame.remove(), 1500);
-    }, 700);
+    window.setTimeout(() => printFrame.remove(), 120000);
   };
 
   const mappedDocks = useMemo(() => {
