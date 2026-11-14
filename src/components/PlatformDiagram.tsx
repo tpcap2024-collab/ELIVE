@@ -526,7 +526,7 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
   ${inlineStyles}
   <style>
     @page { size: A3 ${pageOrientation}; margin: 8mm; }
-    html, body { margin: 0; background: #fff; color: #0f172a; }
+    html, body { margin: 0; padding: 0; background: #fff; color: #0f172a; width: 100%; }
     body { font-family: Arial, sans-serif; }
     .pdf-meta { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin: 0 0 8px; padding-bottom: 6px; border-bottom: 1px solid #cbd5e1; }
     .pdf-title { font-size: 16px; font-weight: 700; }
@@ -534,7 +534,7 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
     .pdf-exported { font-size: 9px; color: #64748b; text-align: right; }
     .pdf-diagram, .pdf-diagram * { box-sizing: border-box; }
     .pdf-diagram [data-export-hide="true"] { display: none !important; }
-    .pdf-page { position: relative; width: 100%; overflow: visible; }
+    .pdf-page { position: relative; width: 100%; max-width: 100%; overflow: hidden; }
     .pdf-diagram { width: 2500px !important; min-width: 2500px !important; height: auto !important; overflow: visible !important; background: #fff !important; transform-origin: top left; }
     .pdf-diagram-main { position: relative; z-index: 1; }
     .pdf-diagram-label { position: absolute; inset: 0 auto auto 0; z-index: 2; pointer-events: none; }
@@ -604,14 +604,20 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
         var scale = PAGE_WIDTH_PX / visibleWidth;
         var timelineOffset = EXPORT_PERIOD === 'FULL' ? 0 : SEGMENT_START_X;
         var mainOffset = EXPORT_PERIOD === 'FULL' ? 0 : LABEL_WIDTH - timelineOffset;
-        diagram.style.transform = 'translateX(' + (mainOffset * scale) + 'px) scale(' + scale + ')';
+        // Use CSS zoom instead of transform: transform changes only the visual size,
+        // so Chromium scales the original 2500px layout a second time when printing.
+        diagram.style.transform = 'none';
+        diagram.style.zoom = String(scale);
+        diagram.style.marginLeft = (mainOffset * scale) + 'px';
         if (labelDiagram) {
           if (EXPORT_PERIOD === 'FULL') {
             labelDiagram.style.display = 'none';
           } else {
             labelDiagram.style.display = 'block';
             labelDiagram.style.width = contentWidth + 'px';
-            labelDiagram.style.transform = 'scale(' + scale + ')';
+            labelDiagram.style.transform = 'none';
+            labelDiagram.style.zoom = String(scale);
+            labelDiagram.style.marginLeft = '0';
             labelDiagram.style.clipPath = 'inset(0 ' + Math.max(contentWidth - LABEL_WIDTH, 0) + 'px 0 0)';
           }
         }
