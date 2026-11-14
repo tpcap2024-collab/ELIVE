@@ -568,6 +568,10 @@ export default function App() {
         ? { actionUpdatedAt: new Date().toISOString() }
         : {}),
     } as Truck;
+    // Mark the row as pending before the optimistic state is rendered.
+    // This prevents background refreshes from restoring stale sheet data while
+    // this update is waiting behind earlier actions in the sequential queue.
+    pendingMutationIdsRef.current.add(id);
     trucksRef.current = trucksRef.current.map(truck =>
       truck.id === id ? optimisticTruck : truck
     );
@@ -575,7 +579,6 @@ export default function App() {
 
     const queuedUpdate = updateQueueRef.current.then(async () => {
       try {
-        pendingMutationIdsRef.current.add(id);
         const confirmedTruck = await updateTruckInSheets(id, updates, currentTruck);
         trucksRef.current = trucksRef.current.map(truck => truck.id === id ? confirmedTruck : truck);
         setTrucks(trucksRef.current);
