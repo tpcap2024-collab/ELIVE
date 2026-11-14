@@ -534,7 +534,7 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
     .pdf-exported { font-size: 9px; color: #64748b; text-align: right; }
     .pdf-diagram, .pdf-diagram * { box-sizing: border-box; }
     .pdf-diagram [data-export-hide="true"] { display: none !important; }
-    .pdf-page { position: relative; width: 100%; max-width: 100%; overflow: hidden; }
+    .pdf-page { position: relative; width: 100%; overflow: visible; }
     .pdf-diagram { width: 2500px !important; min-width: 2500px !important; height: auto !important; overflow: visible !important; background: #fff !important; transform-origin: top left; }
     .pdf-diagram-main { position: relative; z-index: 1; }
     .pdf-diagram-label { position: absolute; inset: 0 auto auto 0; z-index: 2; pointer-events: none; }
@@ -604,20 +604,20 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
         var scale = PAGE_WIDTH_PX / visibleWidth;
         var timelineOffset = EXPORT_PERIOD === 'FULL' ? 0 : SEGMENT_START_X;
         var mainOffset = EXPORT_PERIOD === 'FULL' ? 0 : LABEL_WIDTH - timelineOffset;
-        // Use CSS zoom instead of transform: transform changes only the visual size,
-        // so Chromium scales the original 2500px layout a second time when printing.
-        diagram.style.transform = 'none';
-        diagram.style.zoom = String(scale);
-        diagram.style.marginLeft = (mainOffset * scale) + 'px';
+        // Keep the half-day diagram inside the print viewport. CSS zoom combined
+        // with a negative margin can move the complete AM/PM content outside the page.
+        diagram.style.zoom = '';
+        diagram.style.marginLeft = '0';
+        diagram.style.transform = 'translateX(' + (mainOffset * scale) + 'px) scale(' + scale + ')';
         if (labelDiagram) {
           if (EXPORT_PERIOD === 'FULL') {
             labelDiagram.style.display = 'none';
           } else {
             labelDiagram.style.display = 'block';
             labelDiagram.style.width = contentWidth + 'px';
-            labelDiagram.style.transform = 'none';
-            labelDiagram.style.zoom = String(scale);
+            labelDiagram.style.zoom = '';
             labelDiagram.style.marginLeft = '0';
+            labelDiagram.style.transform = 'scale(' + scale + ')';
             labelDiagram.style.clipPath = 'inset(0 ' + Math.max(contentWidth - LABEL_WIDTH, 0) + 'px 0 0)';
           }
         }
