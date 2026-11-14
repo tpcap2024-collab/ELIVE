@@ -88,7 +88,9 @@ type DailyRefreshOptions = {
   clearResultOnError?: boolean;
 };
 
-const MAX_BATCH_DELETE_PLANS = 2000;
+const MAX_BATCH_DELETE_PLANS = 10000;
+const BATCH_DELETE_SIZE = 500;
+const BATCH_DELETE_MAX_ATTEMPTS = 3;
 const MAX_DAILY_VIEW_DAYS = 6;
 const OPERATION_BATCH_SIZE = 20;
 const WORKING_DAYS = [
@@ -585,7 +587,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
     setSelectedPlanCodes(current => {
       if (current.includes(codeRun)) return current.filter(item => item !== codeRun);
       if (current.length >= MAX_BATCH_DELETE_PLANS) {
-        setNotice({ type: 'info', message: 'เลือกได้สูงสุด 2000 รายการต่อครั้ง' });
+        setNotice({ type: 'info', message: 'เลือกได้สูงสุด 10000 รายการต่อครั้ง' });
         return current;
       }
       return [...current, codeRun];
@@ -600,7 +602,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
       const newCodes = displayedPlanCodes.filter(codeRun => !current.includes(codeRun));
       const next = [...current, ...newCodes.slice(0, availableSlots)];
       if (newCodes.length > availableSlots) {
-        setNotice({ type: 'info', message: 'เลือกได้สูงสุด 2000 รายการต่อครั้ง ระบบเลือกให้ครบ 2000 รายการแล้ว' });
+        setNotice({ type: 'info', message: 'เลือกได้สูงสุด 10000 รายการต่อครั้ง ระบบเลือกให้ครบ 10000 รายการแล้ว' });
       }
       return next;
     });
@@ -1084,23 +1086,64 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
   const handleBatchDeletePlans = async () => {
     if (!selectedPlanCodes.length || selectedPlanCodes.length > MAX_BATCH_DELETE_PLANS || isSavingPlan || batchDeleteRunningRef.current) return;
     const codeRuns = [...selectedPlanCodes];
+    const batches = Array.from(
+      { length: Math.ceil(codeRuns.length / BATCH_DELETE_SIZE) },
+      (_, index) => codeRuns.slice(index * BATCH_DELETE_SIZE, (index + 1) * BATCH_DELETE_SIZE)
+    );
     batchDeleteRunningRef.current = true;
     setShowBatchDeleteConfirmation(false);
     setIsSavingPlan(true);
-    setNotice({ type: 'info', message: 'กำลังลบและอัปเดตแผน กรุณารอสักครู่' });
+    let processedCount = 0;
+    let deletedPlanCount = 0;
+    const notFoundCodeRuns: string[] = [];
     try {
-      const result = await deleteDailyPlansBatch(codeRuns);
+      for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
+        const batch = batches[batchIndex];
+        setNotice({
+          type: 'info',
+          message: `กำลังลบ ${processedCount.toLocaleString('th-TH')} / ${codeRuns.length.toLocaleString('th-TH')} รายการ (ชุด ${batchIndex + 1}/${batches.length}) กรุณาอย่าปิดหน้านี้`,
+        });
+        let result: Awaited<ReturnType<typeof deleteDailyPlansBatch>> | null = null;
+        let finalError: unknown = null;
+        for (let attempt = 1; attempt <= BATCH_DELETE_MAX_ATTEMPTS; attempt += 1) {
+          try {
+            result = await deleteDailyPlansBatch(batch);
+            finalError = null;
+            break;
+          } catch (error) {
+            finalError = error;
+            if (attempt < BATCH_DELETE_MAX_ATTEMPTS) {
+              setNotice({
+                type: 'info',
+                message: `ชุด ${batchIndex + 1}/${batches.length} ไม่สำเร็จ กำลังลองใหม่ครั้งที่ ${attempt + 1}/${BATCH_DELETE_MAX_ATTEMPTS}`,
+              });
+              await new Promise(resolve => window.setTimeout(resolve, attempt * 1000));
+            }
+          }
+        }
+        if (!result) throw finalError || new Error(`ลบชุด ${batchIndex + 1} ไม่สำเร็จ`);
+        deletedPlanCount += Number(result.deletedPlanCount || 0);
+        notFoundCodeRuns.push(...(result.notFoundCodeRuns || []));
+        processedCount += batch.length;
+      }
+      setNotice({
+        type: 'info',
+        message: `ลบครบ ${processedCount.toLocaleString('th-TH')} / ${codeRuns.length.toLocaleString('th-TH')} รายการ กำลังโหลดข้อมูลล่าสุด`,
+      });
       const refreshedResult = await waitForDeletedPlansToDisappear(codeRuns);
       setDailyResult(refreshedResult);
       setSelectedPlanCodes([]);
       setNotice({
-        type: result.notFoundCodeRuns.length ? 'info' : 'success',
-        message: result.notFoundCodeRuns.length
-          ? `ลบแผนแล้ว ${result.deletedPlanCount} รายการ และมี ${result.notFoundCodeRuns.length} รายการที่ไม่พบในแผนปัจจุบัน`
-          : `ลบแผนเรียบร้อยแล้ว ${result.deletedPlanCount} รายการ`,
+        type: notFoundCodeRuns.length ? 'info' : 'success',
+        message: notFoundCodeRuns.length
+          ? `ลบแผนแล้ว ${deletedPlanCount.toLocaleString('th-TH')} รายการ และมี ${notFoundCodeRuns.length.toLocaleString('th-TH')} รายการที่ไม่พบในแผนปัจจุบัน`
+          : `ลบแผนเรียบร้อยแล้ว ${deletedPlanCount.toLocaleString('th-TH')} รายการ`,
       });
     } catch (error) {
-      setNotice({ type: 'error', message: getErrorMessage(error) });
+      setNotice({
+        type: 'error',
+        message: `ลบสำเร็จแล้ว ${processedCount.toLocaleString('th-TH')} / ${codeRuns.length.toLocaleString('th-TH')} รายการ: ${getErrorMessage(error)}`,
+      });
     } finally {
       batchDeleteRunningRef.current = false;
       setIsSavingPlan(false);
