@@ -478,7 +478,7 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
     }
   };
 
-  const exportDiagramToPdf = () => {
+  const exportDiagramToPdf = (period: 'FULL' | 'MORNING' | 'AFTERNOON' = 'FULL') => {
     const diagramElement = diagramFullscreenRef.current;
     if (!diagramElement) return;
 
@@ -490,6 +490,7 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
       .join('');
     const exportedAt = new Date().toLocaleString('th-TH');
     const viewLabel = timelineView === 'ALL' ? 'PLAN + ACTUAL' : timelineView;
+    const periodLabel = period === 'MORNING' ? 'MORNING 07:00-12:00' : period === 'AFTERNOON' ? 'AFTERNOON 12:00-17:00' : 'FULL DAY 07:00-17:00';
     const dockLabel = selectedGroups.length === GROUP_FILTER_OPTIONS.length
       ? 'ALL'
       : selectedGroups.join(', ');
@@ -531,8 +532,10 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
     .pdf-exported { font-size: 9px; color: #64748b; text-align: right; }
     .pdf-diagram, .pdf-diagram * { box-sizing: border-box; }
     .pdf-diagram [data-export-hide="true"] { display: none !important; }
-    .pdf-page { width: 100%; overflow: hidden; }
+    .pdf-page { position: relative; width: 100%; overflow: hidden; }
     .pdf-diagram { width: 2500px !important; min-width: 2500px !important; height: auto !important; overflow: visible !important; background: #fff !important; transform-origin: top left; }
+    .pdf-diagram-main { position: relative; z-index: 1; }
+    .pdf-diagram-label { position: absolute; inset: 0 auto auto 0; z-index: 2; pointer-events: none; }
     .pdf-diagram [class*="overflow-x-scroll"],
     .pdf-diagram [class*="overflow-x-auto"],
     .pdf-diagram [class*="overflow-y-auto"],
@@ -550,26 +553,45 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
   <div class="pdf-meta">
     <div>
       <div class="pdf-title">ELIVE Platform Diagram</div>
-      <div class="pdf-detail"><strong>Plan Date:</strong> ${displayedPlanDate} &nbsp; | &nbsp; <strong>View:</strong> ${viewLabel} &nbsp; | &nbsp; <strong>Dock:</strong> ${dockLabel}</div>
+      <div class="pdf-detail"><strong>Plan Date:</strong> ${displayedPlanDate} &nbsp; | &nbsp; <strong>View:</strong> ${viewLabel} &nbsp; | &nbsp; <strong>Period:</strong> ${periodLabel} &nbsp; | &nbsp; <strong>Dock:</strong> ${dockLabel}</div>
     </div>
     <div class="pdf-exported">Exported: ${exportedAt}</div>
   </div>
-  <div class="pdf-page"><div class="pdf-diagram">${diagramElement.outerHTML}</div></div>
+  <div class="pdf-page">
+    <div class="pdf-diagram pdf-diagram-main">${diagramElement.outerHTML}</div>
+    <div class="pdf-diagram pdf-diagram-label">${diagramElement.outerHTML}</div>
+  </div>
   <script>
     (function () {
       var PAGE_WIDTH_PX = 1520;
       var PAGE_HEIGHT_PX = 1010;
       var HEADER_RESERVE_PX = 55;
-      var diagram = document.querySelector('.pdf-diagram');
+      var EXPORT_PERIOD = '${period}';
+      var SEGMENT_START_X = EXPORT_PERIOD === 'AFTERNOON' ? 1130 : 0;
+      var SEGMENT_WIDTH = EXPORT_PERIOD === 'FULL' ? 2500 : 1370;
+      var LABEL_WIDTH = 115;
+      var diagram = document.querySelector('.pdf-diagram-main');
+      var labelDiagram = document.querySelector('.pdf-diagram-label');
       var page = document.querySelector('.pdf-page');
       function fitAndPrint() {
         if (!diagram || !page) return;
         var contentWidth = Math.max(diagram.scrollWidth, diagram.getBoundingClientRect().width, 1);
         var contentHeight = Math.max(diagram.scrollHeight, diagram.getBoundingClientRect().height, 1);
         var availableHeight = PAGE_HEIGHT_PX - HEADER_RESERVE_PX;
-        var scale = Math.min(PAGE_WIDTH_PX / contentWidth, availableHeight / contentHeight, 1);
-        diagram.style.transform = 'scale(' + scale + ')';
-        page.style.width = (contentWidth * scale) + 'px';
+        var visibleWidth = Math.min(SEGMENT_WIDTH, contentWidth - SEGMENT_START_X);
+        var scale = Math.min(PAGE_WIDTH_PX / visibleWidth, availableHeight / contentHeight, 1);
+        diagram.style.transform = 'translateX(' + (-SEGMENT_START_X * scale) + 'px) scale(' + scale + ')';
+        if (labelDiagram) {
+          if (EXPORT_PERIOD === 'FULL') {
+            labelDiagram.style.display = 'none';
+          } else {
+            labelDiagram.style.display = 'block';
+            labelDiagram.style.width = contentWidth + 'px';
+            labelDiagram.style.transform = 'scale(' + scale + ')';
+            labelDiagram.style.clipPath = 'inset(0 ' + Math.max(contentWidth - LABEL_WIDTH, 0) + 'px 0 0)';
+          }
+        }
+        page.style.width = (visibleWidth * scale) + 'px';
         page.style.height = (contentHeight * scale) + 'px';
         document.documentElement.style.width = PAGE_WIDTH_PX + 'px';
         document.body.style.width = PAGE_WIDTH_PX + 'px';
@@ -732,9 +754,13 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
           </div>
           <div className="flex shrink-0 items-center gap-3">
             <span className="whitespace-nowrap text-[9px] font-medium text-slate-500">แสดง {selectedGroups.length} จาก {GROUP_FILTER_OPTIONS.length} กลุ่ม</span>
-            <button type="button" onClick={exportDiagramToPdf} title="Export Diagram เป็น PDF" aria-label="Export Diagram เป็น PDF" data-export-hide="true" className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-700 shadow-sm hover:border-red-400 hover:bg-red-50 hover:text-red-700">
-              <FileDown className="h-4 w-4" />
-            </button>
+            <div className="flex items-center overflow-hidden rounded-lg border border-slate-300 bg-white shadow-sm" data-export-hide="true">
+              <button type="button" onClick={() => exportDiagramToPdf('FULL')} title="Export PDF เต็มวัน 07:00-17:00" aria-label="Export PDF เต็มวัน" className="inline-flex h-9 items-center gap-1 border-r border-slate-200 px-2 text-[9px] font-bold text-slate-700 hover:bg-red-50 hover:text-red-700">
+                <FileDown className="h-3.5 w-3.5" /> FULL
+              </button>
+              <button type="button" onClick={() => exportDiagramToPdf('MORNING')} title="Export PDF ช่วงเช้า 07:00-12:00" aria-label="Export PDF ช่วงเช้า" className="inline-flex h-9 items-center px-2 text-[9px] font-bold text-slate-700 hover:bg-amber-50 hover:text-amber-700">AM</button>
+              <button type="button" onClick={() => exportDiagramToPdf('AFTERNOON')} title="Export PDF ช่วงบ่าย 12:00-17:00" aria-label="Export PDF ช่วงบ่าย" className="inline-flex h-9 items-center border-l border-slate-200 px-2 text-[9px] font-bold text-slate-700 hover:bg-blue-50 hover:text-blue-700">PM</button>
+            </div>
             <button type="button" onClick={() => void toggleDiagramFullscreen()} title={isDiagramFullscreen ? 'ออกจากโหมดเต็มหน้าจอ' : 'แสดง Platform Dashboard เต็มหน้าจอ'} aria-label={isDiagramFullscreen ? 'ออกจากโหมดเต็มหน้าจอ' : 'แสดง Platform Dashboard เต็มหน้าจอ'} data-export-hide="true" className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-700 shadow-sm hover:border-blue-400 hover:bg-blue-50 hover:text-blue-700">
               {isDiagramFullscreen ? <Minimize2 className="h-4 w-4" /> : <Expand className="h-4 w-4" />}
             </button>
