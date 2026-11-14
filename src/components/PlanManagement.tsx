@@ -458,6 +458,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
   const masterImportInputRef = useRef<HTMLInputElement>(null);
   const dailyImportInputRef = useRef<HTMLInputElement>(null);
   const batchDeleteRunningRef = useRef(false);
+  const editingOriginalGroupCodeRef = useRef('');
 
   const [tab, setTab] = useState<MainTab>('create');
   const [createView, setCreateView] = useState<CreateView>('source');
@@ -959,6 +960,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
   const openExtraDialog = () => {
     if (isSavingPlan) return;
     setEditingCodeRun('');
+    editingOriginalGroupCodeRef.current = '';
     setPlanForm({ ...EMPTY_PLAN, date: dailyDate, remark: 'EXTRA' });
     setPlanDialogMode('extra');
   };
@@ -966,6 +968,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
   const openEditDialog = (plan: DailyPlan) => {
     if (isSavingPlan) return;
     setEditingCodeRun(plan.codeRun);
+    editingOriginalGroupCodeRef.current = String(plan.groupCode || '').trim().toUpperCase();
     setPlanForm({
       date: plan.date,
       route: plan.route,
@@ -995,9 +998,12 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
 
     const mode = planDialogMode;
     const codeRun = editingCodeRun;
+    const normalizedGroupCode = String(planForm.groupCode || '').trim().toUpperCase();
     const submittedPlan = {
       ...planForm,
-      groupCode: String(planForm.groupCode || '').trim().toUpperCase(),
+      groupCode: mode === 'edit'
+        ? (normalizedGroupCode || editingOriginalGroupCodeRef.current)
+        : normalizedGroupCode,
     };
     setIsSavingPlan(true);
     setNotice(null);
@@ -1018,6 +1024,7 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
       setDailyEndDate(submittedPlan.date);
       setPlanDialogMode(null);
       setEditingCodeRun('');
+      editingOriginalGroupCodeRef.current = '';
       await loadDailyPlans(submittedPlan.date, submittedPlan.date, {
         showMessage: false,
         clearResultOnError: false,
