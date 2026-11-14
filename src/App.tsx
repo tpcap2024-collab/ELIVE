@@ -1428,7 +1428,7 @@ export default function App() {
                     {isDashboardFullscreen ? 'EXIT FULL SCREEN' : 'FULL SCREEN'}
                   </button>
                 </div>
-                <div className="mb-2 grid grid-cols-2 gap-2 md:grid-cols-4">
+                <div className="mb-2 flex w-full flex-nowrap items-stretch gap-2 overflow-x-auto">
                   {[
                     ['Total Truck', stats.total, TruckIcon, 'text-blue-500'],
                     ['Unloading', stats.unloading, Package, 'text-purple-500'],
@@ -1437,16 +1437,25 @@ export default function App() {
                   ].map(([label, value, Icon, color]) => {
                     const CardIcon = Icon as React.ComponentType<{ className?: string }>;
                     return (
-                      <div key={String(label)} className="rounded-lg border border-slate-200 bg-white px-3 py-2 shadow-sm">
-                        <p className="mb-0.5 flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider text-slate-500">
-                          <CardIcon className={`h-3.5 w-3.5 ${color}`} /> {String(label)}
+                      <div key={String(label)} className="flex h-12 w-[118px] min-w-[118px] flex-col justify-center rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 shadow-sm">
+                        <p className="flex items-center gap-1 whitespace-nowrap text-[9px] font-bold uppercase tracking-wider text-slate-500">
+                          <CardIcon className={`h-3.5 w-3.5 shrink-0 ${color}`} /> {String(label)}
                         </p>
-                        <h3 className="text-xl font-bold leading-none text-slate-800">{String(value)}</h3>
+                        <h3 className="mt-0.5 text-lg font-bold leading-none text-slate-800">{String(value)}</h3>
                       </div>
                     );
                   })}
+                  <div className="flex h-12 min-w-[520px] flex-1 items-center gap-3 whitespace-nowrap rounded-lg border border-slate-200 bg-white px-3 py-1.5 shadow-sm">
+                    <span className="shrink-0 text-[9px] font-black uppercase tracking-wide text-slate-500">Legend</span>
+                    <div className="flex min-w-0 flex-1 flex-nowrap items-center justify-between gap-2 text-[9px] font-bold text-slate-700">
+                      <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 shrink-0 rounded-sm border border-blue-700 bg-blue-500" />Early</span>
+                      <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 shrink-0 rounded-sm border border-green-700 bg-green-500" />On-time</span>
+                      <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 shrink-0 rounded-sm border border-red-700 bg-red-500" />Delay</span>
+                      <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 shrink-0 rounded-sm border border-yellow-600 bg-yellow-400" />Unloading</span>
+                      <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 shrink-0 rounded-sm border border-orange-700 bg-orange-500" />Unloading + Delay</span>
+                    </div>
+                  </div>
                 </div>
-
                 <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
                   <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-200 bg-white px-2 py-1.5">
                     <span className="mr-1 text-[9px] font-bold uppercase text-slate-500">
