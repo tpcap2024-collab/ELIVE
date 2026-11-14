@@ -1448,8 +1448,8 @@ export default function App() {
                   <div className="flex h-12 min-w-[650px] flex-1 items-center gap-2 whitespace-nowrap rounded-lg border border-slate-200 bg-white px-3 py-1.5 shadow-sm">
                     <span className="shrink-0 border-r border-slate-200 pr-2 text-[9px] font-black uppercase tracking-wide text-slate-500">Row Status</span>
                     <div className="flex min-w-0 flex-1 flex-nowrap items-center justify-between gap-2 text-[9px] font-bold text-slate-700">
-                      <span className="inline-flex items-center gap-1.5"><span className="h-3.5 w-3.5 shrink-0 rounded-sm border border-blue-300 bg-blue-100" />Early</span>
-                      <span className="inline-flex items-center gap-1.5"><span className="h-3.5 w-3.5 shrink-0 rounded-sm border border-emerald-300 bg-emerald-100" />On-time / Complete</span>
+                      <span className="inline-flex items-center gap-1.5"><span className="h-3.5 w-3.5 shrink-0 rounded-sm border border-slate-300 bg-white" />Normal / On Plan</span>
+                      <span className="inline-flex items-center gap-1.5"><span className="h-3.5 w-3.5 shrink-0 rounded-sm border border-emerald-300 bg-emerald-100" />Complete</span>
                       <span className="inline-flex items-center gap-1.5"><span className="h-3.5 w-3.5 shrink-0 rounded-sm border border-red-300 bg-red-200" />Delay</span>
                       <span className="inline-flex items-center gap-1.5"><span className="h-3.5 w-3.5 shrink-0 rounded-sm border border-yellow-300 bg-yellow-100" />Unloading</span>
                       <span className="inline-flex items-center gap-1.5"><span className="h-3.5 w-3.5 shrink-0 rounded-sm border border-orange-300 bg-orange-200" />Unloading + Delay</span>
