@@ -6243,6 +6243,7 @@ app.put('/api/plans/:codeRun', requireAuthentication, requirePermission('MANAGE_
       codeRun,
       plan,
       remark: plan.remark,
+      groupCode: plan.groupCode,
     });
 
     clearTruckCache();
