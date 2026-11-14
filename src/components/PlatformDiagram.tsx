@@ -538,6 +538,7 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
     .pdf-diagram { width: 2500px !important; min-width: 2500px !important; height: auto !important; overflow: visible !important; background: #fff !important; transform-origin: top left; }
     .pdf-diagram-main { position: relative; z-index: 1; }
     .pdf-diagram-label { position: absolute; inset: 0 auto auto 0; z-index: 2; pointer-events: none; }
+    [data-print-group="true"] { break-inside: avoid-page; page-break-inside: avoid; }
     .pdf-diagram [class*="overflow-x-scroll"],
     .pdf-diagram [class*="overflow-x-auto"],
     .pdf-diagram [class*="overflow-y-auto"],
@@ -548,7 +549,7 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
     @media print {
       html, body { width: 100%; height: auto; overflow: visible; }
       * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
-      .pdf-diagram-main > * { break-inside: avoid-page; page-break-inside: avoid; }
+      [data-print-group="true"] { break-inside: avoid-page; page-break-inside: avoid; }
     }
   </style>
 </head>
@@ -860,6 +861,7 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
               return (
                 <div
                   key={group.groupName}
+                  data-print-group="true"
                   className="flex flex-col border-b-2 border-slate-900"
                 >
                   {group.title && (
