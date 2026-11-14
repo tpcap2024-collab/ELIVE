@@ -871,13 +871,13 @@ export default function App() {
         truck.status === 'UNLOADING' ||
         truck.status === 'UNLOADING_AT_TPCAP'
     );
-    // Match Mobile Mode background priority:
-    // completed > no work > unloading delay > unloading > overdue inactivity > GPS issue > normal.
-    if (isCompleted) {
-      return 'bg-emerald-100 hover:bg-emerald-200 transition-colors';
-    }
+    // NO WORK is normalized to COMPLETED for KPI and visibility logic,
+    // so it must be checked before the completed row color.
     if (hasNoWorkAction(truck)) {
       return 'bg-slate-200 hover:bg-slate-300 transition-colors';
+    }
+    if (isCompleted) {
+      return 'bg-emerald-100 hover:bg-emerald-200 transition-colors';
     }
     if (isUnloading && truck.performanceStatus === 'DELAY') {
       return 'bg-orange-200 hover:bg-orange-300 transition-colors';
@@ -1445,14 +1445,15 @@ export default function App() {
                       </div>
                     );
                   })}
-                  <div className="flex h-12 min-w-[520px] flex-1 items-center gap-3 whitespace-nowrap rounded-lg border border-slate-200 bg-white px-3 py-1.5 shadow-sm">
-                    <span className="shrink-0 text-[9px] font-black uppercase tracking-wide text-slate-500">Legend</span>
+                  <div className="flex h-12 min-w-[650px] flex-1 items-center gap-2 whitespace-nowrap rounded-lg border border-slate-200 bg-white px-3 py-1.5 shadow-sm">
+                    <span className="shrink-0 border-r border-slate-200 pr-2 text-[9px] font-black uppercase tracking-wide text-slate-500">Row Status</span>
                     <div className="flex min-w-0 flex-1 flex-nowrap items-center justify-between gap-2 text-[9px] font-bold text-slate-700">
-                      <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 shrink-0 rounded-sm border border-blue-700 bg-blue-500" />Early</span>
-                      <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 shrink-0 rounded-sm border border-green-700 bg-green-500" />On-time</span>
-                      <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 shrink-0 rounded-sm border border-red-700 bg-red-500" />Delay</span>
-                      <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 shrink-0 rounded-sm border border-yellow-600 bg-yellow-400" />Unloading</span>
-                      <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 shrink-0 rounded-sm border border-orange-700 bg-orange-500" />Unloading + Delay</span>
+                      <span className="inline-flex items-center gap-1.5"><span className="h-3.5 w-3.5 shrink-0 rounded-sm border border-blue-300 bg-blue-100" />Early</span>
+                      <span className="inline-flex items-center gap-1.5"><span className="h-3.5 w-3.5 shrink-0 rounded-sm border border-emerald-300 bg-emerald-100" />On-time / Complete</span>
+                      <span className="inline-flex items-center gap-1.5"><span className="h-3.5 w-3.5 shrink-0 rounded-sm border border-red-300 bg-red-200" />Delay</span>
+                      <span className="inline-flex items-center gap-1.5"><span className="h-3.5 w-3.5 shrink-0 rounded-sm border border-yellow-300 bg-yellow-100" />Unloading</span>
+                      <span className="inline-flex items-center gap-1.5"><span className="h-3.5 w-3.5 shrink-0 rounded-sm border border-orange-300 bg-orange-200" />Unloading + Delay</span>
+                      <span className="inline-flex items-center gap-1.5"><span className="h-3.5 w-3.5 shrink-0 rounded-sm border border-slate-400 bg-slate-200" />No Work / GPS Lost</span>
                     </div>
                   </div>
                 </div>
