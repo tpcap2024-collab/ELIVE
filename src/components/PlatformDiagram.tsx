@@ -611,8 +611,8 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
             </button>
           </div>
         </div>
-        <div className="grid w-full grid-cols-2 gap-2 md:grid-cols-4">
-          <div className="flex h-12 min-w-0 flex-col justify-center rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5">
+        <div className="flex w-full flex-nowrap items-stretch gap-2 overflow-x-auto">
+          <div className="flex h-12 w-[118px] min-w-[118px] flex-col justify-center rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5">
             <p className="flex items-center gap-1 whitespace-nowrap text-[9px] font-bold uppercase text-slate-500">
               <TruckIcon className="h-3.5 w-3.5 shrink-0" />
               Total
@@ -622,7 +622,7 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
             </h3>
           </div>
 
-          <div className="flex h-12 min-w-0 flex-col justify-center rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5">
+          <div className="flex h-12 w-[118px] min-w-[118px] flex-col justify-center rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5">
             <p className="flex items-center gap-1 whitespace-nowrap text-[9px] font-bold uppercase text-slate-500">
               <Package className="h-3.5 w-3.5 shrink-0 text-yellow-500" />
               Unloading
@@ -632,7 +632,7 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
             </h3>
           </div>
 
-          <div className="flex h-12 min-w-0 flex-col justify-center rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5">
+          <div className="flex h-12 w-[118px] min-w-[118px] flex-col justify-center rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5">
             <p className="flex items-center gap-1 whitespace-nowrap text-[9px] font-bold uppercase text-slate-500">
               <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-green-500" />
               Complete
@@ -642,7 +642,7 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
             </h3>
           </div>
 
-          <div className="flex h-12 min-w-0 flex-col justify-center rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5">
+          <div className="flex h-12 w-[118px] min-w-[118px] flex-col justify-center rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5">
             <p className="flex items-center gap-1 whitespace-nowrap text-[9px] font-bold uppercase text-slate-500">
               <Clock className="h-3.5 w-3.5 shrink-0 text-blue-500" />
               Remain
@@ -650,6 +650,17 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
             <h3 className="mt-0.5 text-lg font-bold leading-none text-slate-800">
               {stats.remain}
             </h3>
+          </div>
+
+          <div className="flex h-12 min-w-[520px] flex-1 items-center gap-3 whitespace-nowrap rounded-md border border-slate-200 bg-white px-3 py-1.5">
+            <span className="shrink-0 text-[9px] font-black uppercase tracking-wide text-slate-500">Legend</span>
+            <div className="flex min-w-0 flex-1 flex-nowrap items-center justify-between gap-2 text-[9px] font-bold text-slate-700">
+              <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 shrink-0 rounded-sm border border-blue-700 bg-blue-500" />Early</span>
+              <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 shrink-0 rounded-sm border border-green-700 bg-green-500" />On-time</span>
+              <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 shrink-0 rounded-sm border border-red-700 bg-red-500" />Delay</span>
+              <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 shrink-0 rounded-sm border border-yellow-600 bg-yellow-400" />Unloading</span>
+              <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 shrink-0 rounded-sm border border-orange-700 bg-orange-500" />Unloading + Delay</span>
+            </div>
           </div>
         </div>
       </div>
