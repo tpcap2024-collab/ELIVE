@@ -587,6 +587,14 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
       var page = document.querySelector('.pdf-page');
       function fitAndPrint() {
         if (!diagram || !page) return;
+        // AM/PM PDF: hide the Platform Dashboard controls, KPI cards and legend.
+        if (EXPORT_PERIOD !== 'FULL') {
+          [diagram, labelDiagram].forEach(function (exportDiagram) {
+            if (exportDiagram && exportDiagram.firstElementChild) {
+              exportDiagram.firstElementChild.style.display = 'none';
+            }
+          });
+        }
         var contentWidth = Math.max(diagram.scrollWidth, diagram.getBoundingClientRect().width, 1);
         var contentHeight = Math.max(diagram.scrollHeight, diagram.getBoundingClientRect().height, 1);
         var visibleWidth = EXPORT_PERIOD === 'FULL'
