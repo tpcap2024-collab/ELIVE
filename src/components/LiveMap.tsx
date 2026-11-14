@@ -727,6 +727,10 @@ export function LiveMap({
   const insideSiteBoundary = Boolean(selectedGpsLocation && isInsideTpcapSite(
     selectedGpsLocation.latitude, selectedGpsLocation.longitude
   ));
+  const hasCompletedTrip = Boolean(
+    selectedTruck?.stampEtd ||
+    gpsDockResult?.autoStampEtdResult
+  );
   const selectedFreshness =
     useMemo(() => {
       if (
@@ -1140,7 +1144,7 @@ export function LiveMap({
 
   useEffect(() => {
     if (
-      !selectedGpsLocation || insideSiteBoundary
+      !selectedGpsLocation || insideSiteBoundary || hasCompletedTrip
     ) {
       routeRequestIdRef.current +=
         1;
@@ -1238,6 +1242,7 @@ export function LiveMap({
   }, [
     selectedGpsLocation,
     insideSiteBoundary,
+    hasCompletedTrip,
   ]);
 
   useEffect(() => {
@@ -1331,7 +1336,7 @@ export function LiveMap({
     );
 
     if (
-      !insideSiteBoundary && routeResult &&
+      !hasCompletedTrip && !insideSiteBoundary && routeResult &&
       routeResult
         .geometry
         .coordinates
@@ -1411,6 +1416,7 @@ export function LiveMap({
     routeResult,
     insideSiteBoundary,
     selectedTargetPosition,
+    hasCompletedTrip,
   ]);
 
   const handleRefresh =
@@ -1494,10 +1500,7 @@ export function LiveMap({
     selectedTruck?.actualEta ||
     gpsDockResult?.autoStampEtaResult
   );
-  const hasStampedEtd = Boolean(
-    selectedTruck?.stampEtd ||
-    gpsDockResult?.autoStampEtdResult
-  );
+  const hasStampedEtd = hasCompletedTrip;
   const gpsAgeText = selectedGpsLocation ? getGpsAgeText(selectedGpsLocation) : '-';
   const stationName = selectedGpsLocation?.locationName || 'ไม่พบชื่อสถานี';
   const insideGeofence = selectedGeofenceEvaluation?.isInside ?? false;
@@ -1556,19 +1559,19 @@ export function LiveMap({
                 <div className="min-w-0 rounded-xl border border-blue-200 bg-blue-50 px-3 py-3 shadow-sm">
                   <div className="text-xs font-black text-blue-700">ระยะทาง</div>
                   <div className="mt-1 truncate text-lg font-black leading-tight text-slate-950">
-                    {insideSiteBoundary ? 'ในพื้นที่' : routeResult ? `${routeResult.distanceKilometers.toFixed(1)} กม.` : isRouteLoading ? '...' : '-'}
+                    {hasCompletedTrip ? 'จบงานแล้ว' : insideSiteBoundary ? 'ในพื้นที่' : routeResult ? `${routeResult.distanceKilometers.toFixed(1)} กม.` : isRouteLoading ? '...' : '-'}
                   </div>
                 </div>
                 <div className="min-w-0 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-3 shadow-sm">
                   <div className="text-xs font-black text-indigo-700">เวลาเดินทาง</div>
                   <div className="mt-1 truncate text-lg font-black leading-tight text-slate-950">
-                    {insideSiteBoundary ? '-' : routeResult ? formatDuration(routeResult.durationMinutes) : isRouteLoading ? '...' : '-'}
+                    {hasCompletedTrip ? '-' : insideSiteBoundary ? '-' : routeResult ? formatDuration(routeResult.durationMinutes) : isRouteLoading ? '...' : '-'}
                   </div>
                 </div>
                 <div className="min-w-0 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-3 shadow-sm">
                   <div className="text-xs font-black text-emerald-700">คาดว่าจะถึง</div>
                   <div className="mt-1 truncate text-lg font-black leading-tight text-slate-950">
-                    {insideSiteBoundary ? 'ARRIVED' : routeResult ? formatEta(routeResult.estimatedArrival).split(', ').pop() : isRouteLoading ? '...' : '-'}
+                    {hasCompletedTrip ? '-' : insideSiteBoundary ? 'ARRIVED' : routeResult ? formatEta(routeResult.estimatedArrival).split(', ').pop() : isRouteLoading ? '...' : '-'}
                   </div>
                 </div>
               </div>
@@ -1582,8 +1585,8 @@ export function LiveMap({
         }`}
       >
         <div ref={mapContainerRef} className="h-full min-h-[420px] w-full" />
-        {isRouteLoading && <div className="absolute right-3 top-3 z-[600] flex items-center gap-2 rounded-lg border border-blue-200 bg-white/95 px-3 py-2 text-xs font-semibold text-blue-700 shadow"><LoaderCircle className="h-4 w-4 animate-spin" />กำลังคำนวณเส้นทาง</div>}
-        {routeError && <div className="absolute right-3 top-3 z-[600] max-w-sm rounded-lg border border-red-200 bg-white/95 px-3 py-2 text-xs text-red-700 shadow"><AlertTriangle className="mr-1 inline h-4 w-4" />{routeError}</div>}
+        {isRouteLoading && !hasCompletedTrip && <div className="absolute right-3 top-3 z-[600] flex items-center gap-2 rounded-lg border border-blue-200 bg-white/95 px-3 py-2 text-xs font-semibold text-blue-700 shadow"><LoaderCircle className="h-4 w-4 animate-spin" />กำลังคำนวณเส้นทาง</div>}
+        {routeError && !hasCompletedTrip && <div className="absolute right-3 top-3 z-[600] max-w-sm rounded-lg border border-red-200 bg-white/95 px-3 py-2 text-xs text-red-700 shadow"><AlertTriangle className="mr-1 inline h-4 w-4" />{routeError}</div>}
         {showNoGpsMessage && <div className="absolute inset-0 z-[500] flex items-center justify-center bg-white/60"><div className="rounded-xl border bg-white p-6 text-center shadow-lg"><MapPin className="mx-auto h-8 w-8 text-slate-400" /><div className="mt-3 font-bold">ไม่พบข้อมูล GPS ของรถในแผน</div></div></div>}
         {showNoMatchMessage && <div className="absolute inset-0 z-[500] flex items-center justify-center"><div className="rounded-xl border border-amber-200 bg-white p-6 text-center shadow-lg"><AlertTriangle className="mx-auto h-8 w-8 text-amber-500" /><div className="mt-3 font-bold">ไม่พบท้ายทะเบียนที่ตรงกับ GPS</div></div></div>}
         {showSelectTruckMessage && <div className="absolute inset-0 z-[500] flex items-center justify-center"><div className="rounded-xl border bg-white p-6 text-center shadow-lg"><TruckIcon className="mx-auto h-8 w-8 text-blue-500" /><div className="mt-3 font-bold">เลือกรถที่ต้องการติดตาม</div><div className="mt-1 text-xs text-slate-500">พบรถที่จับคู่ GPS ได้ {matchedTrucks.length} คัน</div></div></div>}
@@ -1597,9 +1600,9 @@ export function LiveMap({
           <div className="grid min-w-[1180px] grid-cols-[1.35fr_1.45fr_.8fr_.8fr_.9fr_1.05fr_1.45fr] divide-x divide-slate-200">
             <div className="flex items-center gap-3 p-4"><TruckIcon className="h-8 w-8 shrink-0 text-emerald-600" /><div><div className="flex items-center gap-2"><span className="text-lg font-bold text-slate-900">{selectedTruck?.licensePlate || selectedGpsLocation.licensePlate || '-'}</span>{selectedFreshness && <span className={`rounded-full border px-2 py-0.5 text-[9px] font-bold ${getFreshnessClasses(selectedFreshness)}`}>{selectedFreshness}</span>}</div><div className="mt-1 text-xs font-semibold text-slate-600">{selectedTruck?.route || '-'} | {selectedTruck?.dropPoint || '-'}</div><div className={`mt-1 text-[11px] font-bold ${Number(selectedGpsLocation.speed) > 0 ? 'text-emerald-700' : 'text-red-700'}`}>{Number(selectedGpsLocation.speed) > 0 ? 'รถวิ่ง' : 'รถจอด'} · {Number(selectedGpsLocation.speed).toFixed(0)} km/h</div></div></div>
             <div className="p-4"><div className="text-[10px] font-bold uppercase text-slate-400">สถานีปัจจุบัน</div><div className="mt-1 line-clamp-2 text-sm font-bold text-slate-800" title={stationName}>{stationName}</div><div className="mt-1 text-[11px] text-slate-500">GPS {formatGpsDateTime(selectedGpsLocation.gpsTime)} · <span className="font-semibold text-emerald-700">{gpsAgeText}</span></div></div>
-            <div className="p-4"><div className="text-[10px] font-bold uppercase text-blue-500">ระยะทาง</div><div className="mt-2 text-xl font-bold text-slate-900">{insideSiteBoundary ? 'ในพื้นที่' : routeResult ? `${routeResult.distanceKilometers.toFixed(1)} km` : '-'}</div></div>
-            <div className="p-4"><div className="text-[10px] font-bold uppercase text-indigo-500">เวลาเดินทาง</div><div className="mt-2 text-lg font-bold text-slate-900">{insideSiteBoundary ? '-' : routeResult ? formatDuration(routeResult.durationMinutes) : '-'}</div></div>
-            <div className="p-4"><div className="text-[10px] font-bold uppercase text-emerald-600">ETA ถึง TPCAP</div><div className="mt-2 text-lg font-bold text-slate-900">{insideSiteBoundary ? 'ARRIVED' : routeResult ? formatEta(routeResult.estimatedArrival).split(', ').pop() : '-'}</div></div>
+            <div className="p-4"><div className="text-[10px] font-bold uppercase text-blue-500">ระยะทาง</div><div className="mt-2 text-xl font-bold text-slate-900">{hasCompletedTrip ? 'จบงานแล้ว' : insideSiteBoundary ? 'ในพื้นที่' : routeResult ? `${routeResult.distanceKilometers.toFixed(1)} km` : '-'}</div></div>
+            <div className="p-4"><div className="text-[10px] font-bold uppercase text-indigo-500">เวลาเดินทาง</div><div className="mt-2 text-lg font-bold text-slate-900">{hasCompletedTrip ? '-' : insideSiteBoundary ? '-' : routeResult ? formatDuration(routeResult.durationMinutes) : '-'}</div></div>
+            <div className="p-4"><div className="text-[10px] font-bold uppercase text-emerald-600">ETA ถึง TPCAP</div><div className="mt-2 text-lg font-bold text-slate-900">{hasCompletedTrip ? '-' : insideSiteBoundary ? 'ARRIVED' : routeResult ? formatEta(routeResult.estimatedArrival).split(', ').pop() : '-'}</div></div>
             <div className="p-4"><div className="flex items-center justify-between gap-2"><div className="text-[10px] font-bold uppercase text-slate-500">เป้าหมาย</div><span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${insideGeofence ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>{insideGeofence ? 'INSIDE' : 'OUTSIDE'}</span></div><div className="mt-1 text-base font-bold text-slate-900">{geofenceName}</div><div className="mt-1 text-[11px] text-slate-500">ระยะ {geofenceDistance !== undefined ? geofenceDistance >= 1000 ? `${(geofenceDistance / 1000).toFixed(1)} km` : `${geofenceDistance.toFixed(0)} m` : '-'} · รัศมี {geofenceRadius || '-'} m</div></div>
             <div className="grid grid-cols-3 divide-x divide-slate-200"><div className="p-4 text-center"><div className="text-[10px] font-bold uppercase text-slate-400">Plan ETA</div><div className="mt-2 text-base font-bold text-slate-900">{formatPlanTime(selectedTruck?.planEta)}</div></div><div className="p-4 text-center"><div className="text-[10px] font-bold uppercase text-blue-500">Stamp ETA</div><div className={`mt-2 text-sm font-bold ${etaStatus === 'STAMPED' ? 'text-emerald-600' : 'text-blue-600'}`}>{etaStatus}</div></div><div className="p-4 text-center"><div className="text-[10px] font-bold uppercase text-orange-500">Stamp ETD</div><div className={`mt-2 text-sm font-bold ${etdStatus === 'STAMPED' ? 'text-emerald-600' : 'text-orange-600'}`}>{etdStatus}</div></div></div>
           </div>
