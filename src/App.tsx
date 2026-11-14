@@ -1413,23 +1413,33 @@ export default function App() {
                   isDashboardFullscreen ? 'h-screen w-screen' : 'min-h-0 min-w-0 w-full'
                 }`}
               >
-                <div className="mb-3 flex shrink-0 flex-col justify-between gap-4 rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-sm sm:flex-row sm:items-center">
-                  <div>
-                    <h2 className="text-xl font-bold tracking-tight text-slate-800">
-                      Live Dashboard
-                    </h2>
-                    <p className="mt-1 text-sm text-slate-500">
-                      Real-Time Truck Status Monitoring
-                    </p>
+                <div className="mb-2 shrink-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 shadow-sm">
+                  <div className="flex min-w-0 flex-nowrap items-center gap-2 overflow-x-auto">
+                    <div className="mr-2 min-w-[210px] shrink-0">
+                      <h2 className="text-lg font-bold leading-tight tracking-tight text-slate-800">Live Dashboard</h2>
+                      <p className="text-xs text-slate-500">Real-Time Truck Status Monitoring</p>
+                    </div>
+                    <span className="shrink-0 text-[9px] font-bold uppercase text-slate-500">Show Dock:</span>
+                    {DOCK_FILTERS.map(option => (
+                      <button key={option} type="button" onClick={() => toggleDockFilter(option)} className={`shrink-0 rounded-md border px-3 py-1.5 text-[10px] font-bold transition-colors ${
+                        option === 'ALL' ? allDockFiltersSelected : selectedDockFilters.includes(option)
+                          ? option === 'ALL' ? 'border-slate-800 bg-slate-800 text-white' : 'border-blue-700 bg-blue-600 text-white shadow-sm'
+                          : 'border-slate-300 bg-white text-slate-500 hover:bg-slate-100'
+                      }`}>{option}</button>
+                    ))}
+                    <div className="relative min-w-[240px] flex-1">
+                      <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                      <input type="search" value={dashboardSearch} onChange={event => setDashboardSearch(event.target.value)} placeholder="ค้นหา Route, ทะเบียนรถ..." className="w-full rounded-md border border-slate-300 bg-white py-1.5 pl-8 pr-3 text-[11px] text-slate-700 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" />
+                    </div>
+                    <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-[10px] text-slate-600">
+                      <input type="checkbox" checked={showHiddenRows} onChange={event => setShowHiddenRows(event.target.checked)} className="h-3.5 w-3.5 rounded border-slate-300 text-blue-600" />
+                      Show completed/out trucks
+                    </label>
+                    <span className="shrink-0 text-[9px] text-slate-500">แสดง {visibleTrucks.length} รายการ</span>
+                    <button type="button" onClick={() => void toggleDashboardFullscreen()} title={isDashboardFullscreen ? 'Exit Full Screen' : 'Full Screen'} aria-label={isDashboardFullscreen ? 'Exit Full Screen' : 'Full Screen'} className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-700 shadow-sm hover:border-blue-400 hover:bg-blue-50 hover:text-blue-700">
+                      {isDashboardFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => void toggleDashboardFullscreen()}
-                    className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-xs font-bold text-slate-700 shadow-sm hover:border-blue-400 hover:bg-blue-50 hover:text-blue-700"
-                  >
-                    {isDashboardFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-                    {isDashboardFullscreen ? 'EXIT FULL SCREEN' : 'FULL SCREEN'}
-                  </button>
                 </div>
                 <div className="mb-2 flex w-full flex-nowrap items-stretch gap-2 overflow-x-auto">
                   {[
@@ -1461,52 +1471,6 @@ export default function App() {
                   </div>
                 </div>
                 <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-                  <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-200 bg-white px-2 py-1.5">
-                    <span className="mr-1 text-[9px] font-bold uppercase text-slate-500">
-                      Show Dock:
-                    </span>
-                    {DOCK_FILTERS.map(option => (
-                      <button
-                        key={option}
-                        type="button"
-                        onClick={() => toggleDockFilter(option)}
-                        className={`rounded-md border px-3 py-1 text-[9px] font-bold transition-colors ${
-                          option === 'ALL' ? allDockFiltersSelected : selectedDockFilters.includes(option)
-                            ? option === 'ALL'
-                              ? 'border-slate-800 bg-slate-800 text-white'
-                              : 'border-blue-700 bg-blue-600 text-white shadow-sm'
-                            : 'border-slate-300 bg-white text-slate-500 hover:bg-slate-100'
-                        }`}
-                      >
-                        {option}
-                      </button>
-                    ))}
-                    <div className="relative min-w-[220px] flex-1 sm:max-w-xs">
-                      <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-                      <input
-                        type="search"
-                        value={dashboardSearch}
-                        onChange={event => setDashboardSearch(event.target.value)}
-                        placeholder="ค้นหา Route, ทะเบียนรถ..."
-                        className="w-full rounded-md border border-slate-300 bg-white py-1.5 pl-8 pr-3 text-[11px] text-slate-700 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                      />
-                    </div>
-                    <label className="flex cursor-pointer items-center gap-1.5 text-[10px] text-slate-600">
-                      <input
-                        type="checkbox"
-                        checked={showHiddenRows}
-                        onChange={event => setShowHiddenRows(event.target.checked)}
-                        className="h-3.5 w-3.5 rounded border-slate-300 text-blue-600"
-                      />
-                      Show completed/out trucks
-                    </label>
-                    <div className="ml-auto flex items-center gap-2">
-                      <span className="hidden text-[9px] text-slate-500 sm:inline">
-                        แสดง {visibleTrucks.length} รายการ
-                      </span>
-                    </div>
-                  </div>
-
                   <div className="flex-1 overflow-x-auto">
                     <table className="w-full text-left text-sm">
                       <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-500">
