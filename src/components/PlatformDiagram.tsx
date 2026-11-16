@@ -706,28 +706,31 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
       var page = document.querySelector('.pdf-page');
       function fitAndPrint() {
         if (!diagram || !page) return;
-        // AM/PM: .pdf-diagram is only a wrapper. Its first child is the complete
-        // cloned dashboard root, so hiding firstElementChild hides the whole diagram.
-        // Hide only the dashboard header inside that cloned root and release the
-        // timeline containers from the screen-only flex/scroll height constraints.
+        // AM/PM PDF: hide the Platform Dashboard controls, KPI cards and legend.
         if (EXPORT_PERIOD !== 'FULL') {
           [diagram, labelDiagram].forEach(function (exportDiagram) {
             if (!exportDiagram) return;
             var clonedRoot = exportDiagram.firstElementChild;
-            if (!clonedRoot) return;
-            var dashboardHeader = clonedRoot.firstElementChild;
-            if (dashboardHeader) dashboardHeader.style.display = 'none';
-            clonedRoot.style.setProperty('display', 'block', 'important');
-            clonedRoot.style.setProperty('height', 'auto', 'important');
-            clonedRoot.style.setProperty('min-height', '0', 'important');
-            clonedRoot.style.setProperty('overflow', 'visible', 'important');
-            clonedRoot.querySelectorAll('.flex-1, .min-h-0, [class*="overflow-"]').forEach(function (node) {
-              node.style.setProperty('flex', 'none', 'important');
-              node.style.setProperty('height', 'auto', 'important');
-              node.style.setProperty('min-height', '0', 'important');
-              node.style.setProperty('max-height', 'none', 'important');
-              node.style.setProperty('overflow', 'visible', 'important');
-            });
+            if (clonedRoot && clonedRoot.firstElementChild) {
+              clonedRoot.firstElementChild.style.display = 'none';
+            }
+            exportDiagram.style.display = 'block';
+            exportDiagram.style.height = 'auto';
+            exportDiagram.style.minHeight = '0';
+            var timelineBody = exportDiagram.children[1];
+            if (timelineBody) {
+              timelineBody.style.display = 'block';
+              timelineBody.style.height = 'auto';
+              timelineBody.style.minHeight = '0';
+              timelineBody.style.overflow = 'visible';
+              var scrollArea = timelineBody.firstElementChild;
+              if (scrollArea) {
+                scrollArea.style.display = 'block';
+                scrollArea.style.height = 'auto';
+                scrollArea.style.minHeight = '0';
+                scrollArea.style.overflow = 'visible';
+              }
+            }
           });
         }
         var contentWidth = Math.max(diagram.scrollWidth, diagram.getBoundingClientRect().width, 1);
@@ -752,13 +755,21 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
         } else {
           diagram.style.zoom = '';
           if (EXPORT_PERIOD === 'MORNING') {
-            diagram.style.transform = 'scale(' + scale + ') translateX(' + mainOffset + 'px)';
+            // AM starts at 07:00, so crop the source layout at the 12:00 midpoint
+            // before scaling. Without a real clipping width Chromium still lays out
+            // the complete 07:00-17:00 timeline and shrinks it in Print Preview.
+            diagram.style.width = (LABEL_WIDTH + HALF_TIMELINE_WIDTH) + 'px';
+            diagram.style.overflow = 'hidden';
+            diagram.style.transformOrigin = 'top left';
+            diagram.style.transform = 'scale(' + scale + ')';
           } else {
             diagram.style.transform = 'translateX(' + (mainOffset * scale) + 'px) scale(' + scale + ')';
-          };
+          }
         }
         if (labelDiagram) {
           if (EXPORT_PERIOD === 'FULL') {
+            labelDiagram.style.display = 'none';
+          } else if (EXPORT_PERIOD === 'MORNING') {
             labelDiagram.style.display = 'none';
           } else {
             labelDiagram.style.display = 'block';
