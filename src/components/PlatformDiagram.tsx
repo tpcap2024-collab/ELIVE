@@ -543,7 +543,7 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
           const headerPx = Math.max(0, Math.round((dashboardHeader?.offsetHeight || 0) * captureScale));
           const sourceHeight = Math.max(1, diagramCanvas.height - headerPx);
           const labelPx = Math.round(sourceWidth * 80 / fullWidth);
-          const totalPx = Math.round(sourceWidth * 48 / fullWidth);
+          const totalPx = Math.round(sourceWidth * 144 / fullWidth);
           const timelinePx = sourceWidth - labelPx - totalPx;
           const fullHours = 11;
           const cropHours = 5;
