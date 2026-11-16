@@ -709,8 +709,26 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
         // AM/PM PDF: hide the Platform Dashboard controls, KPI cards and legend.
         if (EXPORT_PERIOD !== 'FULL') {
           [diagram, labelDiagram].forEach(function (exportDiagram) {
-            if (exportDiagram && exportDiagram.firstElementChild) {
+            if (!exportDiagram) return;
+            if (exportDiagram.firstElementChild) {
               exportDiagram.firstElementChild.style.display = 'none';
+            }
+            exportDiagram.style.display = 'block';
+            exportDiagram.style.height = 'auto';
+            exportDiagram.style.minHeight = '0';
+            var timelineBody = exportDiagram.children[1];
+            if (timelineBody) {
+              timelineBody.style.display = 'block';
+              timelineBody.style.height = 'auto';
+              timelineBody.style.minHeight = '0';
+              timelineBody.style.overflow = 'visible';
+              var scrollArea = timelineBody.firstElementChild;
+              if (scrollArea) {
+                scrollArea.style.display = 'block';
+                scrollArea.style.height = 'auto';
+                scrollArea.style.minHeight = '0';
+                scrollArea.style.overflow = 'visible';
+              }
             }
           });
         }
