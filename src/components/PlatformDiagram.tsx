@@ -758,10 +758,18 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
             // AM starts at 07:00, so crop the source layout at the 12:00 midpoint
             // before scaling. Without a real clipping width Chromium still lays out
             // the complete 07:00-17:00 timeline and shrinks it in Print Preview.
-            diagram.style.width = (LABEL_WIDTH + HALF_TIMELINE_WIDTH) + 'px';
-            diagram.style.overflow = 'hidden';
+            var morningWidth = LABEL_WIDTH + HALF_TIMELINE_WIDTH;
+            // .pdf-diagram has width/min-width: 2500px !important in print CSS.
+            // Override both values with !important; otherwise Chromium still lays out
+            // the full 2500px element and shrinks the cropped AM area in Print Preview.
+            diagram.style.setProperty('width', morningWidth + 'px', 'important');
+            diagram.style.setProperty('min-width', morningWidth + 'px', 'important');
+            diagram.style.setProperty('max-width', morningWidth + 'px', 'important');
+            diagram.style.setProperty('overflow', 'hidden', 'important');
             diagram.style.transformOrigin = 'top left';
             diagram.style.transform = 'scale(' + scale + ')';
+            page.style.setProperty('width', PAGE_WIDTH_PX + 'px', 'important');
+            page.style.setProperty('max-width', PAGE_WIDTH_PX + 'px', 'important');
           } else {
             diagram.style.transform = 'translateX(' + (mainOffset * scale) + 'px) scale(' + scale + ')';
           }
