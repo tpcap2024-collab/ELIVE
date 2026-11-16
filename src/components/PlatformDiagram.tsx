@@ -462,90 +462,6 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
     const diagramElement = diagramFullscreenRef.current;
     if (!diagramElement) return;
 
-    if (period === 'FULL') {
-      try {
-        const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
-          import('html2canvas'),
-          import('jspdf'),
-        ]);
-
-        const exportId = `elive-pdf-${Date.now()}`;
-        diagramElement.dataset.pdfExportId = exportId;
-        const contentWidth = diagramElement.scrollWidth;
-        const contentHeight = diagramElement.scrollHeight;
-        const maxCanvasPixels = 28_000_000;
-        const captureScale = Math.max(
-          1,
-          Math.min(2, Math.sqrt(maxCanvasPixels / Math.max(contentWidth * contentHeight, 1))),
-        );
-
-        const canvas = await html2canvas(diagramElement, {
-          backgroundColor: '#ffffff',
-          scale: captureScale,
-          useCORS: true,
-          logging: false,
-          width: contentWidth,
-          height: contentHeight,
-          windowWidth: contentWidth,
-          windowHeight: contentHeight,
-          scrollX: 0,
-          scrollY: 0,
-          onclone: clonedDocument => {
-            const clone = clonedDocument.querySelector<HTMLElement>(`[data-pdf-export-id="${exportId}"]`);
-            if (!clone) return;
-            clone.style.width = `${contentWidth}px`;
-            clone.style.height = 'auto';
-            clone.style.maxWidth = 'none';
-            clone.style.overflow = 'visible';
-            clone.querySelectorAll<HTMLElement>('[data-export-hide="true"]').forEach(element => {
-              element.style.display = 'none';
-            });
-            clone.querySelectorAll<HTMLElement>('.sticky').forEach(element => {
-              element.style.position = 'static';
-            });
-          },
-        });
-        delete diagramElement.dataset.pdfExportId;
-
-        const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a3', compress: true });
-        const margin = 8;
-        const pageWidth = pdf.internal.pageSize.getWidth();
-        const pageHeight = pdf.internal.pageSize.getHeight();
-        const printableWidth = pageWidth - margin * 2;
-        const printableHeight = pageHeight - margin * 2;
-        const pixelsPerPage = Math.max(1, Math.floor(canvas.width * printableHeight / printableWidth));
-        let sourceY = 0;
-        let pageIndex = 0;
-
-        while (sourceY < canvas.height) {
-          const sliceHeight = Math.min(pixelsPerPage, canvas.height - sourceY);
-          const pageCanvas = document.createElement('canvas');
-          pageCanvas.width = canvas.width;
-          pageCanvas.height = sliceHeight;
-          const context = pageCanvas.getContext('2d');
-          if (!context) throw new Error('Cannot create PDF canvas context');
-          context.fillStyle = '#ffffff';
-          context.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
-          context.drawImage(canvas, 0, sourceY, canvas.width, sliceHeight, 0, 0, canvas.width, sliceHeight);
-
-          if (pageIndex > 0) pdf.addPage('a3', 'landscape');
-          const renderedHeight = sliceHeight * printableWidth / canvas.width;
-          pdf.addImage(pageCanvas.toDataURL('image/jpeg', 0.96), 'JPEG', margin, margin, printableWidth, renderedHeight, undefined, 'FAST');
-          sourceY += sliceHeight;
-          pageIndex += 1;
-        }
-
-        const safeDate = displayedPlanDate.replace(/[^0-9A-Za-z_-]+/g, '-');
-        pdf.save(`ELIVE-Platform-Diagram-${safeDate || 'FULL'}.pdf`);
-        return;
-      } catch (error) {
-        delete diagramElement.dataset.pdfExportId;
-        console.error('Direct PDF export failed:', error);
-        window.alert('ดาวน์โหลด PDF ไม่สำเร็จ กรุณาตรวจสอบว่าได้ติดตั้ง jspdf และ html2canvas แล้ว');
-        return;
-      }
-    }
-
     try {
       if (document.fullscreenElement === diagramElement) {
         await document.exitFullscreen();
@@ -565,6 +481,68 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
   const exportDiagramToPdf = async (period: 'FULL' | 'MORNING' | 'AFTERNOON' = 'FULL') => {
     const diagramElement = diagramFullscreenRef.current;
     if (!diagramElement) return;
+
+
+    if (period === 'FULL') {
+      try {
+        const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
+          import('html2canvas'), import('jspdf'),
+        ]);
+        const exportId = `elive-full-pdf-${Date.now()}`;
+        diagramElement.dataset.pdfExportId = exportId;
+        const timeline = diagramElement.querySelector<HTMLElement>('[style*="width: 2500px"]');
+        const fullWidth = Math.max(2500, timeline?.scrollWidth || 0, diagramElement.scrollWidth);
+        const fullHeight = Math.max(diagramElement.scrollHeight, timeline?.scrollHeight || 0);
+        const captureScale = Math.max(1, Math.min(2, Math.sqrt(30_000_000 / Math.max(fullWidth * fullHeight, 1))));
+        const canvas = await html2canvas(diagramElement, {
+          backgroundColor: '#ffffff', scale: captureScale, useCORS: true, logging: false,
+          width: fullWidth, height: fullHeight, windowWidth: fullWidth, windowHeight: fullHeight,
+          scrollX: 0, scrollY: 0,
+          onclone: clonedDocument => {
+            const clone = clonedDocument.querySelector<HTMLElement>(`[data-pdf-export-id="${exportId}"]`);
+            if (!clone) return;
+            clone.style.width = `${fullWidth}px`;
+            clone.style.height = 'auto';
+            clone.style.maxWidth = 'none';
+            clone.style.overflow = 'visible';
+            clone.querySelectorAll<HTMLElement>('[data-export-hide="true"]').forEach(el => { el.style.display = 'none'; });
+            clone.querySelectorAll<HTMLElement>('[class*="overflow-"]').forEach(el => {
+              el.style.overflow = 'visible'; el.style.maxHeight = 'none';
+            });
+            clone.querySelectorAll<HTMLElement>('.sticky').forEach(el => {
+              el.style.position = 'static'; el.style.left = 'auto'; el.style.right = 'auto';
+            });
+          },
+        });
+        delete diagramElement.dataset.pdfExportId;
+        const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a3', compress: true });
+        const margin = 8;
+        const printableWidth = pdf.internal.pageSize.getWidth() - margin * 2;
+        const printableHeight = pdf.internal.pageSize.getHeight() - margin * 2;
+        const slicePixels = Math.max(1, Math.floor(canvas.width * printableHeight / printableWidth));
+        for (let sourceY = 0, pageNumber = 0; sourceY < canvas.height; pageNumber += 1) {
+          const sliceHeight = Math.min(slicePixels, canvas.height - sourceY);
+          const slice = document.createElement('canvas');
+          slice.width = canvas.width; slice.height = sliceHeight;
+          const context = slice.getContext('2d');
+          if (!context) throw new Error('Unable to create PDF page canvas');
+          context.fillStyle = '#ffffff'; context.fillRect(0, 0, slice.width, slice.height);
+          context.drawImage(canvas, 0, sourceY, canvas.width, sliceHeight, 0, 0, canvas.width, sliceHeight);
+          if (pageNumber > 0) pdf.addPage('a3', 'landscape');
+          pdf.addImage(slice.toDataURL('image/jpeg', 0.96), 'JPEG', margin, margin, printableWidth,
+            sliceHeight * printableWidth / canvas.width, undefined, 'FAST');
+          sourceY += sliceHeight;
+        }
+        const safeDate = displayedPlanDate.replace(/[^0-9A-Za-z_-]+/g, '-');
+        pdf.save(`ELIVE-Platform-Diagram-${safeDate || 'FULL'}.pdf`);
+        return;
+      } catch (error) {
+        delete diagramElement.dataset.pdfExportId;
+        console.error('Unable to download FULL PDF:', error);
+        window.alert('ดาวน์โหลด PDF ไม่สำเร็จ กรุณาตรวจสอบว่าได้ติดตั้ง jspdf และ html2canvas แล้ว');
+        return;
+      }
+    }
 
     const styleLinks = Array.from(document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"]'))
       .map(link => `<link rel="stylesheet" href="${link.href}">`)
@@ -690,9 +668,18 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
         var mainOffset = EXPORT_PERIOD === 'FULL' ? 0 : LABEL_WIDTH - timelineOffset;
         // Keep the half-day diagram inside the print viewport. CSS zoom combined
         // with a negative margin can move the complete AM/PM content outside the page.
-        diagram.style.zoom = '';
         diagram.style.marginLeft = '0';
-        diagram.style.transform = 'translateX(' + (mainOffset * scale) + 'px) scale(' + scale + ')';
+        if (EXPORT_PERIOD === 'FULL') {
+          // FULL PDF must keep the width scale and flow onto additional pages.
+          // CSS transform only changes the painting size, so Chromium may shrink the
+          // complete transformed page to fit. zoom changes the layout size as well,
+          // allowing normal vertical pagination without reducing the width again.
+          diagram.style.transform = 'none';
+          diagram.style.zoom = String(scale);
+        } else {
+          diagram.style.zoom = '';
+          diagram.style.transform = 'translateX(' + (mainOffset * scale) + 'px) scale(' + scale + ')';
+        }
         if (labelDiagram) {
           if (EXPORT_PERIOD === 'FULL') {
             labelDiagram.style.display = 'none';
@@ -706,9 +693,14 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
           }
         }
         page.style.margin = '0 auto';
-        page.style.overflow = 'hidden';
         page.style.width = PAGE_WIDTH_PX + 'px';
-        page.style.height = (contentHeight * scale) + 'px';
+        if (EXPORT_PERIOD === 'FULL') {
+          page.style.overflow = 'visible';
+          page.style.height = 'auto';
+        } else {
+          page.style.overflow = 'hidden';
+          page.style.height = (contentHeight * scale) + 'px';
+        }
         document.documentElement.style.width = PAGE_WIDTH_PX + 'px';
         document.body.style.width = PAGE_WIDTH_PX + 'px';
         window.setTimeout(function () { window.focus(); window.print(); }, 250);
