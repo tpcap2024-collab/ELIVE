@@ -800,6 +800,14 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
     </div>;
   };
   return <div className="h-full min-h-0 overflow-auto bg-slate-50 p-4 md:p-6">
+    {loading && <div role="dialog" aria-modal="true" aria-label="กำลังสร้างรายงาน กรุณารอ" className="fixed inset-0 z-[9999] flex cursor-wait items-center justify-center bg-slate-950/45 backdrop-blur-[1px]" onClick={event => event.preventDefault()} onContextMenu={event => event.preventDefault()}>
+      <div className="mx-4 w-full max-w-sm rounded-2xl border border-blue-200 bg-white p-6 text-center shadow-2xl">
+        <div className="mx-auto h-11 w-11 animate-spin rounded-full border-4 border-blue-100 border-t-blue-600" aria-hidden="true" />
+        <p className="mt-4 text-lg font-black text-slate-900">กำลังสร้างรายงาน</p>
+        <p className="mt-2 text-sm font-semibold text-blue-700">{progress || 'กำลังเตรียมข้อมูล กรุณารอสักครู่...'}</p>
+        <p className="mt-2 text-xs text-slate-500">ระบบจะเปิดให้ใช้งานอีกครั้งเมื่อสร้างรายงานเสร็จ</p>
+      </div>
+    </div>}
     {!selectedKind ? <div className="mx-auto max-w-6xl">
       <h1 className="text-2xl font-black text-slate-900">รายงาน</h1>
       <p className="mt-2 text-sm text-slate-500">เลือกประเภทรายงานที่ต้องการ</p>
@@ -842,7 +850,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
               
             </details>
           </>}
-        </fieldset><div role="status" aria-live="polite" className="mt-3 text-sm font-semibold text-blue-700">{progress}</div>{error && <p role="alert" className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</p>}<div className="mt-5 flex justify-end gap-2">{loading && <button type="button" onClick={cancelLoading} className={buttonClass}>ยกเลิก</button>}<button type="submit" disabled={loading} className="rounded-lg bg-blue-600 px-6 py-3 text-sm font-bold text-white disabled:opacity-50">{loading ? 'กำลังสร้างรายงาน...' : 'แสดงรายงาน'}</button></div></form>
+        </fieldset><div role="status" aria-live="polite" className="mt-3 text-sm font-semibold text-blue-700">{progress}</div>{error && <p role="alert" className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</p>}<div className="mt-5 flex justify-end gap-2"><button type="submit" disabled={loading} className="rounded-lg bg-blue-600 px-6 py-3 text-sm font-bold text-white disabled:opacity-50">{loading ? 'กำลังสร้างรายงาน...' : 'แสดงรายงาน'}</button></div></form>
     </div> : <div className="mx-auto max-w-7xl">
       <div className="flex flex-wrap items-start justify-between gap-4"><div><button type="button" onClick={() => setResult(null)} className="rounded-lg border border-slate-300 bg-slate-200 px-5 py-2.5 text-base text-slate-900 shadow-sm hover:bg-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-400" style={{ fontWeight: 900 }}>ย้อนกลับ</button></div><div className="flex flex-wrap items-end gap-2"><div className="flex flex-wrap items-end gap-2"><label className="text-xs font-bold text-slate-700"><select aria-label="สังกัด" value={supplier} onChange={event => setSupplier(event.target.value)} className="mt-1 block rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900"><option value="">ทุกสังกัด</option>{suppliers.map(name => <option key={name} value={name}>{name}</option>)}</select></label></div><button type="button" onClick={() => kind === 'EARLY' ? earlyExport('csv') : kind === 'LATE' ? lateExport('csv') : kind === 'ONTIME' ? ontimeExport('csv') : exportCsv()} className="rounded-xl border border-teal-500 bg-gradient-to-r from-teal-600 to-cyan-600 px-6 py-3 text-sm font-black tracking-wide text-white shadow-lg shadow-teal-100 transition hover:from-teal-700 hover:to-cyan-700 hover:shadow-xl focus:outline-none focus:ring-4 focus:ring-cyan-200">Export CSV</button></div></div>
       
