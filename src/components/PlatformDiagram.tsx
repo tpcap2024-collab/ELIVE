@@ -766,8 +766,11 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
             diagram.style.setProperty('min-width', morningWidth + 'px', 'important');
             diagram.style.setProperty('max-width', morningWidth + 'px', 'important');
             diagram.style.setProperty('overflow', 'hidden', 'important');
-            diagram.style.transformOrigin = 'top left';
-            diagram.style.transform = 'scale(' + scale + ')';
+            // Use CSS zoom for AM so the enlarged width participates in print
+            // layout. transform: scale() only enlarges painting, so Chromium still
+            // sees the smaller layout box and leaves a large blank area on the right.
+            diagram.style.transform = 'none';
+            diagram.style.zoom = String(scale);
             page.style.setProperty('width', PAGE_WIDTH_PX + 'px', 'important');
             page.style.setProperty('max-width', PAGE_WIDTH_PX + 'px', 'important');
           } else {
