@@ -520,8 +520,10 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
 
         const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a3', compress: true });
         const margin = 8;
-        const printableWidth = pdf.internal.pageSize.getWidth() - margin * 2;
-        const printableHeight = pdf.internal.pageSize.getHeight() - margin * 2;
+        const pageWidth = pdf.internal.pageSize.getWidth();
+        const pageHeight = pdf.internal.pageSize.getHeight();
+        const printableWidth = pageWidth - margin * 2;
+        const printableHeight = pageHeight - margin * 2;
         const firstPageHeaderHeight = 20;
         let sourceY = 0;
         let pageNumber = 0;
