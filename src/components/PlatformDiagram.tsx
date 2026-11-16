@@ -486,7 +486,7 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
     if (period === 'FULL') {
       try {
         const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
-          import('html2canvas'), import('jspdf'),
+          import('html2canvas-pro'), import('jspdf'),
         ]);
         const exportId = `elive-full-pdf-${Date.now()}`;
         diagramElement.dataset.pdfExportId = exportId;
@@ -538,14 +538,8 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
         return;
       } catch (error) {
         delete diagramElement.dataset.pdfExportId;
-        const detail = error instanceof Error
-          ? `${error.name}: ${error.message}\n${error.stack ?? ''}`
-          : (() => {
-              try { return JSON.stringify(error); }
-              catch { return String(error); }
-            })();
-        console.error('Unable to download FULL PDF:', detail, error);
-        window.alert(`ดาวน์โหลด PDF ไม่สำเร็จ\n\n${detail}`);
+        console.error('Unable to download FULL PDF:', error);
+        window.alert('ดาวน์โหลด PDF ไม่สำเร็จ กรุณาตรวจสอบว่าได้ติดตั้ง jspdf และ html2canvas แล้ว');
         return;
       }
     }
