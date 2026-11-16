@@ -759,18 +759,21 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
             // before scaling. Without a real clipping width Chromium still lays out
             // the complete 07:00-17:00 timeline and shrinks it in Print Preview.
             var morningWidth = LABEL_WIDTH + HALF_TIMELINE_WIDTH;
-            // .pdf-diagram has width/min-width: 2500px !important in print CSS.
-            // Override both values with !important; otherwise Chromium still lays out
-            // the full 2500px element and shrinks the cropped AM area in Print Preview.
-            diagram.style.setProperty('width', morningWidth + 'px', 'important');
-            diagram.style.setProperty('min-width', morningWidth + 'px', 'important');
-            diagram.style.setProperty('max-width', morningWidth + 'px', 'important');
+            var morningScale = PAGE_WIDTH_PX / morningWidth;
+            var morningRoot = diagram.firstElementChild;
+            diagram.style.setProperty('width', PAGE_WIDTH_PX + 'px', 'important');
+            diagram.style.setProperty('min-width', PAGE_WIDTH_PX + 'px', 'important');
+            diagram.style.setProperty('max-width', PAGE_WIDTH_PX + 'px', 'important');
             diagram.style.setProperty('overflow', 'hidden', 'important');
-            // Use CSS zoom for AM so the enlarged width participates in print
-            // layout. transform: scale() only enlarges painting, so Chromium still
-            // sees the smaller layout box and leaves a large blank area on the right.
             diagram.style.transform = 'none';
-            diagram.style.zoom = String(scale);
+            diagram.style.zoom = '';
+            if (morningRoot) {
+              morningRoot.style.setProperty('width', CONTENT_WIDTH + 'px', 'important');
+              morningRoot.style.setProperty('min-width', CONTENT_WIDTH + 'px', 'important');
+              morningRoot.style.setProperty('max-width', CONTENT_WIDTH + 'px', 'important');
+              morningRoot.style.transformOrigin = 'top left';
+              morningRoot.style.transform = 'scale(' + morningScale + ')';
+            }
             page.style.setProperty('width', PAGE_WIDTH_PX + 'px', 'important');
             page.style.setProperty('max-width', PAGE_WIDTH_PX + 'px', 'important');
           } else {
@@ -798,7 +801,10 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
           page.style.height = 'auto';
         } else {
           page.style.overflow = 'hidden';
-          page.style.height = (contentHeight * scale) + 'px';
+          var halfDayScale = EXPORT_PERIOD === 'MORNING'
+            ? PAGE_WIDTH_PX / (LABEL_WIDTH + HALF_TIMELINE_WIDTH)
+            : scale;
+          page.style.height = (contentHeight * halfDayScale) + 'px';
         }
         document.documentElement.style.width = PAGE_WIDTH_PX + 'px';
         document.body.style.width = PAGE_WIDTH_PX + 'px';
