@@ -999,7 +999,7 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
       }`}
     >
       {isExportingPdf && (
-        <div role="dialog" aria-modal="true" aria-label="กำลังสร้าง PDF" className="fixed inset-0 z-[9999] flex cursor-wait items-center justify-center bg-slate-950/55 backdrop-blur-[1px]">
+        <div data-export-hide="true" role="dialog" aria-modal="true" aria-label="กำลังสร้าง PDF" className="fixed inset-0 z-[9999] flex cursor-wait items-center justify-center bg-slate-950/55 backdrop-blur-[1px]">
           <div className="mx-4 w-full max-w-sm rounded-2xl border border-blue-200 bg-white p-7 text-center shadow-2xl">
             <div className="relative mx-auto h-24 w-24" aria-hidden="true">
               <div className="absolute inset-0 rounded-full border-[8px] border-blue-100" />
