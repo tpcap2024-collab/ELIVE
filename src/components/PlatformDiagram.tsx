@@ -539,7 +539,9 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
           // Crop directly from the correctly positioned full-day capture, then let
           // jsPDF fit that cropped image to the full printable A3 width.
           const sourceWidth = diagramCanvas.width;
-          const sourceHeight = diagramCanvas.height;
+          const dashboardHeader = diagramElement.firstElementChild as HTMLElement | null;
+          const headerPx = Math.max(0, Math.round((dashboardHeader?.offsetHeight || 0) * captureScale));
+          const sourceHeight = Math.max(1, diagramCanvas.height - headerPx);
           const labelPx = Math.round(sourceWidth * 80 / fullWidth);
           const totalPx = Math.round(sourceWidth * 48 / fullWidth);
           const timelinePx = sourceWidth - labelPx - totalPx;
@@ -556,12 +558,13 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
           croppedContext.fillStyle = '#ffffff';
           croppedContext.fillRect(0, 0, cropped.width, cropped.height);
           // Keep Dock labels at the left.
-          croppedContext.drawImage(diagramCanvas, 0, 0, labelPx, sourceHeight, 0, 0, labelPx, sourceHeight);
+          croppedContext.drawImage(diagramCanvas, 0, headerPx, labelPx, sourceHeight,
+            0, 0, labelPx, sourceHeight);
           // AM: 07:00-12:00. PM: 13:00-18:00.
-          croppedContext.drawImage(diagramCanvas, cropStartX, 0, cropTimelinePx, sourceHeight,
+          croppedContext.drawImage(diagramCanvas, cropStartX, headerPx, cropTimelinePx, sourceHeight,
             labelPx, 0, cropTimelinePx, sourceHeight);
           // Keep Total at the right.
-          croppedContext.drawImage(diagramCanvas, sourceWidth - totalPx, 0, totalPx, sourceHeight,
+          croppedContext.drawImage(diagramCanvas, sourceWidth - totalPx, headerPx, totalPx, sourceHeight,
             labelPx + cropTimelinePx, 0, totalPx, sourceHeight);
           canvas = cropped;
         }
