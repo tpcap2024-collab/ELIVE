@@ -1157,11 +1157,11 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
                         );
                         const amTotal = dockTrucks.filter(truck => {
                           const startMins = parseTimeToMinutes(truck.planEta);
-                          return startMins !== null && startMins >= 7 * 60 && startMins < 12 * 60;
+                          return startMins !== null && startMins >= 0 && startMins < 5 * 60;
                         }).length;
                         const pmTotal = dockTrucks.filter(truck => {
                           const startMins = parseTimeToMinutes(truck.planEta);
-                          return startMins !== null && startMins >= 13 * 60 && startMins < 18 * 60;
+                          return startMins !== null && startMins >= 6 * 60 && startMins < 11 * 60;
                         }).length;
 
                         return (
