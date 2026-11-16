@@ -417,6 +417,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
   const [ontimeFilters, setOntimeFilters] = useState<string[]>(Array(12).fill(''));
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState('');
+  const [progressPercent, setProgressPercent] = useState(0);
   const [error, setError] = useState('');
   const [, setShowDetails] = useState(false);
   const generation = useRef(0);
@@ -451,12 +452,13 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
     const rangeEnd = Date.parse(`${endDate}T${effectiveEndTime}:59+07:00`);
     if (!Number.isFinite(rangeStart) || !Number.isFinite(rangeEnd) || rangeStart > rangeEnd) { setError('ช่วงวันและเวลาไม่ถูกต้อง'); return; }
     const token = ++generation.current; const rows: ReportRow[] = [];
-    setLoading(true); setError(''); setProgress('');
+    setLoading(true); setError(''); setProgress(''); setProgressPercent(0);
     try {
       for (let index = 0; index < days.length; index++) {
         if (token !== generation.current) return;
-        const date = days[index]; setProgress(`กำลังโหลด ${index + 1}/${days.length} วัน · ${date}`);
+        const date = days[index]; setProgress(`กำลังโหลด ${index + 1}/${days.length} วัน · ${date}`); setProgressPercent(Math.round(index / days.length * 100));
         const [dashboard, plans] = await Promise.all([fetchEliveDashboardData(date, false), fetchDailyPlans(date)]);
+        setProgressPercent(Math.round((index + 1) / days.length * 100));
         if (token !== generation.current) return;
         if (!dashboard || !Array.isArray(dashboard.trucks) || !plans || !Array.isArray(plans.rows)) throw new Error(`ข้อมูลวันที่ ${date} ไม่สมบูรณ์`);
         const actualById = new Map(dashboard.trucks.map(truck => [upper(truck.id), truck]));
@@ -802,10 +804,12 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
   return <div className="h-full min-h-0 overflow-auto bg-slate-50 p-4 md:p-6">
     {loading && <div role="dialog" aria-modal="true" aria-label="กำลังสร้างรายงาน กรุณารอ" className="fixed inset-0 z-[9999] flex cursor-wait items-center justify-center bg-slate-950/45 backdrop-blur-[1px]" onClick={event => event.preventDefault()} onContextMenu={event => event.preventDefault()}>
       <div className="mx-4 w-full max-w-sm rounded-2xl border border-blue-200 bg-white p-6 text-center shadow-2xl">
-        <div className="mx-auto h-11 w-11 animate-spin rounded-full border-4 border-blue-100 border-t-blue-600" aria-hidden="true" />
+        <div className="relative mx-auto h-20 w-20" aria-hidden="true">
+          <div className="absolute inset-0 rounded-full border-[7px] border-blue-100" />
+          <div className="absolute inset-0 animate-spin rounded-full border-[7px] border-transparent border-t-blue-600" />
+          <div className="absolute inset-0 flex items-center justify-center text-lg font-black text-blue-700">{Math.max(0, Math.min(100, progressPercent))}%</div>
+        </div>
         <p className="mt-4 text-lg font-black text-slate-900">กำลังสร้างรายงาน</p>
-        <p className="mt-2 text-sm font-semibold text-blue-700">{progress || 'กำลังเตรียมข้อมูล กรุณารอสักครู่...'}</p>
-        <p className="mt-2 text-xs text-slate-500">ระบบจะเปิดให้ใช้งานอีกครั้งเมื่อสร้างรายงานเสร็จ</p>
       </div>
     </div>}
     {!selectedKind ? <div className="mx-auto max-w-6xl">
