@@ -494,7 +494,7 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
         const fullWidth = Math.max(2500, timeline?.scrollWidth || 0, diagramElement.scrollWidth);
         const fullHeight = Math.max(diagramElement.scrollHeight, timeline?.scrollHeight || 0);
         const captureScale = Math.max(1, Math.min(2, Math.sqrt(30_000_000 / Math.max(fullWidth * fullHeight, 1))));
-        const canvas = await html2canvas(diagramElement, {
+        const diagramCanvas = await html2canvas(diagramElement, {
           backgroundColor: '#ffffff', scale: captureScale, useCORS: true, logging: false,
           width: fullWidth, height: fullHeight, windowWidth: fullWidth, windowHeight: fullHeight,
           scrollX: 0, scrollY: 0,
@@ -515,6 +515,39 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
           },
         });
         delete diagramElement.dataset.pdfExportId;
+
+        // html2canvas captures only the dashboard element. Add the report header
+        // that previously came from the print-only HTML before creating PDF pages.
+        const headerHeight = Math.max(120, Math.round(140 * captureScale));
+        const canvas = document.createElement('canvas');
+        canvas.width = diagramCanvas.width;
+        canvas.height = headerHeight + diagramCanvas.height;
+        const mergedContext = canvas.getContext('2d');
+        if (!mergedContext) throw new Error('Unable to create PDF header canvas');
+        mergedContext.fillStyle = '#ffffff';
+        mergedContext.fillRect(0, 0, canvas.width, canvas.height);
+        const headerPadding = Math.round(28 * captureScale);
+        mergedContext.fillStyle = '#0f172a';
+        mergedContext.font = `700 ${Math.round(28 * captureScale)}px Arial, sans-serif`;
+        mergedContext.fillText('ELIVE Platform Diagram', headerPadding, Math.round(38 * captureScale));
+        mergedContext.font = `600 ${Math.round(15 * captureScale)}px Arial, sans-serif`;
+        mergedContext.fillStyle = '#334155';
+        mergedContext.fillText(
+          `Plan Date: ${displayedPlanDate}   |   View: ${timelineView === 'ALL' ? 'PLAN + ACTUAL' : timelineView}   |   Period: FULL DAY 07:00-17:00   |   Dock: ${selectedGroups.length === GROUP_FILTER_OPTIONS.length ? 'ALL' : selectedGroups.join(', ')}`,
+          headerPadding,
+          Math.round(70 * captureScale),
+        );
+        mergedContext.font = `400 ${Math.round(12 * captureScale)}px Arial, sans-serif`;
+        mergedContext.fillStyle = '#64748b';
+        mergedContext.fillText(`Exported: ${new Date().toLocaleString('th-TH')}`, headerPadding, Math.round(96 * captureScale));
+        mergedContext.strokeStyle = '#cbd5e1';
+        mergedContext.lineWidth = Math.max(1, captureScale);
+        mergedContext.beginPath();
+        mergedContext.moveTo(headerPadding, headerHeight - Math.round(10 * captureScale));
+        mergedContext.lineTo(canvas.width - headerPadding, headerHeight - Math.round(10 * captureScale));
+        mergedContext.stroke();
+        mergedContext.drawImage(diagramCanvas, 0, headerHeight);
+
         const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a3', compress: true });
         const margin = 8;
         const printableWidth = pdf.internal.pageSize.getWidth() - margin * 2;
