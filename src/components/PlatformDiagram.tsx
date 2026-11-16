@@ -504,7 +504,7 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
         );
         const captureScale = Math.max(1, Math.min(2, Math.sqrt(30_000_000 / Math.max(fullWidth * fullHeight, 1))));
         const rootRect = diagramElement.getBoundingClientRect();
-        const groupRanges = Array.from(diagramElement.querySelectorAll<HTMLElement>('[data-print-group="true"]'))
+        let groupRanges = Array.from(diagramElement.querySelectorAll<HTMLElement>('[data-print-group="true"]'))
           .map(group => {
             const rect = group.getBoundingClientRect();
             return {
@@ -567,6 +567,14 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
           croppedContext.drawImage(diagramCanvas, sourceWidth - totalPx, headerPx, totalPx, sourceHeight,
             labelPx + cropTimelinePx, 0, totalPx, sourceHeight);
           canvas = cropped;
+          // AM/PM canvas starts after the removed dashboard header. Rebase the
+          // group boundaries so page breaks still align with complete dock groups.
+          groupRanges = groupRanges
+            .map(group => ({
+              top: Math.max(0, group.top - headerPx),
+              bottom: Math.max(0, group.bottom - headerPx),
+            }))
+            .filter(group => group.bottom > group.top && group.top < sourceHeight);
         }
 
         const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a3', compress: true });
