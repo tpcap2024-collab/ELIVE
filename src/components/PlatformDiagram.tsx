@@ -492,7 +492,21 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
         diagramElement.dataset.pdfExportId = exportId;
         const timeline = diagramElement.querySelector<HTMLElement>('[style*="width: 2500px"]');
         const fullWidth = Math.max(2500, timeline?.scrollWidth || 0, diagramElement.scrollWidth);
-        const fullHeight = Math.max(diagramElement.scrollHeight, timeline?.scrollHeight || 0);
+
+        // The timeline is inside a height-constrained scroll container. Its scrollHeight
+        // does not include the dashboard header offset, so using it alone clips the last
+        // dock rows (especially R1). Measure the timeline's complete offset from the PDF
+        // root, then add its entire scrollable height.
+        let timelineTop = 0;
+        let offsetNode: HTMLElement | null = timeline || null;
+        while (offsetNode && offsetNode !== diagramElement) {
+          timelineTop += offsetNode.offsetTop;
+          offsetNode = offsetNode.offsetParent as HTMLElement | null;
+        }
+        const fullHeight = Math.max(
+          diagramElement.scrollHeight,
+          timeline ? timelineTop + timeline.scrollHeight : 0,
+        );
         const captureScale = Math.max(1, Math.min(2, Math.sqrt(30_000_000 / Math.max(fullWidth * fullHeight, 1))));
         const diagramCanvas = await html2canvas(diagramElement, {
           backgroundColor: '#ffffff', scale: captureScale, useCORS: true, logging: false,
