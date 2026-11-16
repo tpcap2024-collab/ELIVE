@@ -81,6 +81,7 @@ type CurrentView =
   | 'incident'
   | 'plan-management'
   | 'report'
+  | 'supplier'
   | 'mobile';
 
 interface ActionDialogState {
@@ -107,6 +108,8 @@ type AppPermission =
   | 'SUBMIT_ACTION'
   | 'VIEW_ACTION_CENTER'
   | 'MANAGE_PLAN'
+  | 'VIEW_SUPPLIER'
+  | 'MANAGE_SUPPLIER'
   | 'MANAGE_SYSTEM';
 const ROLE_PERMISSIONS: Record<EliveUserRole, ReadonlySet<AppPermission>> = {
   TV_VIEWER: new Set(['VIEW_DASHBOARD', 'VIEW_LIVE_MAP', 'VIEW_PLATFORM', 'VIEW_SUPPLIER']),
@@ -127,6 +130,7 @@ function canAccessView(role: EliveUserRole, view: CurrentView): boolean {
     incident: 'VIEW_ACTION_CENTER',
     'plan-management': 'MANAGE_PLAN',
     report: 'VIEW_REPORT',
+    supplier: 'VIEW_SUPPLIER',
     mobile: 'USE_MOBILE_MODE',
   };
   return hasPermission(role, requiredPermission[view]);
@@ -1208,6 +1212,7 @@ export default function App() {
   const canViewActionCenter = hasPermission(currentUserRole, 'VIEW_ACTION_CENTER');
   const canViewPlatform = hasPermission(currentUserRole, 'VIEW_PLATFORM');
   const canViewReport = hasPermission(currentUserRole, 'VIEW_REPORT');
+  const canViewSupplier = hasPermission(currentUserRole, 'VIEW_SUPPLIER');
   const navItems: Array<{
     view: CurrentView;
     label: string;
@@ -1220,6 +1225,7 @@ export default function App() {
     { view: 'warehouse', label: 'Stamp ETA/ETD', icon: TabletSmartphone, permission: 'STAMP_TRUCK' },
     { view: 'plan-management', label: 'Plan Management', icon: ClipboardList, permission: 'MANAGE_PLAN', activeClass: 'bg-blue-50 font-semibold text-blue-700' },
     { view: 'incident', label: 'Action Center', icon: ShieldAlert, permission: 'VIEW_ACTION_CENTER', activeClass: 'bg-red-50 font-semibold text-red-600' },
+    { view: 'supplier', label: 'Supplier Locations', icon: MapPin, permission: 'VIEW_SUPPLIER' },
     { view: 'report', label: 'Report', icon: FileText, permission: 'VIEW_REPORT' },
   ].filter(item => hasPermission(currentUserRole, item.permission));
   return (
