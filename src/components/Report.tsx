@@ -418,6 +418,8 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState('');
   const [progressPercent, setProgressPercent] = useState(0);
+  const [exportingPdf, setExportingPdf] = useState(false);
+  const [pdfProgress, setPdfProgress] = useState(0);
   const [error, setError] = useState('');
   const [, setShowDetails] = useState(false);
   const generation = useRef(0);
@@ -518,23 +520,39 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
     const cells = earlyTableCells(row);
     return earlyFilters.every((query, index) => !query.trim() || cells[index].toLocaleLowerCase('th').includes(query.trim().toLocaleLowerCase('th')));
   }), [earlyAfterClick, earlyFilters]);
-  const earlyExport = (format: 'csv' | 'excel' | 'pdf') => {
+  const downloadTablePdf = async (title: string, data: string[][], filename: string, subtitle = '') => {
+    if (exportingPdf || data.length === 0) return;
+    setExportingPdf(true); setPdfProgress(0); setExportError('');
+    let host: HTMLDivElement | null = null;
+    try {
+      const [{ default: html2canvas }, { jsPDF }] = await Promise.all([import('html2canvas-pro'), import('jspdf')]);
+      const [columns, ...rows] = data;
+      const rowsPerPage = columns.length >= 15 ? 20 : columns.length >= 12 ? 26 : 32;
+      const chunks = rows.length ? Array.from({ length: Math.ceil(rows.length / rowsPerPage) }, (_, index) => rows.slice(index * rowsPerPage, (index + 1) * rowsPerPage)) : [[]];
+      const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a3', compress: true });
+      const margin = 8, printableWidth = pdf.internal.pageSize.getWidth() - 16, printableHeight = pdf.internal.pageSize.getHeight() - 16;
+      host = document.createElement('div'); host.style.cssText = 'position:fixed;left:-100000px;top:0;width:1500px;background:#fff;color:#111;font-family:Tahoma,Arial,sans-serif;padding:28px;box-sizing:border-box;z-index:-1'; document.body.appendChild(host);
+      for (let pageIndex = 0; pageIndex < chunks.length; pageIndex += 1) {
+        host.innerHTML = `<h1 style="font-size:24px;margin:0 0 8px">${escapeMarkup(title)}</h1>${subtitle ? `<p style="font-size:13px;margin:0 0 14px;color:#475569">${escapeMarkup(subtitle)}</p>` : ''}<table style="width:100%;border-collapse:collapse;table-layout:fixed;font-size:11px"><thead><tr>${columns.map(value => `<th style="border:1px solid #94a3b8;background:#e2e8f0;padding:6px 4px;text-align:center;overflow-wrap:anywhere">${escapeMarkup(value || '-')}</th>`).join('')}</tr></thead><tbody>${chunks[pageIndex].map((line, rowIndex) => `<tr>${line.map(value => `<td style="border:1px solid #cbd5e1;padding:5px 4px;vertical-align:top;overflow-wrap:anywhere;background:${rowIndex % 2 ? '#f8fafc' : '#fff'}">${escapeMarkup(value || '-')}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+        const canvas = await html2canvas(host, { backgroundColor: '#ffffff', scale: 1.5, useCORS: true, logging: false });
+        if (pageIndex > 0) pdf.addPage('a3', 'landscape');
+        const ratio = Math.min(printableWidth / canvas.width, printableHeight / canvas.height);
+        pdf.addImage(canvas.toDataURL('image/jpeg', 0.95), 'JPEG', margin, margin, canvas.width * ratio, canvas.height * ratio, undefined, 'FAST');
+        setPdfProgress(Math.round((pageIndex + 1) / chunks.length * 100));
+        await new Promise(resolve => window.setTimeout(resolve, 0));
+      }
+      pdf.save(filename);
+    } catch (pdfError) { console.error('PDF export failed:', pdfError); setExportError('ดาวน์โหลด PDF ไม่สำเร็จ กรุณาลองอีกครั้ง'); }
+    finally { host?.remove(); setExportingPdf(false); setPdfProgress(0); }
+  };
+
+  const earlyExport = async (format: 'csv' | 'excel' | 'pdf') => {
     const data = [earlyTableColumns, ...earlyDisplayed.map(earlyTableCells)];
     const filename = `ELIVE-Early-${result?.start || 'report'}-${result?.end || 'report'}`;
-    try {
-      setExportError('');
+    try { setExportError('');
       if (format === 'excel') { downloadWorkbook(data, `${filename}.xlsx`); return; }
-      if (format === 'csv') {
-        const output = '\uFEFF' + data.map(line => line.map(csvCell).join(',')).join('\r\n');
-        const url = URL.createObjectURL(new Blob([output], { type: 'text/csv;charset=utf-8' }));
-        const link = document.createElement('a'); link.href = url; link.download = `${filename}.csv`; document.body.appendChild(link); link.click(); link.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1000); return;
-      }
-      const popup = window.open('', '_blank', 'width=1200,height=800');
-      if (!popup) { setExportError('กรุณาอนุญาตป๊อปอัปเพื่อบันทึก PDF'); return; }
-      const cellHtml = (name: string) => escapeMarkup(name || '-');
-      popup.document.open();
-      popup.document.write('<!doctype html><html lang="th"><head><meta charset="utf-8"><title>ELIVE Early Report</title><style>@page{size:A3 landscape;margin:10mm}body{font-family:Tahoma,Arial,sans-serif;color:#222;font-size:11px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #bbb;padding:5px;text-align:left}th{background:#eee}thead{display:table-header-group}tr{break-inside:avoid}@media print{button{display:none}}</style></head><body><button onclick="window.print()">พิมพ์ / บันทึก PDF</button><h2>รายงานรถเข้าพื้นที่ก่อนเวลา</h2><table><thead><tr>' + data[0].map(v => `<th>${cellHtml(v)}</th>`).join('') + '</tr></thead><tbody>' + data.slice(1).map(line => '<tr>' + line.map(v => `<td>${cellHtml(v)}</td>`).join('') + '</tr>').join('') + '</tbody></table></body></html>');
-      popup.document.close(); window.setTimeout(() => { if (!popup.closed) popup.print(); }, 500);
+      if (format === 'csv') { const output = '\uFEFF' + data.map(line => line.map(csvCell).join(',')).join('\r\n'); const url = URL.createObjectURL(new Blob([output], { type: 'text/csv;charset=utf-8' })); const link = document.createElement('a'); link.href = url; link.download = `${filename}.csv`; document.body.appendChild(link); link.click(); link.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1000); return; }
+      await downloadTablePdf('รายงานรถเข้าพื้นที่ก่อนเวลา', data, `${filename}.pdf`, `${result?.start} ถึง ${result?.end} · ${earlyDisplayed.length} เที่ยว`);
     } catch { setExportError('ส่งออกไฟล์ไม่สำเร็จ กรุณาลองอีกครั้ง'); }
   };
   const lateQualified = useMemo(() => rows.filter(row => {
@@ -557,24 +575,9 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
     const cells = lateTableCells(row);
     return lateFilters.every((query, index) => !query.trim() || cells[index].toLocaleLowerCase('th').includes(query.trim().toLocaleLowerCase('th')));
   }), [lateAfterClick, lateFilters]);
-  const lateExport = (format: 'csv' | 'excel' | 'pdf') => {
-    const data = [lateTableColumns, ...lateDisplayed.map(lateTableCells)];
-    const filename = `ELIVE-Late-${result?.start || 'report'}-${result?.end || 'report'}`;
-    try {
-      setExportError('');
-      if (format === 'excel') { downloadWorkbook(data, `${filename}.xlsx`); return; }
-      if (format === 'csv') {
-        const output = '\uFEFF' + data.map(line => line.map(csvCell).join(',')).join('\r\n');
-        const url = URL.createObjectURL(new Blob([output], { type: 'text/csv;charset=utf-8' }));
-        const link = document.createElement('a'); link.href = url; link.download = `${filename}.csv`; document.body.appendChild(link); link.click(); link.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1000); return;
-      }
-      const popup = window.open('', '_blank', 'width=1200,height=800');
-      if (!popup) { setExportError('กรุณาอนุญาตป๊อปอัปเพื่อบันทึก PDF'); return; }
-      const cellHtml = (name: string) => escapeMarkup(name || '-');
-      popup.document.open();
-      popup.document.write('<!doctype html><html lang="th"><head><meta charset="utf-8"><title>ELIVE Late Report</title><style>@page{size:A3 landscape;margin:10mm}body{font-family:Tahoma,Arial,sans-serif;color:#222;font-size:11px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #bbb;padding:5px;text-align:left}th{background:#eee}thead{display:table-header-group}tr{break-inside:avoid}@media print{button{display:none}}</style></head><body><button onclick="window.print()">พิมพ์ / บันทึก PDF</button><h2>รายงานรถเข้าพื้นที่ล่าช้า</h2><table><thead><tr>' + data[0].map(v => `<th>${cellHtml(v)}</th>`).join('') + '</tr></thead><tbody>' + data.slice(1).map(line => '<tr>' + line.map(v => `<td>${cellHtml(v)}</td>`).join('') + '</tr>').join('') + '</tbody></table></body></html>');
-      popup.document.close(); window.setTimeout(() => { if (!popup.closed) popup.print(); }, 500);
-    } catch { setExportError('ส่งออกไฟล์ไม่สำเร็จ กรุณาลองอีกครั้ง'); }
+  const lateExport = async (format: 'csv' | 'excel' | 'pdf') => {
+    const data = [lateTableColumns, ...lateDisplayed.map(lateTableCells)]; const filename = `ELIVE-Late-${result?.start || 'report'}-${result?.end || 'report'}`;
+    try { setExportError(''); if (format === 'excel') { downloadWorkbook(data, `${filename}.xlsx`); return; } if (format === 'csv') { const output = '\uFEFF' + data.map(line => line.map(csvCell).join(',')).join('\r\n'); const url = URL.createObjectURL(new Blob([output], { type: 'text/csv;charset=utf-8' })); const link = document.createElement('a'); link.href = url; link.download = `${filename}.csv`; document.body.appendChild(link); link.click(); link.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1000); return; } await downloadTablePdf('รายงานรถเข้าพื้นที่ล่าช้า', data, `${filename}.pdf`, `${result?.start} ถึง ${result?.end} · ${lateDisplayed.length} เที่ยว`); } catch { setExportError('ส่งออกไฟล์ไม่สำเร็จ กรุณาลองอีกครั้ง'); }
   };
   const ontimeQualified = useMemo(() => rows.filter(row => isWithinPlanWindow(row.truck, toleranceMinutes)), [rows, toleranceMinutes]);
   const ontimeHourBins = useMemo(() => Array.from({ length: 1440 / ontimeBucketSize }, (_, index) => {
@@ -593,24 +596,9 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
     const cells = ontimeTableCells(row);
     return ontimeFilters.every((query, index) => !query.trim() || cells[index].toLocaleLowerCase('th').includes(query.trim().toLocaleLowerCase('th')));
   }), [ontimeAfterClick, ontimeFilters]);
-  const ontimeExport = (format: 'csv' | 'excel' | 'pdf') => {
-    const data = [ontimeTableColumns, ...ontimeDisplayed.map(ontimeTableCells)];
-    const filename = `ELIVE-Ontime-${result?.start || 'report'}-${result?.end || 'report'}`;
-    try {
-      setExportError('');
-      if (format === 'excel') { downloadWorkbook(data, `${filename}.xlsx`); return; }
-      if (format === 'csv') {
-        const output = '\uFEFF' + data.map(line => line.map(csvCell).join(',')).join('\r\n');
-        const url = URL.createObjectURL(new Blob([output], { type: 'text/csv;charset=utf-8' }));
-        const link = document.createElement('a'); link.href = url; link.download = `${filename}.csv`; document.body.appendChild(link); link.click(); link.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1000); return;
-      }
-      const popup = window.open('', '_blank', 'width=1200,height=800');
-      if (!popup) { setExportError('กรุณาอนุญาตป๊อปอัปเพื่อบันทึก PDF'); return; }
-      const cellHtml = (name: string) => escapeMarkup(name || '-');
-      popup.document.open();
-      popup.document.write('<!doctype html><html lang="th"><head><meta charset="utf-8"><title>ELIVE Ontime Report</title><style>@page{size:A3 landscape;margin:10mm}body{font-family:Tahoma,Arial,sans-serif;color:#222;font-size:11px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #bbb;padding:5px;text-align:left}th{background:#eee}thead{display:table-header-group}tr{break-inside:avoid}@media print{button{display:none}}</style></head><body><button onclick="window.print()">พิมพ์ / บันทึก PDF</button><h2>รายงานรถเข้าพื้นที่ตามแผน</h2><table><thead><tr>' + data[0].map(v => `<th>${cellHtml(v)}</th>`).join('') + '</tr></thead><tbody>' + data.slice(1).map(line => '<tr>' + line.map(v => `<td>${cellHtml(v)}</td>`).join('') + '</tr>').join('') + '</tbody></table></body></html>');
-      popup.document.close(); window.setTimeout(() => { if (!popup.closed) popup.print(); }, 500);
-    } catch { setExportError('ส่งออกไฟล์ไม่สำเร็จ กรุณาลองอีกครั้ง'); }
+  const ontimeExport = async (format: 'csv' | 'excel' | 'pdf') => {
+    const data = [ontimeTableColumns, ...ontimeDisplayed.map(ontimeTableCells)]; const filename = `ELIVE-Ontime-${result?.start || 'report'}-${result?.end || 'report'}`;
+    try { setExportError(''); if (format === 'excel') { downloadWorkbook(data, `${filename}.xlsx`); return; } if (format === 'csv') { const output = '\uFEFF' + data.map(line => line.map(csvCell).join(',')).join('\r\n'); const url = URL.createObjectURL(new Blob([output], { type: 'text/csv;charset=utf-8' })); const link = document.createElement('a'); link.href = url; link.download = `${filename}.csv`; document.body.appendChild(link); link.click(); link.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1000); return; } await downloadTablePdf('รายงานรถเข้าพื้นที่ตามแผน', data, `${filename}.pdf`, `${result?.start} ถึง ${result?.end} · ${ontimeDisplayed.length} เที่ยว`); } catch { setExportError('ส่งออกไฟล์ไม่สำเร็จ กรุณาลองอีกครั้ง'); }
   };
   const dwellMeasured = useMemo(() => rows.map(row => result?.kind === 'DWELL' && result.dwellOptions ? dwellExcess(row.truck, result.dwellOptions) : dwellBeyondTolerance(row.truck, toleranceMinutes)).filter((item): item is number => item !== null), [rows, result, toleranceMinutes]);
   const dwellExceeded = useMemo(() => dwellMeasured.filter(item => item > 0), [dwellMeasured]);
@@ -650,18 +638,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
     try { setExportError(''); downloadWorkbook([detailColumns, ...visibleDetails.map(({ row, status }) => detailCells(row, status, toleranceMinutes))], `ELIVE-Details-${result?.start}-${result?.end}.xlsx`); }
     catch { setExportError('ส่งออก Excel ไม่สำเร็จ กรุณาลองอีกครั้ง'); }
   };
-  const exportDetailsPdf = () => {
-    setExportError('');
-    const popup = window.open('', '_blank', 'width=1200,height=800');
-    if (!popup) { setExportError('กรุณาอนุญาตหน้าต่างป๊อปอัป แล้วกด PDF อีกครั้ง'); return; }
-    const title = 'รายงานรถเข้า-ออกพื้นที่ทั้งหมด';
-    const table = '<table><thead><tr>' + detailColumns.map(value => '<th>' + escapeMarkup(value) + '</th>').join('') + '</tr></thead><tbody>' + visibleDetails.map(({ row, status }) => '<tr>' + detailCells(row, status, toleranceMinutes).map(value => '<td>' + escapeMarkup(value || '-') + '</td>').join('') + '</tr>').join('') + '</tbody></table>';
-    popup.document.open();
-    popup.document.write('<!doctype html><html lang="th"><head><meta charset="utf-8"><title>' + title + '</title><style>@page{size:A3 landscape;margin:10mm}body{font-family:Tahoma,Arial,sans-serif;color:#222;font-size:11px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #bbb;padding:5px;text-align:left}th{background:#eee}thead{display:table-header-group}tr{break-inside:avoid}button{padding:10px 18px;background:#388438;color:white;border:0;cursor:pointer}@media print{.tools{display:none}}</style></head><body><div class="tools"><p>เลือก Save as PDF / บันทึกเป็น PDF ในหน้าต่างพิมพ์</p><button id="print" type="button">พิมพ์ / บันทึก PDF</button></div><h2>' + title + '</h2><p>' + escapeMarkup(`${result?.start} ถึง ${result?.end} · ${visibleDetails.length} เที่ยว`) + '</p>' + table + '</body></html>');
-    popup.document.close();
-    popup.document.getElementById('print')?.addEventListener('click', () => { popup.focus(); popup.print(); });
-    window.setTimeout(() => { if (!popup.closed) { popup.focus(); popup.print(); } }, 500);
-  };
+  const exportDetailsPdf = async () => { const data = [detailColumns, ...visibleDetails.map(({ row, status }) => detailCells(row, status, toleranceMinutes))]; await downloadTablePdf('รายงานรถเข้า-ออกพื้นที่ทั้งหมด', data, `ELIVE-Details-${result?.start}-${result?.end}.pdf`, `${result?.start} ถึง ${result?.end} · ${visibleDetails.length} เที่ยว`); };
   const summaryStatusCounts = useMemo(() => summaryDetailRows.reduce<Record<SummaryStatus, number>>((counts, item) => { counts[item.status] += 1; return counts; }, { EARLY: 0, ONTIME: 0, LATE: 0, EXCLUDED: 0 }), [summaryDetailRows]);
   const overallSummaryTotal = summaryDetailRows.length;
   const overallSummaryParts: Array<[SummaryStatus, string]> = [
@@ -695,23 +672,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
     ? rows.map(row => makeDwellTrip(row, result.dwellOptions!)).sort((a, b) => (b.excess ?? -Infinity) - (a.excess ?? -Infinity) || a.key.localeCompare(b.key)) : [], [rows, result]);
   const dwellChartTrips = useMemo(() => dwellTrips.filter(item => !dwellArrivalSelection || (item.status || 'UNKNOWN') === dwellArrivalSelection), [dwellTrips, dwellArrivalSelection]);
   const dwellVisibleTrips = useMemo(() => dwellChartTrips.filter(item => (!dwellSelectedRoute || (text(item.row.truck.route) || 'ไม่ระบุ Route') === dwellSelectedRoute) && dwellTripCells(item).every((value, index) => !dwellTableFilters[index] || value.toLocaleLowerCase().includes(dwellTableFilters[index].trim().toLocaleLowerCase()))), [dwellChartTrips, dwellSelectedRoute, dwellTableFilters]);
-  const dwellExport = (format: 'pdf' | 'excel') => {
-    if (result?.kind !== 'DWELL') return;
-    try {
-      setExportError('');
-      const data = [DWELL_COLUMNS, ...dwellVisibleTrips.map(dwellTripCells)];
-      const filename = `ELIVE-Dwell-${result.start}-${result.end}`;
-      if (format === 'excel') { downloadDwellWorkbook(data, `${filename}.xlsx`); return; }
-      const popup = window.open('', '_blank', 'width=1200,height=800');
-      if (!popup) { setExportError('กรุณาอนุญาตป๊อปอัปเพื่อบันทึก PDF'); return; }
-      const table = '<table><thead><tr>' + data[0].map(value => '<th>' + escapeMarkup(value) + '</th>').join('') + '</tr></thead><tbody>' + data.slice(1).map(line => '<tr>' + line.map(value => '<td>' + escapeMarkup(value || '-') + '</td>').join('') + '</tr>').join('') + '</tbody></table>';
-      popup.document.open();
-      popup.document.write('<!doctype html><html lang="th"><head><meta charset="utf-8"><title>ELIVE Dwell Report</title><style>@page{size:A3 landscape;margin:10mm}body{font-family:Tahoma,Arial,sans-serif;color:#222;font-size:10px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #bbb;padding:5px;text-align:left;overflow-wrap:anywhere}th{background:#f1f5f9}thead{display:table-header-group}tr{break-inside:avoid}@media print{button{display:none}}</style></head><body><button id="print" type="button">พิมพ์ / บันทึก PDF</button><h2>รายงานระยะเวลาปฏิบัติงาน</h2><p>' + escapeMarkup(`${result.start} ${result.startTime} ถึง ${result.end} ${result.endTime} · ${dwellVisibleTrips.length} เที่ยว`) + '</p>' + table + '</body></html>');
-      popup.document.close();
-      popup.document.getElementById('print')?.addEventListener('click', () => { popup.focus(); popup.print(); });
-      window.setTimeout(() => { if (!popup.closed) { popup.focus(); popup.print(); } }, 500);
-    } catch { setExportError('ส่งออกไฟล์ไม่สำเร็จ กรุณาลองอีกครั้ง'); }
-  };
+  const dwellExport = async (format: 'pdf' | 'excel') => { if (result?.kind !== 'DWELL') return; const data = [DWELL_COLUMNS, ...dwellVisibleTrips.map(dwellTripCells)]; const filename = `ELIVE-Dwell-${result.start}-${result.end}`; if (format === 'excel') { downloadDwellWorkbook(data, `${filename}.xlsx`); return; } await downloadTablePdf('รายงานระยะเวลาปฏิบัติงาน', data, `${filename}.pdf`, `${result.start} ${result.startTime} ถึง ${result.end} ${result.endTime} · ${dwellVisibleTrips.length} เที่ยว`); };
   const dwellRouteAverages = useMemo(() => {
     const groups = new Map<string, DwellTrip[]>();
     dwellChartTrips.forEach(item => {
@@ -742,20 +703,7 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
       ? [['เที่ยวทั้งหมด', problemEligibleRows.length], ['เที่ยวที่มีปัญหา', problemRows.length], ['อัตราเกิดปัญหา', percentage(problemEligibleRows.length ? problemRows.length / problemEligibleRows.length * 100 : null)], ['ปัญหาที่ยังไม่เสร็จสิ้น', problemRows.filter(row => upper(row.truck.actionStatus) !== 'CLOSED').length]]
       : [['เที่ยวทั้งหมด', rows.length], ['ประเมินเวลาได้', measuredArrival.length], [kind === 'EARLY' ? 'เข้าก่อนเวลา' : kind === 'ONTIME' ? 'มาตรงเวลา' : 'มาช้ากว่าแผน', matchedArrival.length], ['อัตรา', percentage(measuredArrival.length ? matchedArrival.length / measuredArrival.length * 100 : null)], [kind === 'ONTIME' ? `ช่วงตรงเวลา` : 'เฉลี่ย', kind === 'ONTIME' ? `±${toleranceMinutes} นาที` : minuteText(average(arrivalValues))]];
 
-  const problemExport = (format: 'pdf' | 'excel') => {
-    if (!result || !kind || !['POINT','ROUTE','SUPPLIER'].includes(kind)) return;
-    try {
-      setExportError('');
-      const data = [PROBLEM_COLUMNS, ...problemVisibleRows.map(problemCells)];
-      const filename = `ELIVE-Problem-${kind}-${result.start}-${result.end}`;
-      if (format === 'excel') { downloadDwellWorkbook(data, `${filename}.xlsx`); return; }
-      const popup = window.open('', '_blank', 'width=1200,height=800');
-      if (!popup) { setExportError('กรุณาอนุญาตป๊อปอัปเพื่อบันทึก PDF'); return; }
-      const table = '<table><thead><tr>' + data[0].map(value => '<th>' + escapeMarkup(value) + '</th>').join('') + '</tr></thead><tbody>' + data.slice(1).map(line => '<tr>' + line.map(value => '<td>' + escapeMarkup(value || '-') + '</td>').join('') + '</tr>').join('') + '</tbody></table>';
-      popup.document.open(); popup.document.write('<!doctype html><html lang="th"><head><meta charset="utf-8"><title>' + escapeMarkup(reportTitle) + '</title><style>@page{size:A3 landscape;margin:10mm}body{font-family:Tahoma,Arial,sans-serif;font-size:10px;color:#222}table{width:100%;border-collapse:collapse}th,td{border:1px solid #bbb;padding:5px;text-align:left;overflow-wrap:anywhere}th{background:#f1f5f9}thead{display:table-header-group}tr{break-inside:avoid}@media print{button{display:none}}</style></head><body><button id="print" type="button">พิมพ์ / บันทึก PDF</button><h2>' + escapeMarkup(reportTitle) + '</h2><p>' + escapeMarkup(`${result.start} ถึง ${result.end} · ${problemVisibleRows.length} เที่ยว`) + '</p>' + table + '</body></html>'); popup.document.close();
-      popup.document.getElementById('print')?.addEventListener('click', () => { popup.focus(); popup.print(); }); window.setTimeout(() => { if (!popup.closed) popup.print(); }, 500);
-    } catch { setExportError('ส่งออกไฟล์ไม่สำเร็จ กรุณาลองอีกครั้ง'); }
-  };
+  const problemExport = async (format: 'pdf' | 'excel') => { if (!result || !kind || !['POINT','ROUTE','SUPPLIER'].includes(kind)) return; const data = [PROBLEM_COLUMNS, ...problemVisibleRows.map(problemCells)]; const filename = `ELIVE-Problem-${kind}-${result.start}-${result.end}`; if (format === 'excel') { downloadDwellWorkbook(data, `${filename}.xlsx`); return; } await downloadTablePdf(reportTitle, data, `${filename}.pdf`, `${result.start} ถึง ${result.end} · ${problemVisibleRows.length} เที่ยว`); };
   const exportCsv = () => {
     if (!result || !kind) return;
     const output: unknown[][] = [['รายงาน', reportTitle], ['ช่วงวันและเวลา', `${result.start} ${result.startTime}`, `${result.end} ${result.endTime}`], ['Project', kind === 'DWELL' ? 'INBOUND' : !selectedProjects.length || selectedProjects.includes('ทั้งหมด') ? 'ทั้งหมด' : selectedProjects.join(' | ')], ['สังกัด', supplier || 'ทั้งหมด'], []];
@@ -802,14 +750,14 @@ export default function Report({ trucks, selectedDate = '' }: ReportProps) {
     </div>;
   };
   return <div className="h-full min-h-0 overflow-auto bg-slate-50 p-4 md:p-6">
-    {loading && <div role="dialog" aria-modal="true" aria-label="กำลังสร้างรายงาน กรุณารอ" className="fixed inset-0 z-[9999] flex cursor-wait items-center justify-center bg-slate-950/45 backdrop-blur-[1px]" onClick={event => event.preventDefault()} onContextMenu={event => event.preventDefault()}>
+    {(loading || exportingPdf) && <div role="dialog" aria-modal="true" aria-label="กำลังสร้างรายงาน กรุณารอ" className="fixed inset-0 z-[9999] flex cursor-wait items-center justify-center bg-slate-950/45 backdrop-blur-[1px]" onClick={event => event.preventDefault()} onContextMenu={event => event.preventDefault()}>
       <div className="mx-4 w-full max-w-sm rounded-2xl border border-blue-200 bg-white p-6 text-center shadow-2xl">
         <div className="relative mx-auto h-20 w-20" aria-hidden="true">
           <div className="absolute inset-0 rounded-full border-[7px] border-blue-100" />
           <div className="absolute inset-0 animate-spin rounded-full border-[7px] border-transparent border-t-blue-600" />
-          <div className="absolute inset-0 flex items-center justify-center text-lg font-black text-blue-700">{Math.max(0, Math.min(100, progressPercent))}%</div>
+          <div className="absolute inset-0 flex items-center justify-center text-lg font-black text-blue-700">{Math.max(0, Math.min(100, exportingPdf ? pdfProgress : progressPercent))}%</div>
         </div>
-        <p className="mt-4 text-lg font-black text-slate-900">กำลังสร้างรายงาน</p>
+        <p className="mt-4 text-lg font-black text-slate-900">{exportingPdf ? 'กำลังสร้าง PDF' : 'กำลังสร้างรายงาน'}</p>
       </div>
     </div>}
     {!selectedKind ? <div className="mx-auto max-w-6xl">
