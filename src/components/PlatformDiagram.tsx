@@ -428,6 +428,8 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
     ...GROUP_FILTER_OPTIONS,
   ]);
   const [isDiagramFullscreen, setIsDiagramFullscreen] = useState(false);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [pdfProgress, setPdfProgress] = useState(0);
   const diagramFullscreenRef = useRef<HTMLDivElement>(null);
   const displayedPlanDate = useMemo(() => {
     const dates = Array.from(new Set(
@@ -577,6 +579,7 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
             .filter(group => group.bottom > group.top && group.top < sourceHeight);
         }
 
+        setPdfProgress(35);
         const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a3', compress: true });
         const margin = 8;
         const pageWidth = pdf.internal.pageSize.getWidth();
@@ -631,14 +634,22 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
             printableWidth, imageHeight, undefined, 'FAST');
           sourceY += sliceHeight;
           pageNumber += 1;
+          setPdfProgress(Math.min(95, 35 + Math.round(sourceY / canvas.height * 60)));
+          await new Promise(resolve => window.setTimeout(resolve, 0));
         }
         const safeDate = displayedPlanDate.replace(/[^0-9A-Za-z_-]+/g, '-');
+        setPdfProgress(100);
         pdf.save(`ELIVE-Platform-Diagram-${period}-${safeDate || 'DATE'}.pdf`);
+        await new Promise(resolve => window.setTimeout(resolve, 250));
+        setIsExportingPdf(false);
+        setPdfProgress(0);
         return;
       } catch (error) {
         delete diagramElement.dataset.pdfExportId;
         console.error(`Unable to download ${period} PDF:`, error);
         window.alert('ดาวน์โหลด PDF ไม่สำเร็จ กรุณาตรวจสอบว่าได้ติดตั้ง jspdf และ html2canvas แล้ว');
+        setIsExportingPdf(false);
+        setPdfProgress(0);
         return;
       }
     }
@@ -982,6 +993,18 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
         isDiagramFullscreen ? 'flex h-screen w-screen' : 'flex h-full'
       }`}
     >
+      {isExportingPdf && (
+        <div role="dialog" aria-modal="true" aria-label="กำลังสร้าง PDF" className="fixed inset-0 z-[9999] flex cursor-wait items-center justify-center bg-slate-950/55 backdrop-blur-[1px]">
+          <div className="mx-4 w-full max-w-sm rounded-2xl border border-blue-200 bg-white p-7 text-center shadow-2xl">
+            <div className="relative mx-auto h-24 w-24" aria-hidden="true">
+              <div className="absolute inset-0 rounded-full border-[8px] border-blue-100" />
+              <div className="absolute inset-0 animate-spin rounded-full border-[8px] border-transparent border-t-blue-600" />
+              <div className="absolute inset-0 flex items-center justify-center text-xl font-black text-blue-700">{Math.max(0, Math.min(100, pdfProgress))}%</div>
+            </div>
+            <p className="mt-5 text-xl font-black text-slate-900">กำลังสร้าง PDF</p>
+          </div>
+        </div>
+      )}
       <div className="w-full shrink-0 border-b border-slate-200 bg-white px-2 py-2">
         <div className="mb-2 flex w-full flex-col justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm lg:flex-row lg:items-center">
           <div className="shrink-0">
