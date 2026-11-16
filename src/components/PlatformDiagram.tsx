@@ -706,34 +706,35 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
       var page = document.querySelector('.pdf-page');
       function fitAndPrint() {
         if (!diagram || !page) return;
-        // AM/PM PDF: hide the Platform Dashboard controls, KPI cards and legend.
+        // AM/PM: remove the dashboard header and release fixed flex heights.
         if (EXPORT_PERIOD !== 'FULL') {
           [diagram, labelDiagram].forEach(function (exportDiagram) {
             if (!exportDiagram) return;
-            if (exportDiagram.firstElementChild) {
-              exportDiagram.firstElementChild.style.display = 'none';
-            }
-            exportDiagram.style.display = 'block';
-            exportDiagram.style.height = 'auto';
-            exportDiagram.style.minHeight = '0';
-            var timelineBody = exportDiagram.children[1];
-            if (timelineBody) {
-              timelineBody.style.display = 'block';
-              timelineBody.style.height = 'auto';
-              timelineBody.style.minHeight = '0';
-              timelineBody.style.overflow = 'visible';
-              var scrollArea = timelineBody.firstElementChild;
-              if (scrollArea) {
-                scrollArea.style.display = 'block';
-                scrollArea.style.height = 'auto';
-                scrollArea.style.minHeight = '0';
-                scrollArea.style.overflow = 'visible';
-              }
-            }
+            var dashboardHeader = exportDiagram.firstElementChild;
+            if (dashboardHeader) dashboardHeader.remove();
+            exportDiagram.style.setProperty('display', 'block', 'important');
+            exportDiagram.style.setProperty('height', 'auto', 'important');
+            exportDiagram.style.setProperty('min-height', '0', 'important');
+            exportDiagram.style.setProperty('overflow', 'visible', 'important');
+            exportDiagram.querySelectorAll('.flex-1, .min-h-0, [class*="overflow-"]').forEach(function (node) {
+              node.style.setProperty('flex', 'none', 'important');
+              node.style.setProperty('height', 'auto', 'important');
+              node.style.setProperty('min-height', '0', 'important');
+              node.style.setProperty('max-height', 'none', 'important');
+              node.style.setProperty('overflow', 'visible', 'important');
+            });
           });
         }
-        var contentWidth = Math.max(diagram.scrollWidth, diagram.getBoundingClientRect().width, 1);
-        var contentHeight = Math.max(diagram.scrollHeight, diagram.getBoundingClientRect().height, 1);
+        void diagram.offsetHeight;
+        var timelineCanvas = diagram.querySelector('[style*="width: 2500px"]');
+        var contentWidth = Math.max(diagram.scrollWidth, timelineCanvas ? timelineCanvas.scrollWidth : 0, 2500);
+        var timelineTop = 0;
+        var offsetNode = timelineCanvas;
+        while (offsetNode && offsetNode !== diagram) {
+          timelineTop += offsetNode.offsetTop || 0;
+          offsetNode = offsetNode.offsetParent;
+        }
+        var contentHeight = Math.max(diagram.scrollHeight, timelineCanvas ? timelineTop + timelineCanvas.scrollHeight : 0, 1);
         var visibleWidth = EXPORT_PERIOD === 'FULL'
           ? contentWidth
           : Math.min(SEGMENT_WIDTH, contentWidth);
@@ -753,11 +754,8 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
           diagram.style.zoom = String(scale);
         } else {
           diagram.style.zoom = '';
-          if (EXPORT_PERIOD === 'MORNING') {
-            diagram.style.transform = 'scale(' + scale + ') translateX(' + mainOffset + 'px)';
-          } else {
-            diagram.style.transform = 'translateX(' + (mainOffset * scale) + 'px) scale(' + scale + ')';
-          };
+          diagram.style.transformOrigin = 'top left';
+          diagram.style.transform = 'translateX(' + (mainOffset * scale) + 'px) scale(' + scale + ')';
         }
         if (labelDiagram) {
           if (EXPORT_PERIOD === 'FULL') {
