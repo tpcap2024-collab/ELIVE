@@ -482,8 +482,11 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
 
   const exportDiagramToPdf = async (period: 'FULL' | 'MORNING' | 'AFTERNOON' = 'FULL') => {
     const diagramElement = diagramFullscreenRef.current;
-    if (!diagramElement) return;
+    if (!diagramElement || isExportingPdf) return;
 
+    setIsExportingPdf(true);
+    setPdfProgress(5);
+    await new Promise(resolve => window.setTimeout(resolve, 0));
 
     if (period === 'FULL' || period === 'MORNING' || period === 'AFTERNOON') {
       try {
@@ -535,6 +538,8 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
           },
         });
         delete diagramElement.dataset.pdfExportId;
+        setPdfProgress(20);
+        await new Promise(resolve => window.setTimeout(resolve, 0));
 
         let canvas = diagramCanvas;
         if (period !== 'FULL') {
