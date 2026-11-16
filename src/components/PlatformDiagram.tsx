@@ -606,9 +606,18 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
         var mainOffset = EXPORT_PERIOD === 'FULL' ? 0 : LABEL_WIDTH - timelineOffset;
         // Keep the half-day diagram inside the print viewport. CSS zoom combined
         // with a negative margin can move the complete AM/PM content outside the page.
-        diagram.style.zoom = '';
         diagram.style.marginLeft = '0';
-        diagram.style.transform = 'translateX(' + (mainOffset * scale) + 'px) scale(' + scale + ')';
+        if (EXPORT_PERIOD === 'FULL') {
+          // FULL PDF must keep the width scale and flow onto additional pages.
+          // CSS transform only changes the painting size, so Chromium may shrink the
+          // complete transformed page to fit. zoom changes the layout size as well,
+          // allowing normal vertical pagination without reducing the width again.
+          diagram.style.transform = 'none';
+          diagram.style.zoom = String(scale);
+        } else {
+          diagram.style.zoom = '';
+          diagram.style.transform = 'translateX(' + (mainOffset * scale) + 'px) scale(' + scale + ')';
+        }
         if (labelDiagram) {
           if (EXPORT_PERIOD === 'FULL') {
             labelDiagram.style.display = 'none';
@@ -622,9 +631,14 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
           }
         }
         page.style.margin = '0 auto';
-        page.style.overflow = 'hidden';
         page.style.width = PAGE_WIDTH_PX + 'px';
-        page.style.height = (contentHeight * scale) + 'px';
+        if (EXPORT_PERIOD === 'FULL') {
+          page.style.overflow = 'visible';
+          page.style.height = 'auto';
+        } else {
+          page.style.overflow = 'hidden';
+          page.style.height = (contentHeight * scale) + 'px';
+        }
         document.documentElement.style.width = PAGE_WIDTH_PX + 'px';
         document.body.style.width = PAGE_WIDTH_PX + 'px';
         window.setTimeout(function () { window.focus(); window.print(); }, 250);
