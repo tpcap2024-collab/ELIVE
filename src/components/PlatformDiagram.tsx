@@ -772,11 +772,27 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
           diagram.style.setProperty('overflow', 'hidden', 'important');
           if (clonedRoot) {
             var cropOffset = EXPORT_PERIOD === 'AFTERNOON' ? LABEL_WIDTH - CROP_START_X : 0;
+            var cropViewport = document.createElement('div');
+            cropViewport.style.setProperty('position', 'relative', 'important');
+            cropViewport.style.setProperty('width', CROP_WIDTH + 'px', 'important');
+            cropViewport.style.setProperty('min-width', CROP_WIDTH + 'px', 'important');
+            cropViewport.style.setProperty('max-width', CROP_WIDTH + 'px', 'important');
+            cropViewport.style.setProperty('height', contentHeight + 'px', 'important');
+            cropViewport.style.setProperty('overflow', 'hidden', 'important');
+            cropViewport.style.setProperty('zoom', String(cropScale), 'important');
+
+            clonedRoot.style.setProperty('position', 'absolute', 'important');
+            clonedRoot.style.setProperty('top', '0', 'important');
+            clonedRoot.style.setProperty('left', cropOffset + 'px', 'important');
             clonedRoot.style.setProperty('width', CONTENT_WIDTH + 'px', 'important');
             clonedRoot.style.setProperty('min-width', CONTENT_WIDTH + 'px', 'important');
             clonedRoot.style.setProperty('max-width', CONTENT_WIDTH + 'px', 'important');
-            clonedRoot.style.transformOrigin = 'top left';
-            clonedRoot.style.transform = 'translateX(' + cropOffset + 'px) scale(' + cropScale + ')';
+            clonedRoot.style.setProperty('transform', 'none', 'important');
+            clonedRoot.style.setProperty('zoom', '1', 'important');
+
+            diagram.removeChild(clonedRoot);
+            cropViewport.appendChild(clonedRoot);
+            diagram.appendChild(cropViewport);
           }
         }
         if (labelDiagram) {
