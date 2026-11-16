@@ -492,8 +492,26 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
         diagramElement.dataset.pdfExportId = exportId;
         const timeline = diagramElement.querySelector<HTMLElement>('[style*="width: 2500px"]');
         const fullWidth = Math.max(2500, timeline?.scrollWidth || 0, diagramElement.scrollWidth);
-        const fullHeight = Math.max(diagramElement.scrollHeight, timeline?.scrollHeight || 0);
+        let timelineTop = 0;
+        let offsetNode: HTMLElement | null = timeline || null;
+        while (offsetNode && offsetNode !== diagramElement) {
+          timelineTop += offsetNode.offsetTop;
+          offsetNode = offsetNode.offsetParent as HTMLElement | null;
+        }
+        const fullHeight = Math.max(
+          diagramElement.scrollHeight,
+          timeline ? timelineTop + timeline.scrollHeight : 0,
+        );
         const captureScale = Math.max(1, Math.min(2, Math.sqrt(30_000_000 / Math.max(fullWidth * fullHeight, 1))));
+        const rootRect = diagramElement.getBoundingClientRect();
+        const groupRanges = Array.from(diagramElement.querySelectorAll<HTMLElement>('[data-print-group="true"]'))
+          .map(group => {
+            const rect = group.getBoundingClientRect();
+            return {
+              top: Math.max(0, Math.round((rect.top - rootRect.top + diagramElement.scrollTop) * captureScale)),
+              bottom: Math.max(0, Math.round((rect.bottom - rootRect.top + diagramElement.scrollTop) * captureScale)),
+            };
+          });
         const diagramCanvas = await html2canvas(diagramElement, {
           backgroundColor: '#ffffff', scale: captureScale, useCORS: true, logging: false,
           width: fullWidth, height: fullHeight, windowWidth: fullWidth, windowHeight: fullHeight,
@@ -531,7 +549,15 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
           const pageImageTop = pageNumber === 0 ? margin + firstPageHeaderHeight : margin;
           const availableHeight = pageHeight - margin - pageImageTop;
           const slicePixels = Math.max(1, Math.floor(canvas.width * availableHeight / printableWidth));
-          const sliceHeight = Math.min(slicePixels, canvas.height - sourceY);
+          let sliceHeight = Math.min(slicePixels, canvas.height - sourceY);
+          const plannedEnd = sourceY + sliceHeight;
+          const splitGroup = groupRanges.find(group => group.top > sourceY + 2 && group.top < plannedEnd && group.bottom > plannedEnd);
+          if (splitGroup) {
+            const heightBeforeGroup = splitGroup.top - sourceY;
+            if (heightBeforeGroup > Math.round(40 * captureScale)) {
+              sliceHeight = heightBeforeGroup;
+            }
+          }
           const slice = document.createElement('canvas');
           slice.width = canvas.width;
           slice.height = sliceHeight;
@@ -709,10 +735,11 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
           diagram.style.zoom = String(scale);
         } else {
           diagram.style.zoom = '';
-          // Scale the half-day segment and then shift the 07:00/12:00 start to the
-          // fixed dock-label width. Keeping the translation in source pixels avoids
-          // applying the scale twice, which moved the complete AM/PM diagram off-page.
-          diagram.style.transform = 'scale(' + scale + ') translateX(' + mainOffset + 'px)';
+          if (EXPORT_PERIOD === 'MORNING') {
+            diagram.style.transform = 'scale(' + scale + ') translateX(' + mainOffset + 'px)';
+          } else {
+            diagram.style.transform = 'translateX(' + (mainOffset * scale) + 'px) scale(' + scale + ')';
+          };
         }
         if (labelDiagram) {
           if (EXPORT_PERIOD === 'FULL') {
@@ -723,7 +750,6 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
             labelDiagram.style.zoom = '';
             labelDiagram.style.marginLeft = '0';
             labelDiagram.style.transform = 'scale(' + scale + ')';
-            labelDiagram.style.transformOrigin = 'top left';
             labelDiagram.style.clipPath = 'inset(0 ' + Math.max(contentWidth - LABEL_WIDTH, 0) + 'px 0 0)';
           }
         }
