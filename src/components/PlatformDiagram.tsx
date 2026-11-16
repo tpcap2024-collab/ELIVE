@@ -733,7 +733,66 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
             }
           });
         }
-        var contentWidth = Math.max(diagram.scrollWidth, diagram.getBoundingClientRect().width, 1);
+        if (EXPORT_PERIOD !== 'FULL') {
+          var periodStart = EXPORT_PERIOD === 'MORNING' ? 0 : 300;
+          var periodEnd = periodStart + 300;
+          var keepStartHour = EXPORT_PERIOD === 'MORNING' ? 7 : 12;
+          var keepEndHour = keepStartHour + 5;
+
+          [diagram, labelDiagram].forEach(function (exportDiagram) {
+            if (!exportDiagram) return;
+            var root = exportDiagram.firstElementChild;
+            if (!root) return;
+
+            // Rebuild each time axis as a true five-hour layout. No cropping,
+            // transform or zoom is used for AM/PM.
+            root.querySelectorAll('div').forEach(function (node) {
+              var text = (node.textContent || '').trim();
+              if (!/^\d{2}:00$/.test(text) || node.children.length) return;
+              var hour = Number(text.slice(0, 2));
+              var hourCell = node.parentElement;
+              if (!hourCell) return;
+              if (hour < keepStartHour || hour >= keepEndHour) {
+                hourCell.style.setProperty('display', 'none', 'important');
+              } else {
+                hourCell.style.setProperty('display', 'flex', 'important');
+                hourCell.style.setProperty('flex', '1 1 0%', 'important');
+              }
+            });
+
+            // Convert card coordinates from the original 660-minute full-day axis
+            // to a dedicated 300-minute half-day axis and clip crossing trips.
+            root.querySelectorAll('[style*="left:"][style*="width:"]').forEach(function (card) {
+              var left = parseFloat(card.style.left || '');
+              var width = parseFloat(card.style.width || '');
+              if (!Number.isFinite(left) || !Number.isFinite(width)) return;
+              var originalStart = left / 100 * 660;
+              var originalEnd = (left + width) / 100 * 660;
+              var clippedStart = Math.max(originalStart, periodStart);
+              var clippedEnd = Math.min(originalEnd, periodEnd);
+              if (clippedEnd <= clippedStart) {
+                card.style.setProperty('display', 'none', 'important');
+                return;
+              }
+              card.style.left = ((clippedStart - periodStart) / 300 * 100) + '%';
+              card.style.width = ((clippedEnd - clippedStart) / 300 * 100) + '%';
+            });
+
+            var timelineCanvas = root.querySelector('[style*="width: 2500px"]');
+            if (timelineCanvas) {
+              timelineCanvas.style.setProperty('width', PAGE_WIDTH_PX + 'px', 'important');
+              timelineCanvas.style.setProperty('min-width', PAGE_WIDTH_PX + 'px', 'important');
+              timelineCanvas.style.setProperty('max-width', PAGE_WIDTH_PX + 'px', 'important');
+              timelineCanvas.style.setProperty('flex-basis', PAGE_WIDTH_PX + 'px', 'important');
+            }
+            root.style.setProperty('width', PAGE_WIDTH_PX + 'px', 'important');
+            root.style.setProperty('min-width', PAGE_WIDTH_PX + 'px', 'important');
+            root.style.setProperty('max-width', PAGE_WIDTH_PX + 'px', 'important');
+          });
+        }
+        var contentWidth = EXPORT_PERIOD === 'FULL'
+          ? Math.max(diagram.scrollWidth, diagram.getBoundingClientRect().width, 1)
+          : PAGE_WIDTH_PX;
         var contentHeight = Math.max(diagram.scrollHeight, diagram.getBoundingClientRect().height, 1);
         var visibleWidth = EXPORT_PERIOD === 'FULL'
           ? contentWidth
@@ -754,39 +813,16 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
           diagram.style.zoom = String(scale);
         } else {
           diagram.style.zoom = '';
-          if (EXPORT_PERIOD === 'MORNING') {
-            // AM starts at 07:00, so crop the source layout at the 12:00 midpoint
-            // before scaling. Without a real clipping width Chromium still lays out
-            // the complete 07:00-17:00 timeline and shrinks it in Print Preview.
-            var morningWidth = LABEL_WIDTH + HALF_TIMELINE_WIDTH;
-            var morningScale = PAGE_WIDTH_PX / morningWidth;
-            var morningRoot = diagram.firstElementChild;
-            diagram.style.setProperty('width', PAGE_WIDTH_PX + 'px', 'important');
-            diagram.style.setProperty('min-width', PAGE_WIDTH_PX + 'px', 'important');
-            diagram.style.setProperty('max-width', PAGE_WIDTH_PX + 'px', 'important');
-            diagram.style.setProperty('overflow', 'hidden', 'important');
-            diagram.style.transform = 'none';
-            diagram.style.zoom = '';
-            if (morningRoot) {
-              // Crop the cloned root at 12:00 before enlarging it. Keeping the root
-              // at CONTENT_WIDTH makes Chromium fit the hidden full-day overflow.
-              morningRoot.style.setProperty('width', morningWidth + 'px', 'important');
-              morningRoot.style.setProperty('min-width', morningWidth + 'px', 'important');
-              morningRoot.style.setProperty('max-width', morningWidth + 'px', 'important');
-              morningRoot.style.setProperty('overflow', 'hidden', 'important');
-              morningRoot.style.transform = 'none';
-              morningRoot.style.zoom = String(morningScale);
-            }
-            page.style.setProperty('width', PAGE_WIDTH_PX + 'px', 'important');
-            page.style.setProperty('max-width', PAGE_WIDTH_PX + 'px', 'important');
-          } else {
-            diagram.style.transform = 'translateX(' + (mainOffset * scale) + 'px) scale(' + scale + ')';
-          }
+          diagram.style.transform = 'none';
+          diagram.style.setProperty('width', PAGE_WIDTH_PX + 'px', 'important');
+          diagram.style.setProperty('min-width', PAGE_WIDTH_PX + 'px', 'important');
+          diagram.style.setProperty('max-width', PAGE_WIDTH_PX + 'px', 'important');
+          diagram.style.setProperty('overflow', 'visible', 'important');
         }
         if (labelDiagram) {
           if (EXPORT_PERIOD === 'FULL') {
             labelDiagram.style.display = 'none';
-          } else if (EXPORT_PERIOD === 'MORNING') {
+          } else if (EXPORT_PERIOD !== 'FULL') {
             labelDiagram.style.display = 'none';
           } else {
             labelDiagram.style.display = 'block';
@@ -804,10 +840,7 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
           page.style.height = 'auto';
         } else {
           page.style.overflow = 'hidden';
-          var halfDayScale = EXPORT_PERIOD === 'MORNING'
-            ? PAGE_WIDTH_PX / (LABEL_WIDTH + HALF_TIMELINE_WIDTH)
-            : scale;
-          page.style.height = (contentHeight * halfDayScale) + 'px';
+          page.style.height = contentHeight + 'px';
         }
         document.documentElement.style.width = PAGE_WIDTH_PX + 'px';
         document.body.style.width = PAGE_WIDTH_PX + 'px';
