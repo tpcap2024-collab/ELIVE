@@ -768,11 +768,14 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
             diagram.style.transform = 'none';
             diagram.style.zoom = '';
             if (morningRoot) {
-              morningRoot.style.setProperty('width', CONTENT_WIDTH + 'px', 'important');
-              morningRoot.style.setProperty('min-width', CONTENT_WIDTH + 'px', 'important');
-              morningRoot.style.setProperty('max-width', CONTENT_WIDTH + 'px', 'important');
-              morningRoot.style.transformOrigin = 'top left';
-              morningRoot.style.transform = 'scale(' + morningScale + ')';
+              // Crop the cloned root at 12:00 before enlarging it. Keeping the root
+              // at CONTENT_WIDTH makes Chromium fit the hidden full-day overflow.
+              morningRoot.style.setProperty('width', morningWidth + 'px', 'important');
+              morningRoot.style.setProperty('min-width', morningWidth + 'px', 'important');
+              morningRoot.style.setProperty('max-width', morningWidth + 'px', 'important');
+              morningRoot.style.setProperty('overflow', 'hidden', 'important');
+              morningRoot.style.transform = 'none';
+              morningRoot.style.zoom = String(morningScale);
             }
             page.style.setProperty('width', PAGE_WIDTH_PX + 'px', 'important');
             page.style.setProperty('max-width', PAGE_WIDTH_PX + 'px', 'important');
