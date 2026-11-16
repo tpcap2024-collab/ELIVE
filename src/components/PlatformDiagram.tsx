@@ -748,17 +748,19 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
 
             // Rebuild each time axis as a true five-hour layout. No cropping,
             // transform or zoom is used for AM/PM.
-            root.querySelectorAll('div').forEach(function (node) {
-              var text = (node.textContent || '').trim();
-              if (!/^\d{2}:00$/.test(text) || node.children.length) return;
-              var hour = Number(text.slice(0, 2));
-              var hourCell = node.parentElement;
-              if (!hourCell) return;
+            root.querySelectorAll('[data-timeline-hour]').forEach(function (hourCell) {
+              var hour = Number(hourCell.getAttribute('data-timeline-hour'));
+              if (!Number.isFinite(hour)) return;
               if (hour < keepStartHour || hour >= keepEndHour) {
                 hourCell.style.setProperty('display', 'none', 'important');
+                hourCell.style.setProperty('flex', '0 0 0', 'important');
+                hourCell.style.setProperty('width', '0', 'important');
+                hourCell.style.setProperty('overflow', 'hidden', 'important');
               } else {
                 hourCell.style.setProperty('display', 'flex', 'important');
                 hourCell.style.setProperty('flex', '1 1 0%', 'important');
+                hourCell.style.removeProperty('width');
+                hourCell.style.setProperty('overflow', 'visible', 'important');
               }
             });
 
@@ -1149,6 +1151,7 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
                                 {HOURS.map(hour => (
                                   <div
                                     key={hour}
+                                    data-timeline-hour={hour}
                                     className={`flex flex-1 flex-col border-r border-slate-400 ${getHourBackgroundClass(hour)}`}
                                   >
                                     <div className={`border-b border-slate-300 text-center text-[8px] font-bold leading-[10px] ${hour === 12 ? 'bg-slate-300 text-slate-700' : 'bg-slate-200'}`}>
