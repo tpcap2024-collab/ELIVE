@@ -483,12 +483,12 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
     if (!diagramElement) return;
 
 
-    if (period === 'FULL') {
+    if (period === 'FULL' || period === 'MORNING' || period === 'AFTERNOON') {
       try {
         const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
           import('html2canvas-pro'), import('jspdf'),
         ]);
-        const exportId = `elive-full-pdf-${Date.now()}`;
+        const exportId = `elive-${period.toLowerCase()}-pdf-${Date.now()}`;
         diagramElement.dataset.pdfExportId = exportId;
         const timeline = diagramElement.querySelector<HTMLElement>('[style*="width: 2500px"]');
         const fullWidth = Math.max(2500, timeline?.scrollWidth || 0, diagramElement.scrollWidth);
@@ -534,7 +534,37 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
         });
         delete diagramElement.dataset.pdfExportId;
 
-        const canvas = diagramCanvas;
+        let canvas = diagramCanvas;
+        if (period !== 'FULL') {
+          // Crop directly from the correctly positioned full-day capture, then let
+          // jsPDF fit that cropped image to the full printable A3 width.
+          const sourceWidth = diagramCanvas.width;
+          const sourceHeight = diagramCanvas.height;
+          const labelPx = Math.round(sourceWidth * 80 / fullWidth);
+          const totalPx = Math.round(sourceWidth * 48 / fullWidth);
+          const timelinePx = sourceWidth - labelPx - totalPx;
+          const fullHours = 11;
+          const cropHours = 5;
+          const cropTimelinePx = Math.round(timelinePx * cropHours / fullHours);
+          const cropStartHourOffset = period === 'MORNING' ? 0 : 6;
+          const cropStartX = labelPx + Math.round(timelinePx * cropStartHourOffset / fullHours);
+          const cropped = document.createElement('canvas');
+          cropped.width = labelPx + cropTimelinePx + totalPx;
+          cropped.height = sourceHeight;
+          const croppedContext = cropped.getContext('2d');
+          if (!croppedContext) throw new Error('Unable to create cropped PDF canvas');
+          croppedContext.fillStyle = '#ffffff';
+          croppedContext.fillRect(0, 0, cropped.width, cropped.height);
+          // Keep Dock labels at the left.
+          croppedContext.drawImage(diagramCanvas, 0, 0, labelPx, sourceHeight, 0, 0, labelPx, sourceHeight);
+          // AM: 07:00-12:00. PM: 13:00-18:00.
+          croppedContext.drawImage(diagramCanvas, cropStartX, 0, cropTimelinePx, sourceHeight,
+            labelPx, 0, cropTimelinePx, sourceHeight);
+          // Keep Total at the right.
+          croppedContext.drawImage(diagramCanvas, sourceWidth - totalPx, 0, totalPx, sourceHeight,
+            labelPx + cropTimelinePx, 0, totalPx, sourceHeight);
+          canvas = cropped;
+        }
 
         const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a3', compress: true });
         const margin = 8;
@@ -577,7 +607,8 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
             pdf.setTextColor(51, 65, 85);
             pdf.setFont('helvetica', 'normal');
             pdf.setFontSize(8);
-            pdf.text(`Plan Date: ${displayedPlanDate}  |  View: ${viewText}  |  Period: FULL DAY 07:00-17:00  |  Dock: ${dockText}`, margin, margin + 10);
+            const periodText = period === 'MORNING' ? 'AM 07:00-12:00' : period === 'AFTERNOON' ? 'PM 13:00-18:00' : 'FULL DAY 07:00-17:00';
+            pdf.text(`Plan Date: ${displayedPlanDate}  |  View: ${viewText}  |  Period: ${periodText}  |  Dock: ${dockText}`, margin, margin + 10);
             pdf.setTextColor(100, 116, 139);
             pdf.setFontSize(7);
             pdf.text(`Exported: ${new Date().toLocaleString('th-TH')}`, margin, margin + 14);
@@ -591,11 +622,11 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
           pageNumber += 1;
         }
         const safeDate = displayedPlanDate.replace(/[^0-9A-Za-z_-]+/g, '-');
-        pdf.save(`ELIVE-Platform-Diagram-${safeDate || 'FULL'}.pdf`);
+        pdf.save(`ELIVE-Platform-Diagram-${period}-${safeDate || 'DATE'}.pdf`);
         return;
       } catch (error) {
         delete diagramElement.dataset.pdfExportId;
-        console.error('Unable to download FULL PDF:', error);
+        console.error(`Unable to download ${period} PDF:`, error);
         window.alert('ดาวน์โหลด PDF ไม่สำเร็จ กรุณาตรวจสอบว่าได้ติดตั้ง jspdf และ html2canvas แล้ว');
         return;
       }
