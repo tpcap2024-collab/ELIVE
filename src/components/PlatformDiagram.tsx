@@ -538,8 +538,14 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
         return;
       } catch (error) {
         delete diagramElement.dataset.pdfExportId;
-        console.error('Unable to download FULL PDF:', error);
-        window.alert('ดาวน์โหลด PDF ไม่สำเร็จ กรุณาตรวจสอบว่าได้ติดตั้ง jspdf และ html2canvas แล้ว');
+        const detail = error instanceof Error
+          ? `${error.name}: ${error.message}\n${error.stack ?? ''}`
+          : (() => {
+              try { return JSON.stringify(error); }
+              catch { return String(error); }
+            })();
+        console.error('Unable to download FULL PDF:', detail, error);
+        window.alert(`ดาวน์โหลด PDF ไม่สำเร็จ\n\n${detail}`);
         return;
       }
     }
