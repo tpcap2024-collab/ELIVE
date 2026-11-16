@@ -357,6 +357,22 @@ interface PlanApiResponse<T> {
   error?: string;
 }
 
+export interface SupplierLocation {
+  sheetRow?: number;
+  supplierCode: string;
+  supplierName: string;
+  siteId: string;
+  latitude: number;
+  longitude: number;
+  radiusMeter: number;
+  status: 'ACTIVE' | 'INACTIVE';
+  remark: string;
+  updatedAt?: string;
+  updatedBy?: string;
+}
+export type EditableSupplierLocation = Omit<SupplierLocation, 'sheetRow' | 'updatedAt'>;
+export interface SupplierLocationsResult { success: boolean; rowCount: number; rows: SupplierLocation[]; }
+
 export type EliveUserRole =
   | 'TV_VIEWER'
   | 'OPERATOR'
@@ -2066,6 +2082,21 @@ export async function fetchRouteToTpcap(
     },
   };
 }
+
+function validateSupplierLocation(row: EditableSupplierLocation): EditableSupplierLocation {
+  const value: EditableSupplierLocation = { supplierCode:String(row?.supplierCode||'').trim().toUpperCase(), supplierName:String(row?.supplierName||'').trim(), siteId:String(row?.siteId||'').trim().toUpperCase(), latitude:Number(row?.latitude), longitude:Number(row?.longitude), radiusMeter:Number(row?.radiusMeter), status:row?.status==='INACTIVE'?'INACTIVE':'ACTIVE', remark:String(row?.remark||'').trim(), updatedBy:String(row?.updatedBy||'SYSTEM').trim() };
+  if(!value.supplierCode||!value.supplierName||!value.siteId)throw new Error('กรุณาระบุ Supplier Code, Supplier Name และ Site ID');
+  if(!Number.isFinite(value.latitude)||value.latitude < -90||value.latitude > 90)throw new Error('Latitude ไม่ถูกต้อง');
+  if(!Number.isFinite(value.longitude)||value.longitude < -180||value.longitude > 180)throw new Error('Longitude ไม่ถูกต้อง');
+  if(!Number.isFinite(value.radiusMeter)||value.radiusMeter < 100||value.radiusMeter > 2000)throw new Error('Radius Meter ต้องอยู่ระหว่าง 100-2000');
+  return value;
+}
+function mapSupplierLocation(value:any):SupplierLocation{return{sheetRow:Number.isFinite(Number(value?.sheetRow))?Number(value.sheetRow):undefined,supplierCode:String(value?.supplierCode||'').trim().toUpperCase(),supplierName:String(value?.supplierName||'').trim(),siteId:String(value?.siteId||'').trim().toUpperCase(),latitude:Number(value?.latitude),longitude:Number(value?.longitude),radiusMeter:Number(value?.radiusMeter||500),status:value?.status==='INACTIVE'?'INACTIVE':'ACTIVE',remark:String(value?.remark||'').trim(),updatedAt:value?.updatedAt?String(value.updatedAt):undefined,updatedBy:value?.updatedBy?String(value.updatedBy):undefined};}
+export async function fetchSupplierLocations():Promise<SupplierLocationsResult>{const data=await fetchApiRequest(`/api/suppliers?t=${Date.now()}`,{method:'GET'});if(data.success!==true)throw new Error(data.error||'โหลด Supplier ไม่สำเร็จ');const source=Array.isArray(data.rows)?data.rows:Array.isArray(data.result?.rows)?data.result.rows:[];const rows=source.map(mapSupplierLocation);return{success:true,rowCount:Number(data.rowCount??data.result?.rowCount??rows.length),rows};}
+export async function createSupplierLocation(row:EditableSupplierLocation):Promise<void>{await fetchApiRequest('/api/suppliers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({row:validateSupplierLocation(row)})});}
+export async function updateSupplierLocation(originalSupplierCode:string,originalSiteId:string,row:EditableSupplierLocation):Promise<void>{await fetchApiRequest(`/api/suppliers/${encodeURIComponent(originalSupplierCode)}/${encodeURIComponent(originalSiteId)}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({originalSupplierCode,originalSiteId,row:validateSupplierLocation(row)})});}
+export async function deleteSupplierLocation(supplierCode:string,siteId:string,updatedBy='SYSTEM'):Promise<void>{await fetchApiRequest(`/api/suppliers/${encodeURIComponent(supplierCode)}/${encodeURIComponent(siteId)}`,{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({supplierCode,siteId,updatedBy})});}
+export async function importSupplierLocations(rows:EditableSupplierLocation[],mode:'append'|'replace'):Promise<void>{if(!rows.length)throw new Error('ไม่พบข้อมูล Supplier');await fetchApiRequest('/api/suppliers/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rows:rows.map(validateSupplierLocation),mode:mode.toUpperCase()})});}
 
 export async function loginElive(
   username: string,
