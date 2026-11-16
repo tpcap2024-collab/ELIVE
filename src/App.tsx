@@ -16,6 +16,8 @@ import { StatusBadge } from './components/StatusBadge';
 import PlanManagement from './components/PlanManagement';
 import MobileOperation from './components/MobileOperation';
 import Report from './components/Report';
+import SupplierManagement from './components/SupplierManagement';
+import type { SupplierLocation } from './components/SupplierManagement';
 
 import {
   GpsLocation,
@@ -107,11 +109,11 @@ type AppPermission =
   | 'MANAGE_PLAN'
   | 'MANAGE_SYSTEM';
 const ROLE_PERMISSIONS: Record<EliveUserRole, ReadonlySet<AppPermission>> = {
-  TV_VIEWER: new Set(['VIEW_DASHBOARD', 'VIEW_LIVE_MAP', 'VIEW_PLATFORM']),
+  TV_VIEWER: new Set(['VIEW_DASHBOARD', 'VIEW_LIVE_MAP', 'VIEW_PLATFORM', 'VIEW_SUPPLIER']),
   OPERATOR: new Set(['USE_MOBILE_MODE', 'STAMP_TRUCK', 'SUBMIT_ACTION']),
-  PLANNER: new Set(['VIEW_DASHBOARD', 'VIEW_LIVE_MAP', 'VIEW_PLATFORM', 'VIEW_REPORT', 'USE_MOBILE_MODE', 'STAMP_TRUCK', 'SUBMIT_ACTION', 'VIEW_ACTION_CENTER', 'MANAGE_PLAN']),
-  SUPERVISOR: new Set(['VIEW_DASHBOARD', 'VIEW_LIVE_MAP', 'VIEW_PLATFORM', 'VIEW_REPORT', 'SUBMIT_ACTION', 'VIEW_ACTION_CENTER']),
-  ADMIN: new Set(['VIEW_DASHBOARD', 'VIEW_LIVE_MAP', 'VIEW_PLATFORM', 'VIEW_REPORT', 'USE_MOBILE_MODE', 'STAMP_TRUCK', 'SUBMIT_ACTION', 'VIEW_ACTION_CENTER', 'MANAGE_PLAN', 'MANAGE_SYSTEM']),
+  PLANNER: new Set(['VIEW_DASHBOARD', 'VIEW_LIVE_MAP', 'VIEW_PLATFORM', 'VIEW_REPORT', 'USE_MOBILE_MODE', 'STAMP_TRUCK', 'SUBMIT_ACTION', 'VIEW_ACTION_CENTER', 'MANAGE_PLAN', 'VIEW_SUPPLIER', 'MANAGE_SUPPLIER']),
+  SUPERVISOR: new Set(['VIEW_DASHBOARD', 'VIEW_LIVE_MAP', 'VIEW_PLATFORM', 'VIEW_REPORT', 'SUBMIT_ACTION', 'VIEW_ACTION_CENTER', 'VIEW_SUPPLIER']),
+  ADMIN: new Set(['VIEW_DASHBOARD', 'VIEW_LIVE_MAP', 'VIEW_PLATFORM', 'VIEW_REPORT', 'USE_MOBILE_MODE', 'STAMP_TRUCK', 'SUBMIT_ACTION', 'VIEW_ACTION_CENTER', 'MANAGE_PLAN', 'VIEW_SUPPLIER', 'MANAGE_SUPPLIER', 'MANAGE_SYSTEM']),
 };
 function hasPermission(role: EliveUserRole, permission: AppPermission): boolean {
   return ROLE_PERMISSIONS[role].has(permission);
@@ -236,6 +238,8 @@ const GPS_LOST_DISPLAY_GRACE_MINUTES = 30;
 export default function App() {
   const [trucks, setTrucks] = useState<Truck[]>(mockTrucks);
   const [gpsLocations, setGpsLocations] = useState<GpsLocation[]>([]);
+    const [supplierLocations, setSupplierLocations] = useState<SupplierLocation[]>([]);  
+    const [isLoadingSuppliers, setIsLoadingSuppliers] = useState(false);  
   const [currentView, setCurrentView] = useState<CurrentView>(() => {
     if (typeof window === 'undefined') return 'dashboard';
     return window.localStorage.getItem(DISPLAY_MODE_STORAGE_KEY) === 'mobile'
@@ -1305,12 +1309,12 @@ export default function App() {
               <Menu className="h-5 w-5" />
             </button>
             <h1 className="hidden text-xl font-bold text-slate-800 md:block">
-              {currentView === 'plan-management' ? 'Plan Management' : 'Real-Time Truck Status Monitoring'}
+              {currentView === 'plan-management' ? 'Plan Management' : currentView === 'supplier' ? 'Supplier Locations' : 'Real-Time Truck Status Monitoring'}
             </h1>
           </div>
 
           <div className="flex items-center gap-3">
-            {currentView !== 'plan-management' && (
+            {currentView !== 'plan-management' && currentView !== 'supplier' && (
               <input
                 type="date"
                 value={selectedDate}
@@ -1584,6 +1588,11 @@ export default function App() {
                   handleOpenGps(truckId);
                 }}
               /></main>
+            )}
+            {canViewSupplier && currentView === 'supplier' && (
+              <main className="min-h-0 min-w-0 flex-1 overflow-auto bg-slate-50">
+                <SupplierManagement role={currentUserRole} rows={supplierLocations} loading={isLoadingSuppliers} onRefresh={async () => { setIsLoadingSuppliers(true); try { setSupplierLocations(current => [...current]); } finally { setIsLoadingSuppliers(false); } }} onViewMap={() => changeView('map')} />
+              </main>
             )}
             {canViewReport && currentView === 'report' && (
               <main className="min-h-0 min-w-0 flex-1 overflow-hidden bg-slate-50">
