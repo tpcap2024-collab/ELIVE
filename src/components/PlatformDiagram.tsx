@@ -546,7 +546,7 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
           // Crop directly from the correctly positioned full-day capture, then let
           // jsPDF fit that cropped image to the full printable A3 width.
           const sourceWidth = diagramCanvas.width;
-          const dashboardHeader = diagramElement.firstElementChild as HTMLElement | null;
+          const dashboardHeader = diagramElement.querySelector<HTMLElement>('[data-pdf-dashboard-header="true"]');
           const headerPx = Math.max(0, Math.round((dashboardHeader?.offsetHeight || 0) * captureScale));
           const sourceHeight = Math.max(1, diagramCanvas.height - headerPx);
           const labelPx = Math.round(sourceWidth * 80 / fullWidth);
@@ -1010,7 +1010,7 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
           </div>
         </div>
       )}
-      <div className="w-full shrink-0 border-b border-slate-200 bg-white px-2 py-2">
+      <div data-pdf-dashboard-header="true" className="w-full shrink-0 border-b border-slate-200 bg-white px-2 py-2">
         <div className="mb-2 flex w-full flex-col justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm lg:flex-row lg:items-center">
           <div className="shrink-0">
             <h2 className="text-xl font-bold tracking-tight text-slate-800">Platform Dashboard</h2>
