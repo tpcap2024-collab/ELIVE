@@ -516,55 +516,51 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
         });
         delete diagramElement.dataset.pdfExportId;
 
-        // html2canvas captures only the dashboard element. Add the report header
-        // that previously came from the print-only HTML before creating PDF pages.
-        const headerHeight = Math.max(120, Math.round(140 * captureScale));
-        const canvas = document.createElement('canvas');
-        canvas.width = diagramCanvas.width;
-        canvas.height = headerHeight + diagramCanvas.height;
-        const mergedContext = canvas.getContext('2d');
-        if (!mergedContext) throw new Error('Unable to create PDF header canvas');
-        mergedContext.fillStyle = '#ffffff';
-        mergedContext.fillRect(0, 0, canvas.width, canvas.height);
-        const headerPadding = Math.round(28 * captureScale);
-        mergedContext.fillStyle = '#0f172a';
-        mergedContext.font = `700 ${Math.round(28 * captureScale)}px Arial, sans-serif`;
-        mergedContext.fillText('ELIVE Platform Diagram', headerPadding, Math.round(38 * captureScale));
-        mergedContext.font = `600 ${Math.round(15 * captureScale)}px Arial, sans-serif`;
-        mergedContext.fillStyle = '#334155';
-        mergedContext.fillText(
-          `Plan Date: ${displayedPlanDate}   |   View: ${timelineView === 'ALL' ? 'PLAN + ACTUAL' : timelineView}   |   Period: FULL DAY 07:00-17:00   |   Dock: ${selectedGroups.length === GROUP_FILTER_OPTIONS.length ? 'ALL' : selectedGroups.join(', ')}`,
-          headerPadding,
-          Math.round(70 * captureScale),
-        );
-        mergedContext.font = `400 ${Math.round(12 * captureScale)}px Arial, sans-serif`;
-        mergedContext.fillStyle = '#64748b';
-        mergedContext.fillText(`Exported: ${new Date().toLocaleString('th-TH')}`, headerPadding, Math.round(96 * captureScale));
-        mergedContext.strokeStyle = '#cbd5e1';
-        mergedContext.lineWidth = Math.max(1, captureScale);
-        mergedContext.beginPath();
-        mergedContext.moveTo(headerPadding, headerHeight - Math.round(10 * captureScale));
-        mergedContext.lineTo(canvas.width - headerPadding, headerHeight - Math.round(10 * captureScale));
-        mergedContext.stroke();
-        mergedContext.drawImage(diagramCanvas, 0, headerHeight);
+        const canvas = diagramCanvas;
 
         const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a3', compress: true });
         const margin = 8;
         const printableWidth = pdf.internal.pageSize.getWidth() - margin * 2;
         const printableHeight = pdf.internal.pageSize.getHeight() - margin * 2;
-        const slicePixels = Math.max(1, Math.floor(canvas.width * printableHeight / printableWidth));
-        for (let sourceY = 0, pageNumber = 0; sourceY < canvas.height; pageNumber += 1) {
+        const firstPageHeaderHeight = 20;
+        let sourceY = 0;
+        let pageNumber = 0;
+        while (sourceY < canvas.height) {
+          const pageImageTop = pageNumber === 0 ? margin + firstPageHeaderHeight : margin;
+          const availableHeight = pageHeight - margin - pageImageTop;
+          const slicePixels = Math.max(1, Math.floor(canvas.width * availableHeight / printableWidth));
           const sliceHeight = Math.min(slicePixels, canvas.height - sourceY);
           const slice = document.createElement('canvas');
-          slice.width = canvas.width; slice.height = sliceHeight;
+          slice.width = canvas.width;
+          slice.height = sliceHeight;
           const context = slice.getContext('2d');
           if (!context) throw new Error('Unable to create PDF page canvas');
-          context.fillStyle = '#ffffff'; context.fillRect(0, 0, slice.width, slice.height);
+          context.fillStyle = '#ffffff';
+          context.fillRect(0, 0, slice.width, slice.height);
           context.drawImage(canvas, 0, sourceY, canvas.width, sliceHeight, 0, 0, canvas.width, sliceHeight);
           if (pageNumber > 0) pdf.addPage('a3', 'landscape');
-          pdf.addImage(slice.toDataURL('image/jpeg', 0.96), 'JPEG', margin, margin, printableWidth,
-            sliceHeight * printableWidth / canvas.width, undefined, 'FAST');
+          if (pageNumber === 0) {
+            const viewText = timelineView === 'ALL' ? 'PLAN + ACTUAL' : timelineView;
+            const dockText = selectedGroups.length === GROUP_FILTER_OPTIONS.length ? 'ALL' : selectedGroups.join(', ');
+            pdf.setTextColor(15, 23, 42);
+            pdf.setFont('helvetica', 'bold');
+            pdf.setFontSize(13);
+            pdf.text('ELIVE Platform Diagram', margin, margin + 5);
+            pdf.setTextColor(51, 65, 85);
+            pdf.setFont('helvetica', 'normal');
+            pdf.setFontSize(8);
+            pdf.text(`Plan Date: ${displayedPlanDate}  |  View: ${viewText}  |  Period: FULL DAY 07:00-17:00  |  Dock: ${dockText}`, margin, margin + 10);
+            pdf.setTextColor(100, 116, 139);
+            pdf.setFontSize(7);
+            pdf.text(`Exported: ${new Date().toLocaleString('th-TH')}`, margin, margin + 14);
+            pdf.setDrawColor(203, 213, 225);
+            pdf.line(margin, margin + 17, pageWidth - margin, margin + 17);
+          }
+          const imageHeight = sliceHeight * printableWidth / canvas.width;
+          pdf.addImage(slice.toDataURL('image/jpeg', 0.96), 'JPEG', margin, pageImageTop,
+            printableWidth, imageHeight, undefined, 'FAST');
           sourceY += sliceHeight;
+          pageNumber += 1;
         }
         const safeDate = displayedPlanDate.replace(/[^0-9A-Za-z_-]+/g, '-');
         pdf.save(`ELIVE-Platform-Diagram-${safeDate || 'FULL'}.pdf`);
