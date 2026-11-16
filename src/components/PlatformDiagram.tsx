@@ -43,7 +43,7 @@ const HOURS = Array.from(
   (_, index) => START_HOUR + index
 );
 
-const MINUTES = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60];
+const MINUTES = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, ''];
 const TOTAL_MINS = (END_HOUR - START_HOUR + 1) * 60;
 
 const GROUP_FILTER_OPTIONS: GroupFilter[] = ['M1', 'L1', 'L2', 'L3', 'R2', 'R1'];
