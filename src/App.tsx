@@ -1111,9 +1111,7 @@ export default function App() {
       setCurrentPassword('');
       setNewPassword('');
       setConfirmNewPassword('');
-      setChangePasswordSuccess(
-        `${result.message} ยกเลิก Session อื่นแล้ว ${result.otherSessionsRevoked} รายการ`
-      );
+      setChangePasswordSuccess(result.message || 'เปลี่ยนรหัสผ่านสำเร็จ');
     } catch (error) {
       console.error('Unable to change ELIVE password:', error);
       setChangePasswordError(
@@ -1831,9 +1829,6 @@ export default function App() {
                   <h3 className="flex items-center gap-2 text-lg font-bold text-slate-800">
                     <KeyRound className="h-5 w-5 text-blue-600" /> เปลี่ยนรหัสผ่าน
                   </h3>
-                  <p className="mt-1 text-xs text-slate-500">
-                    บัญชี {authenticatedUser.username} · {authenticatedUser.role}
-                  </p>
                 </div>
                 <button type="button" onClick={closeChangePassword} disabled={isChangingPassword} className="rounded-full p-2 text-slate-500 hover:bg-slate-100 disabled:opacity-50">
                   <X className="h-5 w-5" />
@@ -1869,7 +1864,7 @@ export default function App() {
                       {showNewPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
                     </button>
                   </div>
-                  <span className="mt-1 block text-xs text-slate-500">ความยาว 6-128 ตัวอักษร สามารถใช้เหมือน Username ได้</span>
+                  <span className="mt-1 block text-xs text-slate-500">ความยาว 6-128 ตัวอักษร</span>
                 </label>
                 <label className="block">
                   <span className="mb-1 block text-sm font-medium text-slate-700">ยืนยันรหัสผ่านใหม่</span>
@@ -1924,9 +1919,6 @@ export default function App() {
                   <KeyRound className="mt-0.5 h-5 w-5 text-blue-600" />
                   <div className="flex-1">
                     <div className="font-bold text-slate-800">เปลี่ยนรหัสผ่าน</div>
-                    <p className="mt-1 text-xs text-slate-600">
-                      ต้องยืนยันด้วยรหัสผ่านปัจจุบัน และระบบจะยกเลิก Session อื่นของบัญชีนี้
-                    </p>
                     <button
                       type="button"
                       onClick={openChangePassword}
