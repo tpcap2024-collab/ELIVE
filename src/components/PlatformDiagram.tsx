@@ -609,7 +609,7 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
       .join('');
     const exportedAt = new Date().toLocaleString('th-TH');
     const viewLabel = timelineView === 'ALL' ? 'PLAN + ACTUAL' : timelineView;
-    const periodLabel = period === 'MORNING' ? 'MORNING 07:00-12:00' : period === 'AFTERNOON' ? 'AFTERNOON 12:00-17:00' : 'FULL DAY 07:00-17:00';
+    const periodLabel = period === 'MORNING' ? 'MORNING 07:00-12:00' : period === 'AFTERNOON' ? 'AFTERNOON 13:00-18:00' : 'FULL DAY 07:00-17:00';
     const isHalfDayExport = period !== 'FULL';
     const pageOrientation = 'landscape';
     const dockLabel = selectedGroups.length === GROUP_FILTER_OPTIONS.length
@@ -734,10 +734,12 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
           });
         }
         if (EXPORT_PERIOD !== 'FULL') {
-          var periodStart = EXPORT_PERIOD === 'MORNING' ? 0 : 300;
-          var periodEnd = periodStart + 300;
-          var keepStartHour = EXPORT_PERIOD === 'MORNING' ? 7 : 12;
-          var keepEndHour = keepStartHour + 5;
+          var sourceBaseHour = 7;
+          var keepStartHour = EXPORT_PERIOD === 'MORNING' ? 7 : 13;
+          var keepEndHour = EXPORT_PERIOD === 'MORNING' ? 12 : 18;
+          var periodStart = (keepStartHour - sourceBaseHour) * 60;
+          var periodEnd = (keepEndHour - sourceBaseHour) * 60;
+          var periodMinutes = periodEnd - periodStart;
 
           [diagram, labelDiagram].forEach(function (exportDiagram) {
             if (!exportDiagram) return;
@@ -774,8 +776,8 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
                 card.style.setProperty('display', 'none', 'important');
                 return;
               }
-              card.style.left = ((clippedStart - periodStart) / 300 * 100) + '%';
-              card.style.width = ((clippedEnd - clippedStart) / 300 * 100) + '%';
+              card.style.left = ((clippedStart - periodStart) / periodMinutes * 100) + '%';
+              card.style.width = ((clippedEnd - clippedStart) / periodMinutes * 100) + '%';
             });
 
             var timelineCanvas = root.querySelector('[style*="width: 2500px"]');
@@ -1007,7 +1009,7 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
                 <FileDown className="h-3.5 w-3.5" /> FULL
               </button>
               <button type="button" onClick={() => exportDiagramToPdf('MORNING')} title="Export PDF ช่วงเช้า 07:00-12:00" aria-label="Export PDF ช่วงเช้า" className="inline-flex h-9 items-center px-2 text-[9px] font-bold text-slate-700 hover:bg-amber-50 hover:text-amber-700">AM</button>
-              <button type="button" onClick={() => exportDiagramToPdf('AFTERNOON')} title="Export PDF ช่วงบ่าย 12:00-17:00" aria-label="Export PDF ช่วงบ่าย" className="inline-flex h-9 items-center border-l border-slate-200 px-2 text-[9px] font-bold text-slate-700 hover:bg-blue-50 hover:text-blue-700">PM</button>
+              <button type="button" onClick={() => exportDiagramToPdf('AFTERNOON')} title="Export PDF ช่วงบ่าย 13:00-18:00" aria-label="Export PDF ช่วงบ่าย" className="inline-flex h-9 items-center border-l border-slate-200 px-2 text-[9px] font-bold text-slate-700 hover:bg-blue-50 hover:text-blue-700">PM</button>
             </div>
             <button type="button" onClick={() => void toggleDiagramFullscreen()} title={isDiagramFullscreen ? 'ออกจากโหมดเต็มหน้าจอ' : 'แสดง Platform Dashboard เต็มหน้าจอ'} aria-label={isDiagramFullscreen ? 'ออกจากโหมดเต็มหน้าจอ' : 'แสดง Platform Dashboard เต็มหน้าจอ'} data-export-hide="true" className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-700 shadow-sm hover:border-blue-400 hover:bg-blue-50 hover:text-blue-700">
               {isDiagramFullscreen ? <Minimize2 className="h-4 w-4" /> : <Expand className="h-4 w-4" />}
