@@ -766,12 +766,11 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
 
             // Convert card coordinates from the original 660-minute full-day axis
             // to a dedicated 300-minute half-day axis and clip crossing trips.
-            root.querySelectorAll('[style*="left:"][style*="width:"]').forEach(function (card) {
-              var left = parseFloat(card.style.left || '');
-              var width = parseFloat(card.style.width || '');
-              if (!Number.isFinite(left) || !Number.isFinite(width)) return;
-              var originalStart = left / 100 * 660;
-              var originalEnd = (left + width) / 100 * 660;
+            root.querySelectorAll('[data-timeline-card="true"]').forEach(function (card) {
+              var originalStart = Number(card.getAttribute('data-start-mins'));
+              var duration = Number(card.getAttribute('data-duration-mins'));
+              if (!Number.isFinite(originalStart) || !Number.isFinite(duration)) return;
+              var originalEnd = originalStart + duration;
               var clippedStart = Math.max(originalStart, periodStart);
               var clippedEnd = Math.min(originalEnd, periodEnd);
               if (clippedEnd <= clippedStart) {
@@ -1233,6 +1232,9 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
                                                 ? 'z-30 ring-[3px] ring-yellow-300 ring-offset-1 ring-offset-yellow-100 shadow-xl shadow-yellow-400/80'
                                                 : 'hover:shadow-lg'
                                             }`}
+                                            data-timeline-card="true"
+                                            data-start-mins={startMins}
+                                            data-duration-mins={durationMins}
                                             style={{ left: `${position.left}%`, width: `${position.width}%` }}
                                             title={`${rowType}: ${truck.licensePlate} (${truck.route}) ${startText}-${endText}`}
                                           >
