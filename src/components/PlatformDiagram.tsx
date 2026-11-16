@@ -774,12 +774,18 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
             var cropOffset = EXPORT_PERIOD === 'AFTERNOON' ? LABEL_WIDTH - CROP_START_X : 0;
             var cropViewport = document.createElement('div');
             cropViewport.style.setProperty('position', 'relative', 'important');
-            cropViewport.style.setProperty('width', CROP_WIDTH + 'px', 'important');
-            cropViewport.style.setProperty('min-width', CROP_WIDTH + 'px', 'important');
-            cropViewport.style.setProperty('max-width', CROP_WIDTH + 'px', 'important');
+            var stretchedCropWidth = CROP_WIDTH / 1.45;
+            cropViewport.style.setProperty('width', stretchedCropWidth + 'px', 'important');
+            cropViewport.style.setProperty('min-width', stretchedCropWidth + 'px', 'important');
+            cropViewport.style.setProperty('max-width', stretchedCropWidth + 'px', 'important');
             cropViewport.style.setProperty('height', contentHeight + 'px', 'important');
             cropViewport.style.setProperty('overflow', 'hidden', 'important');
             cropViewport.style.setProperty('zoom', String(cropScale), 'important');
+            // Printing is the only goal for AM/PM. Stretch the cropped five-hour
+            // image horizontally to consume the remaining printable width.
+            var PRINT_STRETCH_X = 1.45;
+            cropViewport.style.setProperty('transform-origin', 'top left', 'important');
+            cropViewport.style.setProperty('transform', 'scaleX(' + PRINT_STRETCH_X + ')', 'important');
 
             clonedRoot.style.setProperty('position', 'absolute', 'important');
             clonedRoot.style.setProperty('top', '0', 'important');
