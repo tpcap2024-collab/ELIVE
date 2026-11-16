@@ -492,11 +492,6 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
         diagramElement.dataset.pdfExportId = exportId;
         const timeline = diagramElement.querySelector<HTMLElement>('[style*="width: 2500px"]');
         const fullWidth = Math.max(2500, timeline?.scrollWidth || 0, diagramElement.scrollWidth);
-
-        // The timeline is inside a height-constrained scroll container. Its scrollHeight
-        // does not include the dashboard header offset, so using it alone clips the last
-        // dock rows (especially R1). Measure the timeline's complete offset from the PDF
-        // root, then add its entire scrollable height.
         let timelineTop = 0;
         let offsetNode: HTMLElement | null = timeline || null;
         while (offsetNode && offsetNode !== diagramElement) {
@@ -508,6 +503,15 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
           timeline ? timelineTop + timeline.scrollHeight : 0,
         );
         const captureScale = Math.max(1, Math.min(2, Math.sqrt(30_000_000 / Math.max(fullWidth * fullHeight, 1))));
+        const rootRect = diagramElement.getBoundingClientRect();
+        const groupRanges = Array.from(diagramElement.querySelectorAll<HTMLElement>('[data-print-group="true"]'))
+          .map(group => {
+            const rect = group.getBoundingClientRect();
+            return {
+              top: Math.max(0, Math.round((rect.top - rootRect.top + diagramElement.scrollTop) * captureScale)),
+              bottom: Math.max(0, Math.round((rect.bottom - rootRect.top + diagramElement.scrollTop) * captureScale)),
+            };
+          });
         const diagramCanvas = await html2canvas(diagramElement, {
           backgroundColor: '#ffffff', scale: captureScale, useCORS: true, logging: false,
           width: fullWidth, height: fullHeight, windowWidth: fullWidth, windowHeight: fullHeight,
@@ -545,7 +549,15 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
           const pageImageTop = pageNumber === 0 ? margin + firstPageHeaderHeight : margin;
           const availableHeight = pageHeight - margin - pageImageTop;
           const slicePixels = Math.max(1, Math.floor(canvas.width * availableHeight / printableWidth));
-          const sliceHeight = Math.min(slicePixels, canvas.height - sourceY);
+          let sliceHeight = Math.min(slicePixels, canvas.height - sourceY);
+          const plannedEnd = sourceY + sliceHeight;
+          const splitGroup = groupRanges.find(group => group.top > sourceY + 2 && group.top < plannedEnd && group.bottom > plannedEnd);
+          if (splitGroup) {
+            const heightBeforeGroup = splitGroup.top - sourceY;
+            if (heightBeforeGroup > Math.round(40 * captureScale)) {
+              sliceHeight = heightBeforeGroup;
+            }
+          }
           const slice = document.createElement('canvas');
           slice.width = canvas.width;
           slice.height = sliceHeight;
