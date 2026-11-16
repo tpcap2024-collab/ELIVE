@@ -706,17 +706,22 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
       var page = document.querySelector('.pdf-page');
       function fitAndPrint() {
         if (!diagram || !page) return;
-        // AM/PM: remove the dashboard header and release fixed flex heights.
+        // AM/PM: .pdf-diagram is only a wrapper. Its first child is the complete
+        // cloned dashboard root, so hiding firstElementChild hides the whole diagram.
+        // Hide only the dashboard header inside that cloned root and release the
+        // timeline containers from the screen-only flex/scroll height constraints.
         if (EXPORT_PERIOD !== 'FULL') {
           [diagram, labelDiagram].forEach(function (exportDiagram) {
             if (!exportDiagram) return;
-            var dashboardHeader = exportDiagram.firstElementChild;
-            if (dashboardHeader) dashboardHeader.remove();
-            exportDiagram.style.setProperty('display', 'block', 'important');
-            exportDiagram.style.setProperty('height', 'auto', 'important');
-            exportDiagram.style.setProperty('min-height', '0', 'important');
-            exportDiagram.style.setProperty('overflow', 'visible', 'important');
-            exportDiagram.querySelectorAll('.flex-1, .min-h-0, [class*="overflow-"]').forEach(function (node) {
+            var clonedRoot = exportDiagram.firstElementChild;
+            if (!clonedRoot) return;
+            var dashboardHeader = clonedRoot.firstElementChild;
+            if (dashboardHeader) dashboardHeader.style.display = 'none';
+            clonedRoot.style.setProperty('display', 'block', 'important');
+            clonedRoot.style.setProperty('height', 'auto', 'important');
+            clonedRoot.style.setProperty('min-height', '0', 'important');
+            clonedRoot.style.setProperty('overflow', 'visible', 'important');
+            clonedRoot.querySelectorAll('.flex-1, .min-h-0, [class*="overflow-"]').forEach(function (node) {
               node.style.setProperty('flex', 'none', 'important');
               node.style.setProperty('height', 'auto', 'important');
               node.style.setProperty('min-height', '0', 'important');
@@ -725,16 +730,8 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
             });
           });
         }
-        void diagram.offsetHeight;
-        var timelineCanvas = diagram.querySelector('[style*="width: 2500px"]');
-        var contentWidth = Math.max(diagram.scrollWidth, timelineCanvas ? timelineCanvas.scrollWidth : 0, 2500);
-        var timelineTop = 0;
-        var offsetNode = timelineCanvas;
-        while (offsetNode && offsetNode !== diagram) {
-          timelineTop += offsetNode.offsetTop || 0;
-          offsetNode = offsetNode.offsetParent;
-        }
-        var contentHeight = Math.max(diagram.scrollHeight, timelineCanvas ? timelineTop + timelineCanvas.scrollHeight : 0, 1);
+        var contentWidth = Math.max(diagram.scrollWidth, diagram.getBoundingClientRect().width, 1);
+        var contentHeight = Math.max(diagram.scrollHeight, diagram.getBoundingClientRect().height, 1);
         var visibleWidth = EXPORT_PERIOD === 'FULL'
           ? contentWidth
           : Math.min(SEGMENT_WIDTH, contentWidth);
@@ -754,8 +751,11 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
           diagram.style.zoom = String(scale);
         } else {
           diagram.style.zoom = '';
-          diagram.style.transformOrigin = 'top left';
-          diagram.style.transform = 'translateX(' + (mainOffset * scale) + 'px) scale(' + scale + ')';
+          if (EXPORT_PERIOD === 'MORNING') {
+            diagram.style.transform = 'scale(' + scale + ') translateX(' + mainOffset + 'px)';
+          } else {
+            diagram.style.transform = 'translateX(' + (mainOffset * scale) + 'px) scale(' + scale + ')';
+          };
         }
         if (labelDiagram) {
           if (EXPORT_PERIOD === 'FULL') {
