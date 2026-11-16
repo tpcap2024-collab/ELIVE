@@ -732,7 +732,7 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
       var EXPORT_PERIOD = '${period}';
       var CONTENT_WIDTH = 2500;
       var LABEL_WIDTH = 80;
-      var TOTAL_WIDTH = 48;
+      var TOTAL_WIDTH = 144;
       var TIMELINE_LEFT = LABEL_WIDTH;
       var TIMELINE_RIGHT = CONTENT_WIDTH - TOTAL_WIDTH;
       var TIMELINE_WIDTH = TIMELINE_RIGHT - TIMELINE_LEFT;
@@ -1155,6 +1155,14 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
                             normalizePoint(truck.dropPoint || 'UNASSIGNED') ===
                             normalizePoint(dock.mappedPoint)
                         );
+                        const amTotal = dockTrucks.filter(truck => {
+                          const startMins = parseTimeToMinutes(truck.planEta);
+                          return startMins !== null && startMins >= 7 * 60 && startMins < 12 * 60;
+                        }).length;
+                        const pmTotal = dockTrucks.filter(truck => {
+                          const startMins = parseTimeToMinutes(truck.planEta);
+                          return startMins !== null && startMins >= 13 * 60 && startMins < 18 * 60;
+                        }).length;
 
                         return (
                           <div
@@ -1191,10 +1199,10 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
                                 ))}
                               </div>
 
-                              <div className="sticky right-0 z-20 flex w-12 shrink-0 border-b border-l border-slate-300 border-l-slate-400 bg-slate-200 shadow-[-2px_0_5px_rgba(0,0,0,0.05)]">
-                                <div className="flex flex-1 items-center justify-center text-center text-[8px] font-bold">
-                                  Total
-                                </div>
+                              <div className="sticky right-0 z-20 flex shrink-0 border-b border-l border-slate-300 border-l-slate-400 bg-slate-200 shadow-[-2px_0_5px_rgba(0,0,0,0.05)]">
+                                <div className="flex h-full w-12 shrink-0 items-center justify-center border-r border-slate-300 text-center text-[7px] font-bold">AM Total</div>
+                                <div className="flex h-full w-12 shrink-0 items-center justify-center border-r border-slate-300 text-center text-[7px] font-bold">PM Total</div>
+                                <div className="flex h-full w-12 shrink-0 items-center justify-center text-center text-[8px] font-bold">Total</div>
                               </div>
                             </div>
 
@@ -1282,10 +1290,10 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
                                     </div>
                                   ))}
                               </div>
-                              <div className="sticky right-0 z-20 flex w-12 shrink-0 border-l border-slate-400 bg-white shadow-[-2px_0_5px_rgba(0,0,0,0.05)]">
-                                <div className="flex flex-1 items-center justify-center text-xs font-bold">
-                                  {dockTrucks.length}
-                                </div>
+                              <div className="sticky right-0 z-20 flex shrink-0 border-l border-slate-400 bg-white shadow-[-2px_0_5px_rgba(0,0,0,0.05)]">
+                                <div className="flex w-12 shrink-0 items-center justify-center border-r border-slate-300 text-xs font-bold text-amber-700">{amTotal}</div>
+                                <div className="flex w-12 shrink-0 items-center justify-center border-r border-slate-300 text-xs font-bold text-blue-700">{pmTotal}</div>
+                                <div className="flex w-12 shrink-0 items-center justify-center text-xs font-bold">{dockTrucks.length}</div>
                               </div>
                             </div>
                           </div>
