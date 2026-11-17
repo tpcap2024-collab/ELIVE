@@ -113,10 +113,9 @@ export function IncidentCenter({ trucks, onUpdateTruck }: IncidentCenterProps) {
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-slate-50">
       <header className="shrink-0 border-b border-slate-200 bg-white px-5 py-3">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
-          <div>
-            <h2 className="flex items-center gap-2 text-xl font-black text-slate-900"><AlertTriangle className="h-6 w-6 text-red-500" />ศูนย์ติดตามปัญหา</h2>
-            <p className="mt-1 text-sm text-slate-500">รวบรวม มอบหมาย ติดตาม และยืนยันการแก้ไขปัญหาประจำวัน</p>
-          </div>
+          <div className="flex min-h-[58px] items-center">
+              <h2 className="flex items-center gap-3 text-2xl font-black leading-none tracking-tight text-slate-950"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-50 ring-1 ring-red-200"><AlertTriangle className="h-6 w-6 text-red-600" /></span>ศูนย์ติดตามปัญหา</h2>
+            </div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-5 xl:ml-auto">
             {[
               ['ทั้งหมด', incidents.length, 'border-slate-200 bg-slate-50 text-slate-800'],
@@ -124,7 +123,7 @@ export function IncidentCenter({ trucks, onUpdateTruck }: IncidentCenterProps) {
               ['อยู่ระหว่างดำเนินการ', counts.IN_PROGRESS, 'border-amber-200 bg-amber-50 text-amber-800'],
               ['รอตรวจสอบ', counts.RESOLVED, 'border-blue-200 bg-blue-50 text-blue-800'],
               ['ดำเนินการเสร็จสิ้น', counts.CLOSED, 'border-emerald-200 bg-emerald-50 text-emerald-800'],
-            ].map(([label, value, style]) => <div key={String(label)} className={`min-w-[105px] rounded-xl border px-3 py-2 ${style}`}><p className="text-[10px] font-bold">{label}</p><p className="text-xl font-black">{value}</p></div>)}
+            ].map(([label, value, style]) => <div key={String(label)} className={`min-w-[118px] rounded-xl border px-3 py-2.5 shadow-sm ${style}`}><p className="whitespace-nowrap text-[11px] font-extrabold leading-4">{label}</p><p className="mt-0.5 text-2xl font-black leading-none">{value}</p></div>)}
           </div>
         </div>
         <div className="mt-3 grid gap-2 md:grid-cols-[1fr_190px_160px]">
