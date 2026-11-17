@@ -1599,48 +1599,15 @@ export function LiveMap({
       )}
 
       {showRouteSummary && (
-        <div className="shrink-0 rounded-t-xl border border-b-0 border-slate-200 bg-white px-4 py-3 shadow-md">
-          {!selectedGpsLocation ? (
-            <div className="py-3 text-center text-sm font-semibold text-slate-500">ไม่พบข้อมูล GPS ของรถคันนี้</div>
-          ) : (
-            <div className="space-y-3">
-              <div className="flex min-w-0 items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-left shadow-sm">
-                <div className="min-w-0">
-                  <div className="truncate text-lg font-black text-slate-950">
-                    {selectedTruck?.route || '-'} · {selectedTruck?.licensePlate || selectedGpsLocation.licensePlate || '-'}
-                  </div>
-                  <div className="mt-1 truncate text-sm font-semibold text-slate-700" title={stationName}>{stationName}</div>
-                </div>
-                <span className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-black ${
-                  selectedFreshness ? getFreshnessClasses(selectedFreshness) : 'border-slate-200 bg-slate-100 text-slate-600'
-                }`}>
-                  {Number(selectedGpsLocation.speed) > 0 ? 'กำลังวิ่ง' : 'รถจอด'}
-                </span>
-              </div>
-              <div className="grid grid-cols-3 gap-3 text-center">
-                <div className="min-w-0 rounded-xl border border-blue-200 bg-blue-50 px-3 py-3 shadow-sm">
-                  <div className="text-xs font-black text-blue-700">ระยะทาง</div>
-                  <div className="mt-1 truncate text-lg font-black leading-tight text-slate-950">
-                    {hasNoWork ? 'ไม่มีงาน' : hasCompletedTrip ? 'จบงานแล้ว' : insideSiteBoundary ? 'ในพื้นที่' : routeResult ? `${routeResult.distanceKilometers.toFixed(1)} กม.` : isRouteLoading ? '...' : '-'}
-                  </div>
-                </div>
-                <div className="min-w-0 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-3 shadow-sm">
-                  <div className="text-xs font-black text-indigo-700">เวลาเดินทาง</div>
-                  <div className="mt-1 truncate text-lg font-black leading-tight text-slate-950">
-                    {hasCompletedTrip ? '-' : insideSiteBoundary ? '-' : routeResult ? formatDuration(routeResult.durationMinutes) : isRouteLoading ? '...' : '-'}
-                  </div>
-                </div>
-                <div className="min-w-0 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-3 shadow-sm">
-                  <div className="text-xs font-black text-emerald-700">คาดว่าจะถึง</div>
-                  <div className="mt-1 truncate text-lg font-black leading-tight text-slate-950">
-                    {hasCompletedTrip ? '-' : insideSiteBoundary ? 'ARRIVED' : routeResult ? formatEta(routeResult.estimatedArrival).split(', ').pop() : isRouteLoading ? '...' : '-'}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
+        <div className="shrink-0 rounded-t-xl border border-b-0 border-slate-200 bg-white px-3 py-2 shadow-sm">
+          {!selectedGpsLocation ? <div className="py-2 text-center text-sm font-semibold text-slate-500">ไม่พบข้อมูล GPS ของรถคันนี้</div> : <>
+            <div className="flex min-w-0 items-center justify-between gap-3"><div className="min-w-0"><div className="truncate text-base font-black text-slate-950">{selectedTruck?.route || '-'} · {selectedTruck?.licensePlate || selectedGpsLocation.licensePlate || '-'}</div><div className="truncate text-xs font-semibold text-slate-500">{stationName} · GPS {gpsAgeText}</div></div><span className={`shrink-0 rounded-full border px-3 py-1 text-[11px] font-black ${selectedFreshness ? getFreshnessClasses(selectedFreshness) : 'border-slate-200 bg-slate-100 text-slate-600'}`}>{Number(selectedGpsLocation.speed)>0?'กำลังวิ่ง':'รถจอด'}</span></div>
+            <button type="button" onClick={()=>setIsDestinationOpen(true)} className="mt-2 flex h-11 w-full items-center justify-between rounded-xl border border-violet-200 bg-violet-50 px-3 text-left"><span className="min-w-0"><span className="block text-[10px] font-black uppercase text-violet-600">ปลายทาง</span><span className="block truncate text-sm font-bold text-slate-900">{selectedSupplier ? `${selectedSupplier.siteId} · ${selectedSupplier.supplierName}` : 'TPCAP-LSP'}</span></span><Navigation className="h-5 w-5 shrink-0 text-violet-600"/></button>
+            <div className="mt-2 grid grid-cols-3 divide-x divide-slate-200 rounded-lg border bg-white text-center"><div className="px-2 py-2"><div className="text-[9px] font-bold text-blue-600">ระยะทาง</div><div className="text-sm font-black">{selectedSupplier ? (routeResult ? `${routeResult.distanceKilometers.toFixed(1)} km` : '-') : hasCompletedTrip ? 'จบงานแล้ว' : insideSiteBoundary ? 'ในพื้นที่' : routeResult ? `${routeResult.distanceKilometers.toFixed(1)} km` : '-'}</div></div><div className="px-2 py-2"><div className="text-[9px] font-bold text-indigo-600">เวลา</div><div className="text-sm font-black">{selectedSupplier ? (routeResult ? formatDuration(routeResult.durationMinutes) : '-') : hasCompletedTrip||insideSiteBoundary?'-':routeResult?formatDuration(routeResult.durationMinutes):'-'}</div></div><div className="px-2 py-2"><div className="text-[9px] font-bold text-emerald-600">ETA</div><div className="text-sm font-black">{selectedSupplier ? (routeResult ? formatEta(routeResult.estimatedArrival).split(', ').pop() : '-') : hasCompletedTrip?'-':insideSiteBoundary?'ARRIVED':routeResult?formatEta(routeResult.estimatedArrival).split(', ').pop():'-'}</div></div></div>
+          </>}
         </div>
       )}
+
       <div
         className={`relative min-h-[420px] flex-1 overflow-hidden border-slate-200 bg-slate-100 ${
           showRouteSummary ? 'rounded-b-xl border' : 'border-x'
@@ -1671,6 +1638,7 @@ export function LiveMap({
         )}
       </div>
       )}
+      {showRouteSummary&&isDestinationOpen&&selectedGpsLocation&&<div className="absolute inset-0 z-[1500] flex items-end bg-slate-950/35" onClick={()=>setIsDestinationOpen(false)}><div className="max-h-[62%] w-full rounded-t-3xl bg-white shadow-2xl" onClick={event=>event.stopPropagation()}><div className="mx-auto mt-2 h-1.5 w-12 rounded-full bg-slate-300"/><div className="flex items-center justify-between border-b px-4 py-3"><h3 className="text-lg font-black">เลือกปลายทาง</h3><button type="button" onClick={()=>setIsDestinationOpen(false)} className="p-2"><X className="h-5 w-5"/></button></div><div className="p-3"><input autoFocus value={supplierSearch} onChange={e=>setSupplierSearch(e.target.value)} placeholder={`ค้นหา Supplier (${activeSuppliers.length})`} className="h-11 w-full rounded-xl border px-3 text-sm"/></div><div className="max-h-[calc(62vh-130px)] overflow-y-auto px-3 pb-4"><button type="button" onClick={()=>{setDestinationId('TPCAP');setSupplierSearch('');setIsDestinationOpen(false);}} className="flex w-full justify-between rounded-xl px-3 py-3 text-left font-black hover:bg-red-50"><span>TPCAP-LSP</span><span className="text-xs font-normal">ค่าเริ่มต้น</span></button>{!supplierSearch&&nearbySuppliers.length>0&&<div className="px-3 pb-1 pt-4 text-[10px] font-black uppercase text-slate-400">Supplier ใกล้รถ</div>}{supplierOptions.map(supplier=>{const near=nearbySuppliers.find(item=>item.supplier.supplierCode===supplier.supplierCode&&item.supplier.siteId===supplier.siteId);const value=`SUPPLIER:${supplier.supplierCode}|${supplier.siteId}`;return <button type="button" key={value} onClick={()=>{setDestinationId(value);setSupplierSearch('');setIsDestinationOpen(false);}} className={`flex w-full items-start justify-between rounded-xl px-3 py-3 text-left ${destinationId===value?'bg-violet-50':'hover:bg-slate-50'}`}><span className="min-w-0"><b className="block">{supplier.siteId}</b><span className="block truncate text-xs text-slate-500">{supplier.supplierName}</span></span>{near&&<span className="text-xs font-bold text-violet-600">{(near.distanceMeters/1000).toFixed(1)} km</span>}</button>;})}</div></div></div>}
       {(gpsDockError || isGpsDockLoading) && selectedGpsLocation && <div className="pointer-events-none absolute bottom-32 left-1/2 z-[700] -translate-x-1/2 rounded-lg border bg-white px-3 py-2 text-xs shadow-lg">{isGpsDockLoading ? 'กำลังอ่านสถานะ Geofence...' : gpsDockError}</div>}
     </div>
   );
