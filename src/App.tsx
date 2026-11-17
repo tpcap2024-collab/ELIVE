@@ -28,6 +28,11 @@ import {
 import {
   changeElivePassword,
   confirmWorkDetail,
+  createSupplierLocation,
+  deleteSupplierLocation,
+  fetchSupplierLocations,
+  importSupplierLocations,
+  updateSupplierLocation,
   ELIVE_UNAUTHORIZED_EVENT,
   EliveAuthUser,
   EliveUserRole,
@@ -339,6 +344,7 @@ export default function App() {
       setTrucks([]);
       trucksRef.current = [];
       setGpsLocations([]);
+      setSupplierLocations([]);
       setSheetError(null);
       setHasLoadedSuccessfully(false);
       setIsRefreshing(false);
@@ -496,6 +502,22 @@ export default function App() {
       }
     }
   }, [selectedDate]);
+  const loadSupplierLocations = useCallback(async () => {
+    if (!authenticatedUser || !hasPermission(authenticatedUser.role, 'VIEW_SUPPLIER')) return;
+    setIsLoadingSuppliers(true);
+    try {
+      const result = await fetchSupplierLocations();
+      setSupplierLocations(result.rows);
+      setSheetError(null);
+    } catch (error) {
+      if (isEliveUnauthorizedError(error)) return;
+      console.error('Unable to load Supplier Locations:', error);
+      setSheetError(error instanceof Error ? error.message : 'ไม่สามารถโหลด Supplier Locations ได้');
+    } finally {
+      setIsLoadingSuppliers(false);
+    }
+  }, [authenticatedUser]);
+
   useEffect(() => {
     if (!isAppLoggedIn) return;
 
@@ -503,6 +525,10 @@ export default function App() {
     const intervalId = window.setInterval(() => void loadData(), REFRESH_INTERVAL);
     return () => window.clearInterval(intervalId);
   }, [isAppLoggedIn, loadData]);
+
+  useEffect(() => {
+    if (isAppLoggedIn && currentView === 'supplier') void loadSupplierLocations();
+  }, [isAppLoggedIn, currentView, loadSupplierLocations]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -1597,7 +1623,17 @@ export default function App() {
             )}
             {canViewSupplier && currentView === 'supplier' && (
               <main className="min-h-0 min-w-0 flex-1 overflow-auto bg-slate-50">
-                <SupplierManagement role={currentUserRole} rows={supplierLocations} loading={isLoadingSuppliers} onRefresh={async () => { setIsLoadingSuppliers(true); try { setSupplierLocations(current => [...current]); } finally { setIsLoadingSuppliers(false); } }} onViewMap={() => changeView('map')} />
+                <SupplierManagement
+                  role={currentUserRole}
+                  rows={supplierLocations}
+                  loading={isLoadingSuppliers}
+                  onRefresh={loadSupplierLocations}
+                  onCreate={async row => { await createSupplierLocation({ ...row, updatedBy: authenticatedUser.username }); await loadSupplierLocations(); }}
+                  onUpdate={async (originalSupplierCode, originalSiteId, row) => { await updateSupplierLocation(originalSupplierCode, originalSiteId, { ...row, updatedBy: authenticatedUser.username }); await loadSupplierLocations(); }}
+                  onDelete={async row => { await deleteSupplierLocation(row.supplierCode, row.siteId, authenticatedUser.username); await loadSupplierLocations(); }}
+                  onImport={async (rows, mode) => { await importSupplierLocations(rows.map(row => ({ ...row, updatedBy: authenticatedUser.username })), mode); await loadSupplierLocations(); }}
+                  onViewMap={() => changeView('map')}
+                />
               </main>
             )}
             {canViewReport && currentView === 'report' && (
