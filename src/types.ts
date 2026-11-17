@@ -108,3 +108,21 @@ export interface Incident {
   remarks: IncidentRemark[];
 }
 ``
+
+export interface SupplierLocation {
+  sheetRow?: number;
+  supplierCode: string;
+  supplierName: string;
+  siteId: string;
+  latitude: number;
+  longitude: number;
+  radiusMeter: number;
+  status: 'ACTIVE' | 'INACTIVE';
+  remark: string;
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
+export type MapDestination =
+  | { type: 'TPCAP'; id: string; name: string; latitude: number; longitude: number }
+  | { type: 'SUPPLIER'; id: string; name: string; latitude: number; longitude: number; supplier: SupplierLocation };
