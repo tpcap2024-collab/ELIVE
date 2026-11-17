@@ -158,11 +158,12 @@ const DEFAULT_MAP_CENTER:
     101.01501162061923,
   ];
 
-const TPCAP_POSITION:
-  [number, number] = [
-    13.623729606202758,
-    101.01501162061923,
-  ];
+const TPCAP_POSITION: [number, number] = [
+  13.623729606202758,
+  101.01501162061923,
+];
+const SUPPLIER_CACHE_KEY = 'elive:supplier-locations:v1';
+const SUPPLIER_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
 function parseGpsDateTime(
   value?: string
@@ -694,24 +695,44 @@ export function LiveMap({
     if (supplierLocations.length > 0) {
       setLiveMapSuppliers(supplierLocations);
       setSupplierLoadError(null);
+      try { localStorage.setItem(SUPPLIER_CACHE_KEY, JSON.stringify({ savedAt: Date.now(), rows: supplierLocations })); } catch {}
     }
   }, [supplierLocations]);
   useEffect(() => {
     if (supplierLocations.length > 0 || liveMapSuppliers.length > 0 || isSupplierLoading) return;
     let cancelled = false;
-    const load = async () => {
+    const loadSuppliers = async () => {
       setIsSupplierLoading(true);
       setSupplierLoadError(null);
       try {
-        const result = await fetchSupplierLocations();
-        if (!cancelled) setLiveMapSuppliers(result.rows);
-      } catch (error) {
-        if (!cancelled) setSupplierLoadError(error instanceof Error ? error.message : 'โหลด Supplier ไม่สำเร็จ');
+        let cachedRows: SupplierLocation[] = [];
+        try {
+          const raw = localStorage.getItem(SUPPLIER_CACHE_KEY);
+          if (raw) {
+            const cached = JSON.parse(raw) as { savedAt?: number; rows?: SupplierLocation[] };
+            if (Array.isArray(cached.rows)) cachedRows = cached.rows;
+            if (cachedRows.length > 0 && Date.now() - Number(cached.savedAt || 0) < SUPPLIER_CACHE_TTL_MS) {
+              if (!cancelled) setLiveMapSuppliers(cachedRows);
+              return;
+            }
+          }
+        } catch {}
+        try {
+          const result = await fetchSupplierLocations();
+          if (!cancelled) setLiveMapSuppliers(result.rows);
+          try { localStorage.setItem(SUPPLIER_CACHE_KEY, JSON.stringify({ savedAt: Date.now(), rows: result.rows })); } catch {}
+        } catch (error) {
+          if (cachedRows.length > 0) {
+            if (!cancelled) setLiveMapSuppliers(cachedRows);
+          } else if (!cancelled) {
+            setSupplierLoadError(error instanceof Error ? error.message : 'โหลด Supplier ไม่สำเร็จ');
+          }
+        }
       } finally {
         if (!cancelled) setIsSupplierLoading(false);
       }
     };
-    void load();
+    void loadSuppliers();
     return () => { cancelled = true; };
   }, [supplierLocations.length, liveMapSuppliers.length, isSupplierLoading]);
   const gpsByPlate = useMemo(() => {
