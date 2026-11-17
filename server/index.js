@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '87';
+const API_VERSION = '88';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -241,11 +241,11 @@ const ROLE_LEVELS = Object.freeze({
 });
 const ROLE_NAMES = Object.freeze(Object.keys(ROLE_LEVELS));
 const ROLE_PERMISSIONS = Object.freeze({
-  TV_VIEWER: Object.freeze(['VIEW_DASHBOARD', 'VIEW_LIVE_MAP', 'VIEW_PLATFORM', 'VIEW_REPORT']),
+  TV_VIEWER: Object.freeze(['VIEW_DASHBOARD', 'VIEW_LIVE_MAP', 'VIEW_PLATFORM', 'VIEW_SUPPLIER']),
   OPERATOR: Object.freeze(['VIEW_DASHBOARD', 'VIEW_LIVE_MAP', 'USE_MOBILE_MODE', 'STAMP_TRUCK', 'SUBMIT_ACTION']),
-  PLANNER: Object.freeze(['VIEW_DASHBOARD', 'VIEW_LIVE_MAP', 'VIEW_PLATFORM', 'VIEW_REPORT', 'USE_MOBILE_MODE', 'STAMP_TRUCK', 'SUBMIT_ACTION', 'VIEW_ACTION_CENTER', 'MANAGE_PLAN']),
-  SUPERVISOR: Object.freeze(['VIEW_DASHBOARD', 'VIEW_LIVE_MAP', 'VIEW_PLATFORM', 'VIEW_REPORT', 'SUBMIT_ACTION', 'VIEW_ACTION_CENTER']),
-  ADMIN: Object.freeze(['VIEW_DASHBOARD', 'VIEW_LIVE_MAP', 'VIEW_PLATFORM', 'VIEW_REPORT', 'USE_MOBILE_MODE', 'STAMP_TRUCK', 'SUBMIT_ACTION', 'VIEW_ACTION_CENTER', 'MANAGE_PLAN', 'MANAGE_SYSTEM']),
+  PLANNER: Object.freeze(['VIEW_DASHBOARD', 'VIEW_LIVE_MAP', 'VIEW_PLATFORM', 'VIEW_REPORT', 'USE_MOBILE_MODE', 'STAMP_TRUCK', 'SUBMIT_ACTION', 'VIEW_ACTION_CENTER', 'MANAGE_PLAN', 'VIEW_SUPPLIER', 'MANAGE_SUPPLIER']),
+  SUPERVISOR: Object.freeze(['VIEW_DASHBOARD', 'VIEW_LIVE_MAP', 'VIEW_PLATFORM', 'VIEW_REPORT', 'SUBMIT_ACTION', 'VIEW_ACTION_CENTER', 'VIEW_SUPPLIER']),
+  ADMIN: Object.freeze(['VIEW_DASHBOARD', 'VIEW_LIVE_MAP', 'VIEW_PLATFORM', 'VIEW_REPORT', 'USE_MOBILE_MODE', 'STAMP_TRUCK', 'SUBMIT_ACTION', 'VIEW_ACTION_CENTER', 'MANAGE_PLAN', 'VIEW_SUPPLIER', 'MANAGE_SUPPLIER', 'MANAGE_SYSTEM']),
 });
 function roleHasPermission(role, permission) {
   return Boolean(ROLE_PERMISSIONS[cleanText(role).toUpperCase()]?.includes(permission));
@@ -653,6 +653,10 @@ function getAuditDescriptor(req) {
       targetIdHash: null,
     };
   }
+  if (method === 'POST' && path === '/api/suppliers') return { action: 'SUPPLIER_CREATE', targetType: 'SUPPLIER_LOCATION', targetIdHash: hashAuditValue(`${req.body?.row?.supplierCode}|${req.body?.row?.siteId}`) };
+  if (method === 'PUT' && /^\/api\/suppliers\/[^/]+\/[^/]+$/.test(path)) return { action: 'SUPPLIER_UPDATE', targetType: 'SUPPLIER_LOCATION', targetIdHash: hashAuditValue(path) };
+  if (method === 'DELETE' && /^\/api\/suppliers\/[^/]+\/[^/]+$/.test(path)) return { action: 'SUPPLIER_DEACTIVATE', targetType: 'SUPPLIER_LOCATION', targetIdHash: hashAuditValue(path) };
+  if (method === 'POST' && path === '/api/suppliers/import') return { action: 'SUPPLIER_IMPORT', targetType: 'SUPPLIER_LOCATIONS', targetIdHash: hashAuditValue(String(req.body?.rows?.length || 0)) };
   if (method === 'POST' && path === '/api/cache/daily-plan/clear') {
     return {
       action: 'DAILY_PLAN_CACHE_CLEAR',
@@ -5336,6 +5340,40 @@ function normalizeCodeRun(value) {
   return codeRun;
 }
 
+function normalizeSupplierLocation(body) {
+  const source = body?.row && typeof body.row === 'object' ? body.row : body;
+  if (!source || typeof source !== 'object' || Array.isArray(source)) throw new Error('Supplier data is required.');
+  const row = {
+    supplierCode: cleanText(source.supplierCode).toUpperCase(),
+    supplierName: cleanText(source.supplierName),
+    siteId: cleanText(source.siteId).toUpperCase(),
+    latitude: Number(source.latitude),
+    longitude: Number(source.longitude),
+    radiusMeter: Number(source.radiusMeter),
+    status: cleanText(source.status || 'ACTIVE').toUpperCase(),
+    remark: cleanText(source.remark),
+    updatedBy: cleanText(source.updatedBy || 'SYSTEM'),
+  };
+  if (!row.supplierCode || !row.supplierName || !row.siteId) throw new Error('Supplier Code, Supplier Name and Site ID are required.');
+  if (!Number.isFinite(row.latitude) || row.latitude < -90 || row.latitude > 90) throw new Error('Latitude is invalid.');
+  if (!Number.isFinite(row.longitude) || row.longitude < -180 || row.longitude > 180) throw new Error('Longitude is invalid.');
+  if (!Number.isFinite(row.radiusMeter) || row.radiusMeter < 100 || row.radiusMeter > 2000) throw new Error('Radius Meter must be between 100 and 2000.');
+  if (!['ACTIVE', 'INACTIVE'].includes(row.status)) throw new Error('Status must be ACTIVE or INACTIVE.');
+  return row;
+}
+function normalizeSupplierImportRows(value) {
+  if (!Array.isArray(value) || !value.length) throw new Error('At least one Supplier row is required.');
+  if (value.length > 1000) throw new Error('Supplier import cannot exceed 1000 rows.');
+  const keys = new Set();
+  return value.map((item, index) => {
+    let row;
+    try { row = normalizeSupplierLocation(item); } catch (error) { throw new Error(`Supplier row ${index + 1}: ${getErrorMessage(error)}`); }
+    const key = `${row.supplierCode}|${row.siteId}`;
+    if (keys.has(key)) throw new Error(`Supplier row ${index + 1}: duplicate Supplier Code + Site ID.`);
+    keys.add(key);
+    return row;
+  });
+}
 function normalizeMasterPlanRow(body) {
   const source =
     body?.row && typeof body.row === 'object' ? body.row : body;
@@ -5656,6 +5694,9 @@ app.get(['/health', '/api/health'], (req, res) => {
       '/api/gps/dock/evaluate',
       '/api/gps/vehicle-cycle',
       '/api/gps/worker-status',
+      '/api/suppliers',
+      '/api/suppliers/import',
+      '/api/suppliers/:supplierCode/:siteId',
       '/api/master-plan',
       '/api/master-plan/rows',
       'DELETE /api/master-plan/rows',
@@ -6103,6 +6144,50 @@ app.get('/api/trucks', requireAuthentication, requirePermission('VIEW_DASHBOARD'
   }
 });
 
+app.get('/api/suppliers', requireAuthentication, requirePermission('VIEW_SUPPLIER'), async (req, res) => {
+  try {
+    const result = await requestAppsScriptGet('getSuppliers');
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    return res.status(200).json(result);
+  } catch (error) { return sendRouteError(res, error, 'Unable to retrieve Supplier Locations.', 502); }
+});
+app.post('/api/suppliers', requireAuthentication, requirePermission('MANAGE_SUPPLIER'), async (req, res) => {
+  try {
+    const row = normalizeSupplierLocation({ ...req.body, row: { ...(req.body?.row || req.body), updatedBy: req.auth.username } });
+    const result = await requestAppsScriptPost('createSupplier', { row });
+    req.auditDetails = { supplierCode: row.supplierCode, siteId: row.siteId };
+    return res.status(201).json(result);
+  } catch (error) { return sendRouteError(res, error, 'Unable to create Supplier Location.'); }
+});
+app.put('/api/suppliers/:supplierCode/:siteId', requireAuthentication, requirePermission('MANAGE_SUPPLIER'), async (req, res) => {
+  try {
+    const originalSupplierCode = cleanText(req.params.supplierCode).toUpperCase();
+    const originalSiteId = cleanText(req.params.siteId).toUpperCase();
+    const row = normalizeSupplierLocation({ ...req.body, row: { ...(req.body?.row || req.body), updatedBy: req.auth.username } });
+    const result = await requestAppsScriptPost('updateSupplier', { originalSupplierCode, originalSiteId, row });
+    req.auditDetails = { originalSupplierCode, originalSiteId, supplierCode: row.supplierCode, siteId: row.siteId };
+    return res.status(200).json(result);
+  } catch (error) { return sendRouteError(res, error, 'Unable to update Supplier Location.'); }
+});
+app.delete('/api/suppliers/:supplierCode/:siteId', requireAuthentication, requirePermission('MANAGE_SUPPLIER'), async (req, res) => {
+  try {
+    const supplierCode = cleanText(req.params.supplierCode).toUpperCase();
+    const siteId = cleanText(req.params.siteId).toUpperCase();
+    const result = await requestAppsScriptPost('deleteSupplier', { supplierCode, siteId, updatedBy: req.auth.username });
+    req.auditDetails = { supplierCode, siteId, softDelete: true };
+    return res.status(200).json(result);
+  } catch (error) { return sendRouteError(res, error, 'Unable to deactivate Supplier Location.'); }
+});
+app.post('/api/suppliers/import', requireAuthentication, requirePermission('MANAGE_SUPPLIER'), async (req, res) => {
+  try {
+    const rows = normalizeSupplierImportRows(req.body?.rows).map(row => ({ ...row, updatedBy: req.auth.username }));
+    const mode = cleanText(req.body?.mode || 'APPEND').toUpperCase();
+    if (!['APPEND', 'REPLACE'].includes(mode)) throw new Error('mode must be APPEND or REPLACE.');
+    const result = await requestAppsScriptPost('importSuppliers', { rows, mode }, APPS_SCRIPT_PLAN_CREATE_TIMEOUT_MS);
+    req.auditDetails = { requestedCount: rows.length, mode };
+    return res.status(200).json(result);
+  } catch (error) { return sendRouteError(res, error, 'Unable to import Supplier Locations.'); }
+});
 app.get('/api/master-plan', requireAuthentication, requirePermission('MANAGE_PLAN'), async (req, res) => {
   try {
     const forceRefresh =
