@@ -2082,6 +2082,102 @@ export async function fetchRouteToTpcap(
     },
   };
 }
+export async function fetchRouteToDestination(
+  latitude: number,
+  longitude: number,
+  destinationLatitude: number,
+  destinationLongitude: number,
+  destinationName: string
+): Promise<RouteToTpcapResult> {
+  if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) {
+    throw new Error('Latitude is invalid.');
+  }
+
+  if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+    throw new Error('Longitude is invalid.');
+  }
+
+  if (!Number.isFinite(destinationLatitude) || destinationLatitude < -90 || destinationLatitude > 90) throw new Error('Destination latitude is invalid.');
+  if (!Number.isFinite(destinationLongitude) || destinationLongitude < -180 || destinationLongitude > 180) throw new Error('Destination longitude is invalid.');
+  const query = new URLSearchParams({ lat:String(latitude), lng:String(longitude), destinationLat:String(destinationLatitude), destinationLng:String(destinationLongitude), destinationName, t:String(Date.now()) });
+
+  const data = await fetchApiRequest(`/api/route-preview?${query.toString()}`, {
+    method: 'GET',
+  });
+
+  if (data.success !== true) {
+    throw new Error('ระบบไม่สามารถยืนยันผลการคำนวณเส้นทางได้');
+  }
+
+  const distanceMeters = Number(data.distanceMeters);
+  const distanceKilometers = Number(data.distanceKilometers);
+  const durationSeconds = Number(data.durationSeconds);
+  const durationMinutes = Number(data.durationMinutes);
+
+  if (
+    !Number.isFinite(distanceMeters) ||
+    !Number.isFinite(distanceKilometers) ||
+    !Number.isFinite(durationSeconds) ||
+    !Number.isFinite(durationMinutes)
+  ) {
+    throw new Error('ข้อมูลระยะทางหรือเวลาเดินทางไม่ถูกต้อง');
+  }
+
+  const geometry = data.geometry;
+  if (
+    !geometry ||
+    geometry.type !== 'LineString' ||
+    !Array.isArray(geometry.coordinates)
+  ) {
+    throw new Error('ไม่พบข้อมูลเส้นทางสำหรับแสดงบนแผนที่');
+  }
+
+  const validCoordinates: number[][] = geometry.coordinates
+    .filter(
+      (coordinate: unknown): coordinate is unknown[] =>
+        Array.isArray(coordinate) && coordinate.length >= 2
+    )
+    .map((coordinate: unknown[]) => [
+      Number(coordinate[0]),
+      Number(coordinate[1]),
+    ])
+    .filter(
+      ([lng, lat]: number[]) =>
+        Number.isFinite(lng) &&
+        Number.isFinite(lat) &&
+        lng >= -180 &&
+        lng <= 180 &&
+        lat >= -90 &&
+        lat <= 90
+    );
+
+  if (validCoordinates.length < 2) {
+    throw new Error('ข้อมูลเส้นทางมีจำนวนพิกัดไม่เพียงพอ');
+  }
+
+  return {
+    success: true,
+    origin: {
+      latitude: Number(data.origin?.latitude),
+      longitude: Number(data.origin?.longitude),
+    },
+    destination: {
+      name: String(data.destination?.name || 'TPCAP'),
+      latitude: Number(data.destination?.latitude),
+      longitude: Number(data.destination?.longitude),
+    },
+    distanceMeters,
+    distanceKilometers,
+    durationSeconds,
+    durationMinutes,
+    estimatedArrival: String(data.estimatedArrival || ''),
+    estimatedArrivalBangkok: String(data.estimatedArrivalBangkok || ''),
+    geometry: {
+      type: 'LineString',
+      coordinates: validCoordinates,
+    },
+  };
+}
 
 function validateSupplierLocation(row: EditableSupplierLocation): EditableSupplierLocation {
   const value: EditableSupplierLocation = { supplierCode:String(row?.supplierCode||'').trim().toUpperCase(), supplierName:String(row?.supplierName||'').trim(), siteId:String(row?.siteId||'').trim().toUpperCase(), latitude:Number(row?.latitude), longitude:Number(row?.longitude), radiusMeter:Number(row?.radiusMeter), status:row?.status==='INACTIVE'?'INACTIVE':'ACTIVE', remark:String(row?.remark||'').trim(), updatedBy:String(row?.updatedBy||'SYSTEM').trim() };
