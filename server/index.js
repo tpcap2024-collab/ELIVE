@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '86';
+const API_VERSION = '87';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -89,7 +89,10 @@ const GPS_DWELL_THRESHOLD_MS = 3 * 60 * 1000;
 const GPS_STALE_THRESHOLD_MS = 5 * 60 * 1000;
 const GPS_MOVEMENT_GRACE_MS = 30 * 1000;
 const GPS_NEXT_TRIP_EARLY_WINDOW_MINUTES = 120;
-const GPS_OPERATION_CUTOFF_MINUTES = 20 * 60;
+const GPS_OPERATION_START_MINUTES = 5 * 60 + 50;
+const GPS_OPERATION_END_MINUTES = 18 * 60;
+const GPS_CLOSEOUT_END_MINUTES = 18 * 60 + 20;
+const GPS_OPERATION_CUTOFF_MINUTES = GPS_CLOSEOUT_END_MINUTES;
 const GPS_LSP_ARRIVAL_GROUP_WINDOW_MINUTES = 30;
 const GPS_DWELL_STATE_TTL_SECONDS = 36 * 60 * 60;
 const GPS_DWELL_KEY_PREFIX = 'elive:gps-dwell:';
@@ -130,6 +133,8 @@ const GPS_DAILY_CLOSEOUT_KEY_PREFIX = 'elive:gps-daily-closeout:';
 const GPS_DAILY_CLOSEOUT_TTL_SECONDS = 36 * 60 * 60;
 const GPS_BACKGROUND_WORKER_ENABLED = cleanText(process.env.GPS_BACKGROUND_WORKER_ENABLED || 'false').toLowerCase() === 'true';
 const GPS_BACKGROUND_WORKER_INTERVAL_MS = Math.max(15000, Number(process.env.GPS_BACKGROUND_WORKER_INTERVAL_MS || 60000));
+const GPS_BACKGROUND_WORKER_CLOSED_INTERVAL_MS = 15 * 60 * 1000;
+const GPS_BACKGROUND_WORKER_CLOSEOUT_INTERVAL_MS = 60 * 1000;
 const GPS_WORKER_LOCK_KEY = 'elive:gps-worker:leader';
 const GPS_WORKER_LOCK_SECONDS = Math.max(30, Math.ceil(GPS_BACKGROUND_WORKER_INTERVAL_MS / 1000) + 30);
 const GPS_WORKER_STATUS_KEY = 'elive:gps-worker:status';
@@ -946,20 +951,40 @@ function getBangkokMinuteOfDay(date = new Date()) {
   return hour * 60 + minute;
 }
 function getGpsOperationCutoffDate(operationDate) {
-  return parseBangkokDateTime(`${operationDate}T20:00:00+07:00`, 'operationCutoff');
+  return parseBangkokDateTime(`${operationDate}T18:20:00+07:00`, 'operationCutoff');
 }
 function getGpsOperationStateTtlSeconds(operationDate, now = new Date()) {
   const cutoffMs = getGpsOperationCutoffDate(operationDate).getTime();
   return Math.max(1, Math.floor((cutoffMs - now.getTime()) / 1000));
 }
+function getBangkokWeekday(date = new Date()) {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Bangkok',
+    weekday: 'short',
+  }).format(date);
+}
 function getGpsOperationDecision(date = new Date()) {
   const operationDate = getBangkokDateText(date);
   const minuteOfDay = getBangkokMinuteOfDay(date);
+  const weekday = getBangkokWeekday(date);
+  const isSunday = weekday === 'Sun';
+  const active = !isSunday && minuteOfDay >= GPS_OPERATION_START_MINUTES && minuteOfDay < GPS_OPERATION_END_MINUTES;
+  const closeout = !isSunday && minuteOfDay >= GPS_OPERATION_END_MINUTES && minuteOfDay < GPS_CLOSEOUT_END_MINUTES;
+  const mode = active ? 'ACTIVE' : closeout ? 'CLOSEOUT' : 'CLOSED';
+  const reason = isSunday
+    ? 'SUNDAY_CLOSED'
+    : minuteOfDay < GPS_OPERATION_START_MINUTES
+      ? 'BEFORE_OPERATION_HOURS'
+      : minuteOfDay >= GPS_CLOSEOUT_END_MINUTES
+        ? 'AFTER_OPERATION_HOURS'
+        : null;
   return {
-    operationDate,
-    minuteOfDay,
-    open: minuteOfDay < GPS_OPERATION_CUTOFF_MINUTES,
-    cutoffMinutes: GPS_OPERATION_CUTOFF_MINUTES,
+    operationDate, weekday, minuteOfDay, isSunday, active, closeout,
+    open: active || closeout, mode, reason,
+    startMinutes: GPS_OPERATION_START_MINUTES,
+    endMinutes: GPS_OPERATION_END_MINUTES,
+    closeoutEndMinutes: GPS_CLOSEOUT_END_MINUTES,
+    cutoffMinutes: GPS_CLOSEOUT_END_MINUTES,
     cutoffAt: getGpsOperationCutoffDate(operationDate).toISOString(),
   };
 }
@@ -3765,6 +3790,20 @@ async function writeGpsWorkerStatus(status) {
 }
 async function runGpsBackgroundCycle() {
   if (!GPS_BACKGROUND_WORKER_ENABLED || gpsWorkerCycleRunning || gpsWorkerStopping) return null;
+  const preLockOperation = getGpsOperationDecision(new Date());
+  if (preLockOperation.mode === 'CLOSED') {
+    return {
+      enabled: true, running: false, skipped: true,
+      reason: preLockOperation.reason || 'GPS_OPERATION_CLOSED',
+      mode: preLockOperation.mode,
+      operationDate: preLockOperation.operationDate,
+      weekday: preLockOperation.weekday,
+      nextCheckDelayMs: GPS_BACKGROUND_WORKER_CLOSED_INTERVAL_MS,
+      appsScriptCalled: false,
+      gpsSynchronizationCalled: false,
+      timestamp: new Date().toISOString(),
+    };
+  }
   gpsWorkerCycleRunning = true;
   const client = requireRedisClient();
   const lockToken = randomUUID();
@@ -3785,23 +3824,17 @@ async function runGpsBackgroundCycle() {
   };
   try {
     const operation = getGpsOperationDecision(new Date());
-    if (!operation.open) {
-      const pendingRetrySummary = await processDuePendingGpsStamps();
+    if (operation.mode === 'CLOSED') {
       const status = {
-        enabled: true,
-        running: true,
-        skipped: true,
-        reason: 'GPS_OPERATION_DAY_CLOSED',
-        operationDate: operation.operationDate,
-        cutoffAt: operation.cutoffAt,
-        pendingRetry: pendingRetrySummary,
+        enabled: true, running: false, skipped: true,
+        reason: operation.reason || 'GPS_OPERATION_CLOSED',
+        mode: operation.mode, operationDate: operation.operationDate,
+        weekday: operation.weekday, appsScriptCalled: false,
+        gpsSynchronizationCalled: false,
         lastCycleStartedAt: new Date(startedAt).toISOString(),
         lastCycleCompletedAt: new Date().toISOString(),
-        durationMs: Date.now() - startedAt,
-        ...summary,
+        durationMs: Date.now() - startedAt, ...summary,
       };
-      await writeGpsWorkerStatus(status);
-      console.log(JSON.stringify({ logType: 'ELIVE_GPS_WORKER', ...status }));
       return status;
     }
     if (await client.exists(APPS_SCRIPT_MUTATION_LOCK_KEY)) {
@@ -3822,6 +3855,22 @@ async function runGpsBackgroundCycle() {
       gps: Array.isArray(realtime?.gps) ? realtime.gps : [],
     };
     const noWorkCollector = new Map();
+    if (operation.mode === 'CLOSEOUT') {
+      summary.dailyPlanSource = dailyPlanResult.source;
+      summary.realtimeSource = realtimeSynchronization.source;
+      summary.dailyCloseout = await runGpsDailyCloseout(workerData, workerDate, operation.minuteOfDay);
+      const status = {
+        enabled: true, running: true, skipped: false,
+        mode: 'CLOSEOUT', operationDate: operation.operationDate,
+        weekday: operation.weekday,
+        lastCycleStartedAt: new Date(startedAt).toISOString(),
+        lastCycleCompletedAt: new Date().toISOString(),
+        durationMs: Date.now() - startedAt, ...summary,
+      };
+      await writeGpsWorkerStatus(status);
+      console.log(JSON.stringify({ logType: 'ELIVE_GPS_WORKER', ...status }));
+      return status;
+    }
     summary.dailyPlanSource = dailyPlanResult.source;
     summary.realtimeSource = realtimeSynchronization.source;
     summary.realtimeFallbackUsed = false;
@@ -4073,20 +4122,28 @@ async function stopDailyPlanRetentionScheduler() {
   const deadline = Date.now() + 15000;
   while (dailyPlanRetentionCycleRunning && Date.now() < deadline) await wait(250);
 }
+function getNextGpsWorkerDelay(date = new Date()) {
+  const operation = getGpsOperationDecision(date);
+  if (operation.mode === 'ACTIVE') return GPS_BACKGROUND_WORKER_INTERVAL_MS;
+  if (operation.mode === 'CLOSEOUT') return GPS_BACKGROUND_WORKER_CLOSEOUT_INTERVAL_MS;
+  return GPS_BACKGROUND_WORKER_CLOSED_INTERVAL_MS;
+}
 function scheduleNextGpsWorkerCycle(delayMs) {
   if (gpsWorkerStopping || !GPS_BACKGROUND_WORKER_ENABLED) return;
   gpsWorkerTimer = setTimeout(async () => {
     await runGpsBackgroundCycle();
-    scheduleNextGpsWorkerCycle(GPS_BACKGROUND_WORKER_INTERVAL_MS);
+    scheduleNextGpsWorkerCycle(getNextGpsWorkerDelay());
   }, delayMs);
+  gpsWorkerTimer.unref?.();
 }
 function startGpsBackgroundWorker() {
   if (!GPS_BACKGROUND_WORKER_ENABLED) {
     console.log('GPS Background Worker is disabled.');
     return;
   }
-  console.log(`GPS Background Worker enabled, interval ${GPS_BACKGROUND_WORKER_INTERVAL_MS} ms.`);
-  scheduleNextGpsWorkerCycle(2000);
+  const operation = getGpsOperationDecision(new Date());
+  console.log(`GPS Background Worker enabled: ACTIVE 05:50-18:00, CLOSEOUT 18:00-18:20, Sunday CLOSED, current mode ${operation.mode}.`);
+  scheduleNextGpsWorkerCycle(operation.mode === 'CLOSED' ? getNextGpsWorkerDelay() : 2000);
 }
 async function stopGpsBackgroundWorker() {
   gpsWorkerStopping = true;
@@ -5715,7 +5772,12 @@ app.get(['/health', '/api/health'], (req, res) => {
       nextTripEarlyWindowMinutes: GPS_NEXT_TRIP_EARLY_WINDOW_MINUTES,
       operationTimeZone: 'Asia/Bangkok',
       operationCutoffMinutes: GPS_OPERATION_CUTOFF_MINUTES,
-      operationCutoffTime: '20:00',
+      operationStartTime: '05:50',
+      operationEndTime: '18:00',
+      closeoutEndTime: '18:20',
+      sundayClosed: true,
+      closedWorkerIntervalMinutes: 15,
+      operationCutoffTime: '18:20',
       hardCutoffEnabled: true,
       manualStampAvailableAfterCutoff: true,
       morningPlanWindow: null,
