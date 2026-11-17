@@ -17,6 +17,7 @@ import {
 
 import {
   fetchGpsDockStatus,
+  fetchSupplierLocations,
   fetchRouteToTpcap,
   fetchRouteToDestination,
   GpsDockEvaluationResult,
@@ -654,6 +655,9 @@ export function LiveMap({
 
   const [destinationId, setDestinationId] = useState('TPCAP');
   const [supplierSearch, setSupplierSearch] = useState('');
+  const [liveMapSuppliers, setLiveMapSuppliers] = useState<SupplierLocation[]>(supplierLocations);
+  const [supplierLoadError, setSupplierLoadError] = useState<string | null>(null);
+  const [isSupplierLoading, setIsSupplierLoading] = useState(false);
   const [
     routeError,
     setRouteError,
@@ -686,6 +690,30 @@ export function LiveMap({
     setIsGpsDockLoading,
   ] = useState(false);
 
+  useEffect(() => {
+    if (supplierLocations.length > 0) {
+      setLiveMapSuppliers(supplierLocations);
+      setSupplierLoadError(null);
+    }
+  }, [supplierLocations]);
+  useEffect(() => {
+    if (supplierLocations.length > 0 || liveMapSuppliers.length > 0 || isSupplierLoading) return;
+    let cancelled = false;
+    const load = async () => {
+      setIsSupplierLoading(true);
+      setSupplierLoadError(null);
+      try {
+        const result = await fetchSupplierLocations();
+        if (!cancelled) setLiveMapSuppliers(result.rows);
+      } catch (error) {
+        if (!cancelled) setSupplierLoadError(error instanceof Error ? error.message : 'โหลด Supplier ไม่สำเร็จ');
+      } finally {
+        if (!cancelled) setIsSupplierLoading(false);
+      }
+    };
+    void load();
+    return () => { cancelled = true; };
+  }, [supplierLocations.length, liveMapSuppliers.length, isSupplierLoading]);
   const gpsByPlate = useMemo(() => {
     const map = new Map<string, GpsLocation>();
     for (const location of gpsLocations) {
@@ -730,20 +758,9 @@ export function LiveMap({
     if (!selectedTruck) return null;
     return gpsByPlate.get(normalizeLicensePlate(selectedTruck.licensePlate)) || null;
   }, [selectedTruck, gpsByPlate]);
-  const activeSuppliers = useMemo(() => supplierLocations.filter(s => s.status === 'ACTIVE' && Number.isFinite(s.latitude) && Number.isFinite(s.longitude)), [supplierLocations]);
-  const nearbySuppliers = useMemo(() => {
-    if (!selectedGpsLocation) return [];
-    return activeSuppliers
-      .map(supplier => ({ supplier, distanceMeters: calculateDistanceMeters(selectedGpsLocation.latitude, selectedGpsLocation.longitude, supplier.latitude, supplier.longitude) }))
-      .sort((a,b) => a.distanceMeters-b.distanceMeters)
-      .slice(0,5);
-  }, [activeSuppliers, selectedGpsLocation]);
-  const supplierOptions = useMemo(() => {
-    const q=supplierSearch.trim().toUpperCase();
-    if (q) return activeSuppliers.filter(s=>[s.supplierCode,s.supplierName,s.siteId].join(' ').toUpperCase().includes(q)).slice(0,50);
-    return nearbySuppliers.map(item=>item.supplier);
-  }, [activeSuppliers,nearbySuppliers,supplierSearch]);
-  const supplierDistanceByKey = useMemo(() => new Map(nearbySuppliers.map(item => [`${item.supplier.supplierCode}|${item.supplier.siteId}`, item.distanceMeters])), [nearbySuppliers]);
+  const activeSuppliers = useMemo(() => liveMapSuppliers.filter(s => s.status === 'ACTIVE' && Number.isFinite(s.latitude) && Number.isFinite(s.longitude)), [liveMapSuppliers]);
+  const nearbySuppliers = useMemo(() => !selectedGpsLocation ? [] : activeSuppliers.map(supplier => ({ supplier, distanceMeters: calculateDistanceMeters(selectedGpsLocation.latitude, selectedGpsLocation.longitude, supplier.latitude, supplier.longitude) })).filter(item => item.distanceMeters <= 20000).sort((a,b) => a.distanceMeters-b.distanceMeters).slice(0,5), [activeSuppliers, selectedGpsLocation]);
+  const supplierOptions = useMemo(() => { const q=supplierSearch.trim().toUpperCase(); return q ? activeSuppliers.filter(s=>[s.supplierCode,s.supplierName,s.siteId].join(' ').toUpperCase().includes(q)).slice(0,50) : nearbySuppliers.map(x=>x.supplier); }, [activeSuppliers,nearbySuppliers,supplierSearch]);
   const selectedSupplier = useMemo(() => activeSuppliers.find(s=>`SUPPLIER:${s.supplierCode}|${s.siteId}`===destinationId)||null,[activeSuppliers,destinationId]);
   const insideSiteBoundary = Boolean(selectedGpsLocation && isInsideTpcapSite(
     selectedGpsLocation.latitude, selectedGpsLocation.longitude
@@ -1432,8 +1449,6 @@ export function LiveMap({
     insideSiteBoundary,
     selectedTargetPosition,
     hasCompletedTrip,
-    selectedSupplier,
-    nearbySuppliers,
   ]);
 
   const handleRefresh =
@@ -1551,13 +1566,8 @@ export function LiveMap({
           ))}
         </select>
         <div className="flex min-w-0 flex-col gap-1 lg:w-[360px]">
-          <input value={supplierSearch} onChange={event=>setSupplierSearch(event.target.value)} disabled={!selectedGpsLocation} placeholder={`ค้นหา Supplier (${activeSuppliers.length})`} className="rounded-lg border px-3 py-1.5 text-xs disabled:bg-slate-100" />
-          <select value={destinationId} onChange={event=>setDestinationId(event.target.value)} disabled={!selectedGpsLocation} className="rounded-lg border border-violet-300 bg-white px-3 py-2 text-sm font-semibold disabled:bg-slate-100">
-            <option value="TPCAP">ปลายทาง: TPCAP</option>
-            {activeSuppliers.length===0&&<option value="" disabled>ยังไม่พบข้อมูล Supplier ใน Live Map</option>}
-            {activeSuppliers.length>0&&supplierOptions.length===0&&<option value="" disabled>ไม่พบ Supplier ตามคำค้นหา</option>}
-            {supplierOptions.map(supplier=>{const distance=supplierDistanceByKey.get(`${supplier.supplierCode}|${supplier.siteId}`);return <option key={`${supplier.supplierCode}|${supplier.siteId}`} value={`SUPPLIER:${supplier.supplierCode}|${supplier.siteId}`}>{supplier.siteId} · {supplier.supplierName}{distance!==undefined?` · ${(distance/1000).toFixed(1)} km`:''}</option>;})}
-          </select>
+          <input value={supplierSearch} onChange={event=>setSupplierSearch(event.target.value)} disabled={!selectedGpsLocation} placeholder={isSupplierLoading ? 'กำลังโหลด Supplier...' : `ค้นหา Supplier (${activeSuppliers.length})`} className="rounded-lg border px-3 py-1.5 text-xs disabled:bg-slate-100" />
+          <select value={destinationId} onChange={event=>setDestinationId(event.target.value)} disabled={!selectedGpsLocation} className="rounded-lg border border-violet-300 bg-white px-3 py-2 text-sm font-semibold disabled:bg-slate-100"><option value="TPCAP">ปลายทาง: TPCAP</option>{isSupplierLoading&&<option value="" disabled>กำลังโหลด Supplier...</option>}{supplierLoadError&&<option value="" disabled>โหลด Supplier ไม่สำเร็จ</option>}{!isSupplierLoading&&!supplierLoadError&&activeSuppliers.length===0&&<option value="" disabled>ยังไม่มี Supplier ACTIVE</option>}{supplierOptions.map(supplier=><option key={`${supplier.supplierCode}|${supplier.siteId}`} value={`SUPPLIER:${supplier.supplierCode}|${supplier.siteId}`}>{supplier.siteId} · {supplier.supplierName}</option>)}</select>
         </div>
         <button type="button" onClick={clearSelection} disabled={!selectedTruckId && !searchText} className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50"><X className="h-3.5 w-3.5" />ล้างการเลือก</button>
         <button type="button" onClick={handleRefresh} disabled={isRefreshing || !onRefresh} className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-50"><RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />Refresh</button>
