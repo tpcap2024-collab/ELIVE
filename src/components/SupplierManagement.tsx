@@ -124,13 +124,25 @@ export default function SupplierManagement({role,rows=[],loading=false,onRefresh
   return <div className="min-h-full bg-slate-50 p-3">
     <input ref={inputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={read}/>
     <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-      <div className="grid gap-3 border-b border-slate-200 p-4 xl:grid-cols-[260px_270px_minmax(0,1fr)] xl:items-center">
-        <div><h1 className="text-xl font-black text-slate-900">Supplier Locations</h1></div>
-        <div className="grid grid-cols-3 gap-2"><div className="rounded-lg border bg-slate-50 px-3 py-2"><p className="text-[9px] font-bold text-slate-500">ทั้งหมด</p><b>{rows.length}</b></div><div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-800"><p className="text-[9px] font-bold">ACTIVE</p><b>{rows.filter(r=>r.status==='ACTIVE').length}</b></div><div className="rounded-lg border border-slate-300 bg-slate-100 px-3 py-2"><p className="text-[9px] font-bold">INACTIVE</p><b>{rows.filter(r=>r.status==='INACTIVE').length}</b></div></div>
-        <div className="flex flex-wrap items-center justify-end gap-2 xl:flex-nowrap">
-          <button type="button" onClick={()=>XLSX.writeFile(workbook([]),'ELIVE_Supplier_Locations_Template.xlsx')} className="inline-flex h-10 items-center gap-2 rounded-xl border px-3 text-sm font-bold"><FileSpreadsheet className="h-4 w-4"/>Template</button>
-          <button type="button" onClick={()=>XLSX.writeFile(workbook(rows),'ELIVE_Supplier_Locations.xlsx')} className="inline-flex h-10 items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 text-sm font-bold text-emerald-700"><Download className="h-4 w-4"/>Download</button>
-          {canManage&&<><button type="button" onClick={()=>void deleteSelected()} disabled={busy||selectedRows.length===0} className="inline-flex h-10 items-center gap-2 rounded-xl bg-red-600 px-4 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-45"><Trash2 className="h-4 w-4"/>{deleteProgress||`ลบที่เลือก (${selectedRows.length})`}</button><button type="button" onClick={()=>inputRef.current?.click()} disabled={busy} className="inline-flex h-10 items-center gap-2 rounded-xl bg-blue-600 px-4 text-sm font-bold text-white disabled:opacity-50"><Upload className="h-4 w-4"/>Upload</button><button type="button" onClick={()=>{setForm(EMPTY);setDialog('create');}} className="inline-flex h-10 items-center gap-2 rounded-xl bg-amber-600 px-4 text-sm font-bold text-white"><Plus className="h-4 w-4"/>เพิ่ม Supplier</button></>}
+      <div className="border-b border-slate-200 bg-gradient-to-r from-white via-slate-50/70 to-blue-50/40 p-4">
+        <div className="flex flex-col gap-4 2xl:flex-row 2xl:items-center 2xl:justify-between">
+          <div className="min-w-[220px]">
+            <h1 className="text-xl font-black tracking-tight text-slate-900">Supplier Locations</h1>
+            <p className="mt-1 text-xs font-medium text-slate-500">จัดการข้อมูลและพิกัด Supplier สำหรับ Live Map</p>
+          </div>
+          <div className="flex flex-1 flex-col gap-3 xl:flex-row xl:items-center xl:justify-end">
+            <div className="grid grid-cols-3 gap-2">
+              <div className="min-w-[88px] rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm"><p className="text-[9px] font-bold uppercase tracking-wide text-slate-400">ทั้งหมด</p><div className="mt-0.5 text-lg font-black leading-none text-slate-800">{rows.length}</div></div>
+              <div className="min-w-[88px] rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 shadow-sm"><p className="text-[9px] font-bold uppercase tracking-wide text-emerald-600">Active</p><div className="mt-0.5 text-lg font-black leading-none text-emerald-700">{rows.filter(r=>r.status==='ACTIVE').length}</div></div>
+              <div className="min-w-[88px] rounded-xl border border-slate-300 bg-slate-100 px-3 py-2 shadow-sm"><p className="text-[9px] font-bold uppercase tracking-wide text-slate-500">Inactive</p><div className="mt-0.5 text-lg font-black leading-none text-slate-700">{rows.filter(r=>r.status==='INACTIVE').length}</div></div>
+            </div>
+            <div className="hidden h-10 w-px bg-slate-200 xl:block"/>
+            <div className="flex flex-wrap items-center gap-2 xl:flex-nowrap">
+              <button type="button" title="ดาวน์โหลดไฟล์ตัวอย่าง" onClick={()=>XLSX.writeFile(workbook([]),'ELIVE_Supplier_Locations_Template.xlsx')} className="inline-flex h-10 items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-50"><FileSpreadsheet className="h-4 w-4"/>Template</button>
+              <button type="button" title="ดาวน์โหลดข้อมูล Supplier" onClick={()=>XLSX.writeFile(workbook(rows),'ELIVE_Supplier_Locations.xlsx')} className="inline-flex h-10 items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 text-sm font-bold text-emerald-700 shadow-sm transition hover:bg-emerald-100"><Download className="h-4 w-4"/>Download</button>
+              {canManage&&<><button type="button" title="ปิดใช้งานรายการที่เลือก" onClick={()=>void deleteSelected()} disabled={busy||selectedRows.length===0} className="inline-flex h-10 items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 text-sm font-bold text-red-600 shadow-sm transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-40"><Trash2 className="h-4 w-4"/>{deleteProgress||`ลบ (${selectedRows.length})`}</button><button type="button" title="อัปโหลดไฟล์ Supplier" onClick={()=>inputRef.current?.click()} disabled={busy} className="inline-flex h-10 items-center gap-2 rounded-xl bg-blue-600 px-4 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700 disabled:opacity-50"><Upload className="h-4 w-4"/>Upload</button><button type="button" onClick={()=>{setForm(EMPTY);setDialog('create');}} className="inline-flex h-10 items-center gap-2 rounded-xl bg-amber-600 px-4 text-sm font-bold text-white shadow-sm transition hover:bg-amber-700"><Plus className="h-4 w-4"/>เพิ่ม Supplier</button></>}
+            </div>
+          </div>
         </div>
       </div>
       {message&&<div className="m-3 rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm font-semibold text-blue-800">{message}</div>}
