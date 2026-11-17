@@ -527,7 +527,7 @@ export default function App() {
   }, [isAppLoggedIn, loadData]);
 
   useEffect(() => {
-    if (isAppLoggedIn && (currentView === 'supplier' || currentView === 'map')) void loadSupplierLocations();
+    if (isAppLoggedIn && currentView === 'supplier') void loadSupplierLocations();
   }, [isAppLoggedIn, currentView, loadSupplierLocations]);
 
   useEffect(() => {
@@ -1610,7 +1610,7 @@ export default function App() {
 
             {currentView === 'map' && (
               <main className="flex-1 overflow-hidden bg-slate-50">
-                <LiveMap trucks={inboundTrucks} gpsLocations={filteredGpsLocations} supplierLocations={supplierLocations} initialTruckId={selectedGpsTruckId} onRefresh={loadData} isRefreshing={isRefreshing} />
+                <LiveMap trucks={inboundTrucks} gpsLocations={filteredGpsLocations} initialTruckId={selectedGpsTruckId} onRefresh={loadData} isRefreshing={isRefreshing} />
               </main>
             )}
             {canViewPlatform && currentView === 'diagram' && (
@@ -1678,7 +1678,6 @@ export default function App() {
                 <LiveMap
                   trucks={inboundTrucks}
                   gpsLocations={filteredGpsLocations}
-                  supplierLocations={supplierLocations}
                   initialTruckId={selectedGpsTruckId}
                   onRefresh={loadData}
                   isRefreshing={isRefreshing}
