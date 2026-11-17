@@ -6,7 +6,7 @@ import { createClient } from 'redis';
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
-const API_VERSION = '88';
+const API_VERSION = '89';
 
 const RAW_APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 const APPS_SCRIPT_URL = String(RAW_APPS_SCRIPT_URL)
@@ -5712,6 +5712,7 @@ app.get(['/health', '/api/health'], (req, res) => {
       '/api/plans/:codeRun/cancel',
       '/api/plans/:codeRun/restore',
       '/api/plans/:codeRun/confirm-work-detail',
+      '/api/route-preview',
       '/api/route-to-tpcap',
     ],
     sessionStore: { type: 'redis', configured: Boolean(REDIS_URL), ready: Boolean(redisReady && redisClient?.isReady), lastError: lastRedisError },
@@ -6678,6 +6679,30 @@ app.post('/api/trucks/update', requireAuthentication, requirePermission('SUBMIT_
   } catch (error) {
     return sendRouteError(res, error, 'Unable to update truck data.');
   }
+});
+
+app.get('/api/route-preview', requireAuthentication, requirePermission('VIEW_LIVE_MAP'), async (req, res) => {
+  try {
+    const latitude = Number(req.query.lat ?? req.query.latitude);
+    const longitude = Number(req.query.lng ?? req.query.longitude);
+    const destinationLatitude = Number(req.query.destinationLat);
+    const destinationLongitude = Number(req.query.destinationLng);
+    const destinationName = cleanText(req.query.destinationName || 'Destination').slice(0, 160);
+    if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) return res.status(400).json({ success:false, error:'Invalid latitude.' });
+    if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) return res.status(400).json({ success:false, error:'Invalid longitude.' });
+    if (!Number.isFinite(destinationLatitude) || destinationLatitude < -90 || destinationLatitude > 90) return res.status(400).json({ success:false, error:'Invalid destination latitude.' });
+    if (!Number.isFinite(destinationLongitude) || destinationLongitude < -180 || destinationLongitude > 180) return res.status(400).json({ success:false, error:'Invalid destination longitude.' });
+    const coordinates = `${longitude},${latitude};${destinationLongitude},${destinationLatitude}`;
+    const url = `${OSRM_BASE_URL}/route/v1/driving/${coordinates}?overview=full&geometries=geojson&steps=false&alternatives=false`;
+    const response = await fetchWithTimeout(url,{method:'GET',headers:{Accept:'application/json','User-Agent':`ELIVE-API/${API_VERSION}.0`}},ROUTE_TIMEOUT_MS);
+    const data = parseJsonText(await response.text(),'Routing service returned invalid JSON.');
+    if (!response.ok || data.code !== 'Ok' || !Array.isArray(data.routes) || !data.routes[0]) throw new Error(data.message || 'No driving route was found.');
+    const selectedRoute = data.routes[0];
+    const distanceMeters = Number(selectedRoute.distance), durationSeconds = Number(selectedRoute.duration);
+    const arrival = new Date(Date.now() + durationSeconds * 1000);
+    res.setHeader('Cache-Control','private, max-age=120');
+    return res.status(200).json({ success:true, origin:{latitude,longitude}, destination:{name:destinationName,latitude:destinationLatitude,longitude:destinationLongitude}, distanceMeters, distanceKilometers:distanceMeters/1000, durationSeconds, durationMinutes:durationSeconds/60, estimatedArrival:arrival.toISOString(), estimatedArrivalBangkok:arrival.toLocaleString('en-GB',{timeZone:'Asia/Bangkok',hour12:false}), geometry:selectedRoute.geometry });
+  } catch (error) { return sendRouteError(res,error,'Unable to calculate route preview.',502); }
 });
 
 app.get('/api/route-to-tpcap', requireAuthentication, requirePermission('VIEW_LIVE_MAP'), async (req, res) => {
