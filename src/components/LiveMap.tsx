@@ -12,11 +12,13 @@ import 'leaflet/dist/leaflet.css';
 import {
   GpsLocation,
   Truck,
+  SupplierLocation,
 } from '../types';
 
 import {
   fetchGpsDockStatus,
   fetchRouteToTpcap,
+  fetchRouteToDestination,
   GpsDockEvaluationResult,
   normalizeLicensePlate,
   RouteToTpcapResult,
@@ -38,6 +40,7 @@ import {
 interface LiveMapProps {
   trucks: Truck[];
   gpsLocations: GpsLocation[];
+  supplierLocations?: SupplierLocation[];
   initialTruckId?: string | null;
   onRefresh?: () => void | Promise<void>;
   isRefreshing?: boolean;
@@ -596,6 +599,7 @@ function createTpcapMarkerIcon():
 export function LiveMap({
   trucks,
   gpsLocations,
+  supplierLocations = [],
   initialTruckId,
   onRefresh,
   isRefreshing = false,
@@ -648,6 +652,8 @@ export function LiveMap({
     setSearchText,
   ] = useState('');
 
+  const [destinationId, setDestinationId] = useState('TPCAP');
+  const [supplierSearch, setSupplierSearch] = useState('');
   const [
     routeError,
     setRouteError,
@@ -724,6 +730,10 @@ export function LiveMap({
     if (!selectedTruck) return null;
     return gpsByPlate.get(normalizeLicensePlate(selectedTruck.licensePlate)) || null;
   }, [selectedTruck, gpsByPlate]);
+  const activeSuppliers = useMemo(() => supplierLocations.filter(s => s.status === 'ACTIVE' && Number.isFinite(s.latitude) && Number.isFinite(s.longitude)), [supplierLocations]);
+  const nearbySuppliers = useMemo(() => !selectedGpsLocation ? [] : activeSuppliers.map(supplier => ({ supplier, distanceMeters: calculateDistanceMeters(selectedGpsLocation.latitude, selectedGpsLocation.longitude, supplier.latitude, supplier.longitude) })).filter(item => item.distanceMeters <= 20000).sort((a,b) => a.distanceMeters-b.distanceMeters).slice(0,5), [activeSuppliers, selectedGpsLocation]);
+  const supplierOptions = useMemo(() => { const q=supplierSearch.trim().toUpperCase(); return q ? activeSuppliers.filter(s=>[s.supplierCode,s.supplierName,s.siteId].join(' ').toUpperCase().includes(q)).slice(0,50) : nearbySuppliers.map(x=>x.supplier); }, [activeSuppliers,nearbySuppliers,supplierSearch]);
+  const selectedSupplier = useMemo(() => activeSuppliers.find(s=>`SUPPLIER:${s.supplierCode}|${s.siteId}`===destinationId)||null,[activeSuppliers,destinationId]);
   const insideSiteBoundary = Boolean(selectedGpsLocation && isInsideTpcapSite(
     selectedGpsLocation.latitude, selectedGpsLocation.longitude
   ));
@@ -773,13 +783,11 @@ export function LiveMap({
         (first, second) => first.distanceMeters - second.distanceMeters
       )[0] || null;
     }, [selectedGpsLocation, selectedTruck]);
-  const selectedTargetPosition =
-    useMemo<[number, number]>(() => {
-      if (selectedGeofenceEvaluation) {
-        return [selectedGeofenceEvaluation.latitude, selectedGeofenceEvaluation.longitude];
-      }
-      return TPCAP_POSITION;
-    }, [selectedGeofenceEvaluation]);
+  const selectedTargetPosition = useMemo<[number, number]>(() => {
+    if (selectedSupplier) return [selectedSupplier.latitude, selectedSupplier.longitude];
+    if (selectedGeofenceEvaluation) return [selectedGeofenceEvaluation.latitude, selectedGeofenceEvaluation.longitude];
+    return TPCAP_POSITION;
+  }, [selectedSupplier, selectedGeofenceEvaluation]);
   const selectedParkingStatus =
     useMemo(() => {
       if (!selectedGpsLocation || !selectedGeofenceEvaluation) return null;
@@ -1157,7 +1165,7 @@ export function LiveMap({
 
   useEffect(() => {
     if (
-      !selectedGpsLocation || insideSiteBoundary || hasCompletedTrip
+      !selectedGpsLocation || (!selectedSupplier && (insideSiteBoundary || hasCompletedTrip))
     ) {
       routeRequestIdRef.current +=
         1;
@@ -1195,15 +1203,9 @@ export function LiveMap({
         );
 
         try {
-          const result =
-            await fetchRouteToTpcap(
-              selectedGpsLocation
-                .latitude,
-
-              selectedGpsLocation
-                .longitude
-            );
-
+          const result = selectedSupplier
+            ? await fetchRouteToDestination(selectedGpsLocation.latitude, selectedGpsLocation.longitude, selectedSupplier.latitude, selectedSupplier.longitude, `${selectedSupplier.siteId} · ${selectedSupplier.supplierName}`)
+            : await fetchRouteToTpcap(selectedGpsLocation.latitude, selectedGpsLocation.longitude);
           if (
             routeRequestIdRef.current !==
             requestId
@@ -1256,6 +1258,7 @@ export function LiveMap({
     selectedGpsLocation,
     insideSiteBoundary,
     hasCompletedTrip,
+    selectedSupplier,
   ]);
 
   useEffect(() => {
@@ -1329,27 +1332,15 @@ export function LiveMap({
     `);
     truckMarker.addTo(markerLayer);
 
-    const tpcapMarker =
-      L.marker(
-        selectedTargetPosition,
-        {
-          icon:
-            createTpcapMarkerIcon(),
-
-          title:
-            'TPCAP',
-
-          zIndexOffset:
-            900,
-        }
-      );
-
-    tpcapMarker.addTo(
-      markerLayer
-    );
-
+    if (selectedSupplier) {
+      L.circle(selectedTargetPosition,{radius:selectedSupplier.radiusMeter,color:'#7c3aed',weight:3,opacity:.95,fillColor:'#8b5cf6',fillOpacity:.16,dashArray:'8 6'}).addTo(markerLayer);
+      L.marker(selectedTargetPosition,{icon:createGeofenceMarkerIcon(selectedSupplier.siteId,'#7c3aed'),title:selectedSupplier.supplierName,zIndexOffset:900}).bindPopup(`<b>${selectedSupplier.siteId}</b><br/>${selectedSupplier.supplierName}<br/>Radius ${selectedSupplier.radiusMeter} m`).addTo(markerLayer);
+    } else {
+      L.marker(selectedTargetPosition,{icon:createTpcapMarkerIcon(),title:'TPCAP',zIndexOffset:900}).addTo(markerLayer);
+    }
+    for(const item of nearbySuppliers){const supplier=item.supplier;if(selectedSupplier&&supplier.siteId===selectedSupplier.siteId&&supplier.supplierCode===selectedSupplier.supplierCode)continue;L.marker([supplier.latitude,supplier.longitude],{icon:createGeofenceMarkerIcon(supplier.siteId,'#6366f1'),title:supplier.supplierName,zIndexOffset:700}).bindPopup(`<b>${supplier.siteId}</b><br/>${supplier.supplierName}<br/>${(item.distanceMeters/1000).toFixed(1)} km จากรถ`).addTo(markerLayer);}
     if (
-      !hasCompletedTrip && !insideSiteBoundary && routeResult &&
+      (selectedSupplier || (!hasCompletedTrip && !insideSiteBoundary)) && routeResult &&
       routeResult
         .geometry
         .coordinates
@@ -1460,7 +1451,9 @@ export function LiveMap({
         ''
       );
 
-      setRouteResult(
+      setDestinationId('TPCAP');
+    setSupplierSearch('');
+    setRouteResult(
         null
       );
 
@@ -1536,7 +1529,7 @@ export function LiveMap({
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input type="text" value={searchText} onChange={event => setSearchText(event.target.value)} placeholder="ค้นหาทะเบียน / Route / ชื่อสถานี" className="w-full rounded-lg border border-slate-300 py-2 pl-9 pr-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20" />
         </div>
-        <select value={selectedTruckId} onChange={event => { setSelectedTruckId(event.target.value); appliedInitialTruckIdRef.current = null; }} className="min-w-0 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 outline-none lg:w-[390px]">
+        <select value={selectedTruckId} onChange={event => { setSelectedTruckId(event.target.value); setDestinationId('TPCAP'); setSupplierSearch(''); appliedInitialTruckIdRef.current = null; }} className="min-w-0 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 outline-none lg:w-[390px]">
           <option value="">เลือกเที่ยวรถที่ต้องการดู</option>
           {selectableTrucks.map(truck => (
             <option key={truck.id} value={truck.id}>
@@ -1544,6 +1537,10 @@ export function LiveMap({
             </option>
           ))}
         </select>
+        <div className="flex min-w-0 flex-col gap-1 lg:w-[360px]">
+          <input value={supplierSearch} onChange={event=>setSupplierSearch(event.target.value)} disabled={!selectedGpsLocation} placeholder="ค้นหา Supplier" className="rounded-lg border px-3 py-1.5 text-xs disabled:bg-slate-100" />
+          <select value={destinationId} onChange={event=>setDestinationId(event.target.value)} disabled={!selectedGpsLocation} className="rounded-lg border border-violet-300 bg-white px-3 py-2 text-sm font-semibold disabled:bg-slate-100"><option value="TPCAP">ปลายทาง: TPCAP</option>{supplierOptions.map(supplier=><option key={`${supplier.supplierCode}|${supplier.siteId}`} value={`SUPPLIER:${supplier.supplierCode}|${supplier.siteId}`}>{supplier.siteId} · {supplier.supplierName}</option>)}</select>
+        </div>
         <button type="button" onClick={clearSelection} disabled={!selectedTruckId && !searchText} className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50"><X className="h-3.5 w-3.5" />ล้างการเลือก</button>
         <button type="button" onClick={handleRefresh} disabled={isRefreshing || !onRefresh} className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-50"><RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />Refresh</button>
       </div>
