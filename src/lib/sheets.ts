@@ -684,7 +684,10 @@ function validatePlanPeriodRequest(
   };
 }
 
-function validateEditablePlan(plan: EditablePlan): EditablePlan {
+function validateEditablePlan(
+  plan: EditablePlan,
+  options: { allowEmptyCompany?: boolean; allowEmptyTruckName?: boolean } = {}
+): EditablePlan {
   if (!plan || typeof plan !== 'object') {
     throw new Error('Plan data is required.');
   }
@@ -707,8 +710,8 @@ function validateEditablePlan(plan: EditablePlan): EditablePlan {
   };
 
   if (!validPlan.route) throw new Error('Route is required.');
-  if (!validPlan.company) throw new Error('Company is required.');
-  if (!validPlan.truckName) throw new Error('Truck Name is required.');
+  if (!options.allowEmptyCompany && !validPlan.company) throw new Error('Company is required.');
+  if (!options.allowEmptyTruckName && !validPlan.truckName) throw new Error('Truck Name is required.');
   if (!validPlan.truckType) throw new Error('Truck Type is required.');
   if (!validPlan.project) throw new Error('Project is required.');
   if (!validPlan.dropPoint) throw new Error('Drop Point is required.');
@@ -1255,10 +1258,13 @@ export async function createDailyPlansBatch(
   }
   const validPlans = plans.map((plan, index) => {
     try {
-      return validateEditablePlan({
-        ...plan,
-        remark: plan.remark ? normalizePlanRemark(plan.remark) : 'REGULAR',
-      });
+      return validateEditablePlan(
+          {
+            ...plan,
+            remark: plan.remark ? normalizePlanRemark(plan.remark) : 'REGULAR',
+          },
+          { allowEmptyCompany: true, allowEmptyTruckName: true }
+        );
     } catch (error) {
       throw new Error(
         `Daily Plan row ${index + 1}: ${error instanceof Error ? error.message : String(error)}`
