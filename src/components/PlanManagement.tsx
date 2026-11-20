@@ -956,7 +956,25 @@ export default function PlanManagement({ onPlanCreated }: PlanManagementProps) {
       if(dailyImportInputRef.current) dailyImportInputRef.current.value='';
     }
   };
-  const saveDailyImport=async()=>{if(!dailyImportRows.length||dailyImportErrors.length||isImportingDaily)return;setShowDailyImportConfirm(false);setIsImportingDaily(true);try{const result=await createDailyPlansBatch(dailyImportRows.map(({sourceRow,...row})=>row));if(Number(result?.failedCount||0))throw new Error(`นำเข้าไม่สำเร็จ ${result.failedCount} รายการ`);setShowDailyImport(false);setNotice({type:'success',message:`นำเข้าแผนประจำวันสำเร็จ ${Number(result?.createdCount??dailyImportRows.length)} รายการ`});}catch(error){setNotice({type:'error',message:getErrorMessage(error)});}finally{setIsImportingDaily(false);}};
+  const saveDailyImport=async()=>{
+    if(!dailyImportRows.length||dailyImportErrors.length||isImportingDaily)return;
+    setShowDailyImportConfirm(false);
+    setIsImportingDaily(true);
+    try{
+      const result=await createDailyPlansBatch(dailyImportRows.map(({sourceRow,...row})=>row));
+      if(Number(result?.failedCount||0))throw new Error(`นำเข้าไม่สำเร็จ ${result.failedCount} รายการ`);
+      setShowDailyImport(false);
+      setNotice({type:'success',message:`นำเข้าแผนประจำวันสำเร็จ ${Number(result?.createdCount??dailyImportRows.length)} รายการ`});
+    }catch(error){
+      const message=getErrorMessage(error);
+      setShowDailyImportConfirm(false);
+      setShowDailyImport(false);
+      setNotice({type:'error',message});
+      window.alert(`อัปโหลดแผนไม่สำเร็จ\n${message}`);
+    }finally{
+      setIsImportingDaily(false);
+    }
+  };
   const openExtraDialog = () => {
     if (isSavingPlan) return;
     setEditingCodeRun('');
