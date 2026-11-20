@@ -5277,7 +5277,7 @@ function validatePlanPeriodRequest(body) {
   };
 }
 
-function normalizeEditablePlan(body) {
+function normalizeEditablePlan(body, options = {}) {
   const source =
     body?.plan && typeof body.plan === 'object' ? body.plan : body;
 
@@ -5307,7 +5307,7 @@ function normalizeEditablePlan(body) {
 
   if (!plan.route) throw new Error('Route is required.');
   if (!plan.company) throw new Error('Company is required.');
-  if (!plan.truckName) throw new Error('Truck Name is required.');
+  if (!options.allowEmptyTruckName && !plan.truckName) throw new Error('Truck Name is required.');
   if (!plan.truckType) throw new Error('Truck Type is required.');
   if (!plan.project) throw new Error('Project is required.');
   if (!plan.dropPoint) throw new Error('Drop Point is required.');
@@ -5321,7 +5321,7 @@ function normalizeDailyPlans(value) {
   const duplicateKeys = new Set();
   return value.map((plan,index) => {
     let normalized;
-    try { normalized = normalizeEditablePlan({ ...plan, remark: plan?.remark === undefined ? 'REGULAR' : plan.remark }); }
+    try { normalized = normalizeEditablePlan({ ...plan, remark: plan?.remark === undefined ? 'REGULAR' : plan.remark }, { allowEmptyTruckName: true }); }
     catch (error) { throw new Error(`Daily Plan row ${index + 1}: ${getErrorMessage(error)}`); }
     const key=[normalized.date,normalized.route,normalized.truckName,normalized.dropPoint,normalized.planEta].join('|').toUpperCase();
     if (duplicateKeys.has(key)) throw new Error(`Daily Plan row ${index + 1}: duplicate item in request.`);
