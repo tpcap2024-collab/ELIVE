@@ -1546,7 +1546,7 @@ export default function App() {
                             </td>
                             <td className="whitespace-nowrap px-3 py-1.5 font-mono text-slate-600">{truck.stampEtd || '-'}</td>
                             <td className="whitespace-nowrap px-3 py-1.5">
-                              {getRowClass(truck).startsWith('bg-white') ? (
+                              {/^(?:bg-white|animate-pulse bg-red-200)(?: |$)/.test(getRowClass(truck)) ? (
                                 <span className="text-slate-300">-</span>
                               ) : (
                                 getPerformanceBadge(
