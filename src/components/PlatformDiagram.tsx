@@ -375,9 +375,9 @@ function getPerformanceSummary(truck: Truck) {
   }
   if (isNonInboundProject(truck)) {
     return {
-      label: 'NON-INBOUND',
+      label: 'NON-MILKRUN',
       tone: 'slate',
-      description: 'รายการนี้ไม่ใช้เกณฑ์ Early / On-time / Delay ของงาน INBOUND',
+      description: '',
     };
   }
   const label = getPerformanceLabel(truck);
@@ -1411,7 +1411,9 @@ export function PlatformDiagram({ trucks, onOpenMap }: PlatformDiagramProps) {
                       <section className={`rounded-2xl border p-4 ${toneClass}`}>
                         <div className="mb-4 text-sm font-black uppercase tracking-wide">Performance Summary</div>
                         <div className="text-2xl font-black">{performance.label}</div>
-                        <p className="mt-2 text-sm font-semibold leading-6 opacity-90">{performance.description}</p>
+                        {performance.description && (
+                          <p className="mt-2 text-sm font-semibold leading-6 opacity-90">{performance.description}</p>
+                        )}
                       </section>
                     </div>
 
