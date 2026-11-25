@@ -1546,8 +1546,12 @@ export default function App() {
                             </td>
                             <td className="whitespace-nowrap px-3 py-1.5 font-mono text-slate-600">{truck.stampEtd || '-'}</td>
                             <td className="whitespace-nowrap px-3 py-1.5">
-                              {getPerformanceBadge(
-                                isFrontendGpsLost(truck) ? 'GPS_LOST' : hasNoWorkAction(truck) ? 'NO_DROP' : truck.performanceStatus
+                              {getRowClass(truck).startsWith('bg-white') ? (
+                                <span className="text-slate-300">-</span>
+                              ) : (
+                                getPerformanceBadge(
+                                  isFrontendGpsLost(truck) ? 'GPS_LOST' : hasNoWorkAction(truck) ? 'NO_DROP' : truck.performanceStatus
+                                )
                               )}
                             </td>
                             <td className="whitespace-nowrap px-3 py-1.5">
